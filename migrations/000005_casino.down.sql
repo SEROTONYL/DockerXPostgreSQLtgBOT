@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS casino_stats CASCADE;
+DROP TABLE IF EXISTS casino_games CASCADE;
