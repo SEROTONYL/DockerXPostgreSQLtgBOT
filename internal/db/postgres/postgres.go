@@ -1,61 +1,57 @@
-// Package postgres управляет подключением к базе данных PostgreSQL.
-// Используется пул соединений pgxpool для эффективной работы
-// с несколькими горутинами одновременно.
-//
-// Пул автоматически управляет открытием/закрытием соединений,
-// переподключается при обрыве и ограничивает максимальное число соединений.
+﻿// Package postgres управляет подключением к базе данных PostgreSQL.
+// Используется пул соединений pgxpool для работы с несколькими горутинами одновременно.
 package postgres
 
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	log "github.com/sirupsen/logrus"
 
-	"telegram-bot/internal/config"
+	"serotonyl.ru/telegram-bot/internal/config"
+)
+
+const (
+	defaultConnectTimeout = 5 * time.Second
+	defaultPingTimeout    = 5 * time.Second
+	defaultMigTimeout     = 30 * time.Second
 )
 
 // NewPool создаёт новый пул соединений к PostgreSQL.
-//
-// Параметры:
-//   - ctx: контекст для отмены операции
-//   - cfg: конфигурация с параметрами подключения
-//
-// Возвращает:
-//   - *pgxpool.Pool: готовый к использованию пул
-//   - error: ошибка, если подключение не удалось
-//
-// Пример:
-//
-//	pool, err := postgres.NewPool(ctx, cfg)
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
-//	defer pool.Close()
 func NewPool(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, error) {
-	// Парсим строку подключения и настраиваем пул
 	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseDSN())
 	if err != nil {
 		return nil, fmt.Errorf("ошибка парсинга DSN: %w", err)
 	}
 
-	// Настройки пула соединений
-	poolConfig.MaxConns = cfg.DBMaxConns             // Максимум соединений
-	poolConfig.MinConns = cfg.DBMinConns             // Минимум (держать открытыми)
-	poolConfig.MaxConnLifetime = 1 * time.Hour       // Время жизни одного соединения
-	poolConfig.MaxConnIdleTime = 30 * time.Minute    // Время простоя до закрытия
-	poolConfig.HealthCheckPeriod = 1 * time.Minute   // Проверка здоровья соединений
+	poolConfig.MaxConns = cfg.DBMaxConns
+	poolConfig.MinConns = cfg.DBMinConns
+	poolConfig.MaxConnLifetime = 1 * time.Hour
+	poolConfig.MaxConnIdleTime = 30 * time.Minute
+	poolConfig.HealthCheckPeriod = 1 * time.Minute
 
-	// Создаём пул с заданной конфигурацией
+	// Таймаут на установку соединения (важно при сетевых проблемах)
+	if poolConfig.ConnConfig != nil {
+		poolConfig.ConnConfig.ConnectTimeout = defaultConnectTimeout
+	}
+
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка создания пула: %w", err)
 	}
 
-	// Проверяем, что база доступна
-	if err := pool.Ping(ctx); err != nil {
+	// Ping с таймаутом
+	pingCtx, cancel := context.WithTimeout(ctx, defaultPingTimeout)
+	defer cancel()
+
+	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("база данных недоступна: %w", err)
 	}
@@ -64,33 +60,85 @@ func NewPool(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// RunMigrations выполняет SQL-миграции из папки migrations/.
-// Миграции применяются последовательно по номеру файла.
-//
-// Параметры:
-//   - ctx: контекст
-//   - pool: пул соединений
-//   - migrationsPath: путь к папке с .sql файлами
+// RunMigrations применяет .sql миграции из папки migrationsPath.
+// Формат имени: <версия>_<описание>.sql, например: 1_init.sql, 2_add_members.sql
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsPath string) error {
-	// Читаем и выполняем миграции вручную (без зависимости golang-migrate,
-	// чтобы упростить сборку). В продакшене рекомендуется golang-migrate.
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		return fmt.Errorf("не удалось получить соединение: %w", err)
-	}
-	defer conn.Release()
+	// 1) гарантируем таблицу schema_migrations
+	migCtx, cancel := context.WithTimeout(ctx, defaultMigTimeout)
+	defer cancel()
 
-	// Создаём таблицу для отслеживания миграций, если её нет
-	_, err = conn.Exec(ctx, `
+	if _, err := pool.Exec(migCtx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version INTEGER PRIMARY KEY,
 			applied_at TIMESTAMP DEFAULT NOW()
 		)
-	`)
-	if err != nil {
+	`); err != nil {
 		return fmt.Errorf("ошибка создания таблицы миграций: %w", err)
 	}
 
-	log.Info("Система миграций готова")
+	entries, err := os.ReadDir(migrationsPath)
+	if err != nil {
+		return fmt.Errorf("не удалось прочитать папку миграций %q: %w", migrationsPath, err)
+	}
+
+	type mig struct {
+		version int
+		path    string
+	}
+	migrations := make([]mig, 0, len(entries))
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(strings.ToLower(name), ".sql") {
+			continue
+		}
+
+		v, ok := parseMigrationVersion(name)
+		if !ok {
+			return fmt.Errorf("не удалось извлечь версию миграции из имени файла: %s", name)
+		}
+		migrations = append(migrations, mig{
+			version: v,
+			path:    filepath.Join(migrationsPath, name),
+		})
+	}
+
+	sort.Slice(migrations, func(i, j int) bool { return migrations[i].version < migrations[j].version })
+
+	for _, m := range migrations {
+		sqlBytes, err := os.ReadFile(m.path)
+		if err != nil {
+			return fmt.Errorf("не удалось прочитать миграцию %s: %w", m.path, err)
+		}
+
+		oneCtx, cancelOne := context.WithTimeout(ctx, defaultMigTimeout)
+		err = ExecMigrationSQL(oneCtx, pool, m.version, string(sqlBytes))
+		cancelOne()
+		if err != nil {
+			return fmt.Errorf("ошибка применения миграции v%d (%s): %w", m.version, m.path, err)
+		}
+	}
+
+	log.WithField("count", len(migrations)).Info("Миграции применены")
 	return nil
+}
+
+func parseMigrationVersion(filename string) (int, bool) {
+	base := filename
+	if i := strings.IndexByte(base, '_'); i >= 0 {
+		base = base[:i]
+	} else if i := strings.IndexByte(base, '.'); i >= 0 {
+		base = base[:i]
+	}
+	if base == "" {
+		return 0, false
+	}
+	v, err := strconv.Atoi(base)
+	if err != nil || v <= 0 {
+		return 0, false
+	}
+	return v, true
 }

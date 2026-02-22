@@ -1,30 +1,22 @@
-version: '3.8'
-
 services:
-  # ========================
-  # PostgreSQL
-  # ========================
-  postgres:
+  db:
     image: postgres:16-alpine
     container_name: telegram_bot_db
     environment:
-      POSTGRES_USER: botuser
-      POSTGRES_PASSWORD: GoroDetey
-      POSTGRES_DB: telegram_bot
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U botuser -d telegram_bot"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ========================
-  # Telegram Bot
-  # ========================
   bot:
     build:
       context: ..
@@ -32,13 +24,8 @@ services:
     container_name: telegram_bot
     env_file:
       - .env
-    environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      FLOOD_CHAT_ID: ${FLOOD_CHAT_ID}
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
     restart: unless-stopped
 

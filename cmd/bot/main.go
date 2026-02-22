@@ -1,6 +1,6 @@
-// Package main — точка входа бота.
-// Загружает конфигурацию, инициализирует приложение и запускает.
-// Поддерживает graceful shutdown по SIGINT/SIGTERM.
+﻿// Package main вЂ” С‚РѕС‡РєР° РІС…РѕРґР° Р±РѕС‚Р°.
+// Р—Р°РіСЂСѓР¶Р°РµС‚ РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ, РёРЅРёС†РёР°Р»РёР·РёСЂСѓРµС‚ РїСЂРёР»РѕР¶РµРЅРёРµ Рё Р·Р°РїСѓСЃРєР°РµС‚.
+// РџРѕРґРґРµСЂР¶РёРІР°РµС‚ graceful shutdown РїРѕ SIGINT/SIGTERM.
 package main
 
 import (
@@ -11,63 +11,63 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
-	"telegram-bot/internal/app"
-	"telegram-bot/internal/config"
+	"serotonyl.ru/telegram-bot/internal/app"
+	"serotonyl.ru/telegram-bot/internal/config"
 )
 
 func main() {
-	// Настраиваем логирование
+	// РќР°СЃС‚СЂР°РёРІР°РµРј Р»РѕРіРёСЂРѕРІР°РЅРёРµ
 	setupLogging()
 
-	log.Info("=== Бот запускается ===")
+	log.Info("=== Р‘РѕС‚ Р·Р°РїСѓСЃРєР°РµС‚СЃСЏ ===")
 
-	// Загружаем конфигурацию из переменных окружения
+	// Р—Р°РіСЂСѓР¶Р°РµРј РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ РёР· РїРµСЂРµРјРµРЅРЅС‹С… РѕРєСЂСѓР¶РµРЅРёСЏ
 	cfg, err := config.Load()
 	if err != nil {
-		log.WithError(err).Fatal("Не удалось загрузить конфигурацию")
+		log.WithError(err).Fatal("РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ")
 	}
 
-	// Устанавливаем уровень логирования из конфига
+	// РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј СѓСЂРѕРІРµРЅСЊ Р»РѕРіРёСЂРѕРІР°РЅРёСЏ РёР· РєРѕРЅС„РёРіР°
 	level, err := log.ParseLevel(cfg.AppLogLevel)
 	if err == nil {
 		log.SetLevel(level)
 	}
 
-	// Контекст с отменой для graceful shutdown
+	// РљРѕРЅС‚РµРєСЃС‚ СЃ РѕС‚РјРµРЅРѕР№ РґР»СЏ graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Инициализируем приложение (БД, бот, сервисы, обработчики)
+	// РРЅРёС†РёР°Р»РёР·РёСЂСѓРµРј РїСЂРёР»РѕР¶РµРЅРёРµ (Р‘Р”, Р±РѕС‚, СЃРµСЂРІРёСЃС‹, РѕР±СЂР°Р±РѕС‚С‡РёРєРё)
 	application, err := app.New(ctx, cfg)
 	if err != nil {
-		log.WithError(err).Fatal("Не удалось инициализировать приложение")
+		log.WithError(err).Fatal("РќРµ СѓРґР°Р»РѕСЃСЊ РёРЅРёС†РёР°Р»РёР·РёСЂРѕРІР°С‚СЊ РїСЂРёР»РѕР¶РµРЅРёРµ")
 	}
 	defer application.DB.Close()
 
-	// Запускаем планировщик задач (cron)
+	// Р—Р°РїСѓСЃРєР°РµРј РїР»Р°РЅРёСЂРѕРІС‰РёРє Р·Р°РґР°С‡ (cron)
 	application.Scheduler.Start(ctx)
 	defer application.Scheduler.Stop()
 
-	// Обрабатываем сигналы остановки (Ctrl+C, docker stop)
+	// РћР±СЂР°Р±Р°С‚С‹РІР°РµРј СЃРёРіРЅР°Р»С‹ РѕСЃС‚Р°РЅРѕРІРєРё (Ctrl+C, docker stop)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	// Запускаем бота в отдельной горутине
+	// Р—Р°РїСѓСЃРєР°РµРј Р±РѕС‚Р° РІ РѕС‚РґРµР»СЊРЅРѕР№ РіРѕСЂСѓС‚РёРЅРµ
 	go application.Bot.Start(ctx)
 
-	log.Info("=== Бот готов к работе ===")
+	log.Info("=== Р‘РѕС‚ РіРѕС‚РѕРІ Рє СЂР°Р±РѕС‚Рµ ===")
 
-	// Ждём сигнала остановки
+	// Р–РґС‘Рј СЃРёРіРЅР°Р»Р° РѕСЃС‚Р°РЅРѕРІРєРё
 	sig := <-quit
-	log.Infof("Получен сигнал %s, останавливаемся...", sig)
+	log.Infof("РџРѕР»СѓС‡РµРЅ СЃРёРіРЅР°Р» %s, РѕСЃС‚Р°РЅР°РІР»РёРІР°РµРјСЃСЏ...", sig)
 
-	// Отменяем контекст — все горутины начнут завершаться
+	// РћС‚РјРµРЅСЏРµРј РєРѕРЅС‚РµРєСЃС‚ вЂ” РІСЃРµ РіРѕСЂСѓС‚РёРЅС‹ РЅР°С‡РЅСѓС‚ Р·Р°РІРµСЂС€Р°С‚СЊСЃСЏ
 	cancel()
 
-	log.Info("=== Бот остановлен ===")
+	log.Info("=== Р‘РѕС‚ РѕСЃС‚Р°РЅРѕРІР»РµРЅ ===")
 }
 
-// setupLogging настраивает формат логов.
+// setupLogging РЅР°СЃС‚СЂР°РёРІР°РµС‚ С„РѕСЂРјР°С‚ Р»РѕРіРѕРІ.
 func setupLogging() {
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp:   true,

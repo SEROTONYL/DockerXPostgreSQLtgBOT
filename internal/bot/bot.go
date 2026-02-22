@@ -1,4 +1,4 @@
-// Package bot содержит главный модуль бота — инициализацию, запуск и остановку.
+﻿// Package bot содержит главный модуль бота — инициализацию, запуск и остановку.
 // bot.go создаёт все сервисы, подключает обработчики и запускает polling.
 package bot
 
@@ -9,27 +9,25 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	log "github.com/sirupsen/logrus"
 
-	"telegram-bot/internal/bot/filters"
-	"telegram-bot/internal/bot/middleware"
-	"telegram-bot/internal/config"
-	"telegram-bot/internal/features/admin"
-	"telegram-bot/internal/features/casino"
-	"telegram-bot/internal/features/economy"
-	"telegram-bot/internal/features/karma"
-	"telegram-bot/internal/features/members"
-	"telegram-bot/internal/features/streak"
+	"serotonyl.ru/telegram-bot/internal/bot/filters"
+	"serotonyl.ru/telegram-bot/internal/bot/middleware"
+	"serotonyl.ru/telegram-bot/internal/config"
+	"serotonyl.ru/telegram-bot/internal/features/admin"
+	"serotonyl.ru/telegram-bot/internal/features/casino"
+	"serotonyl.ru/telegram-bot/internal/features/economy"
+	"serotonyl.ru/telegram-bot/internal/features/karma"
+	"serotonyl.ru/telegram-bot/internal/features/members"
+	"serotonyl.ru/telegram-bot/internal/features/streak"
 )
 
 // Bot — главная структура бота, объединяющая все компоненты.
 type Bot struct {
-	api *tgbotapi.BotAPI // Telegram Bot API
-	cfg *config.Config   // Конфигурация
+	api *tgbotapi.BotAPI
+	cfg *config.Config
 
-	// Фильтры и middleware
 	chatFilter  *filters.ChatFilter
 	rateLimiter *middleware.RateLimiter
 
-	// Обработчики фич
 	memberHandler  *members.Handler
 	economyHandler *economy.Handler
 	streakHandler  *streak.Handler
@@ -37,7 +35,6 @@ type Bot struct {
 	casinoHandler  *casino.Handler
 	adminHandler   *admin.Handler
 
-	// Сервисы (нужны для межмодульного взаимодействия)
 	memberService  *members.Service
 	economyService *economy.Service
 	streakService  *streak.Service
@@ -45,8 +42,10 @@ type Bot struct {
 	casinoService  *casino.Service
 	adminService   *admin.Service
 
-	// Парсер команд
 	parser *CommandParser
+
+	// ограничитель параллелизма обработки апдейтов
+	inflight chan struct{}
 }
 
 // New создаёт новый экземпляр бота со всеми зависимостями.
@@ -67,6 +66,11 @@ func New(
 	adminHandler *admin.Handler,
 	chatFilter *filters.ChatFilter,
 ) *Bot {
+	maxInFlight := cfg.BotMaxInflight
+	if maxInFlight <= 0 {
+		maxInFlight = 64
+	}
+
 	return &Bot{
 		api:            api,
 		cfg:            cfg,
@@ -85,37 +89,52 @@ func New(
 		casinoService:  casinoService,
 		adminService:   adminService,
 		parser:         NewCommandParser(),
+		inflight:       make(chan struct{}, maxInFlight),
 	}
 }
 
 // Start запускает polling обновлений от Telegram.
 func (b *Bot) Start(ctx context.Context) {
 	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60 // Long polling: ждём до 60 секунд
+	u.Timeout = b.cfg.BotUpdateTimeoutSeconds
 
 	updates := b.api.GetUpdatesChan(u)
 
-	log.Info("Бот запущен и ожидает сообщения...")
+	log.WithFields(log.Fields{
+		"max_inflight": b.cfg.BotMaxInflight,
+		"timeout_sec":  b.cfg.BotUpdateTimeoutSeconds,
+	}).Info("Бот запущен и ожидает сообщения...")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info("Бот останавливается...")
+			log.Info("Бот останавливается (ctx done)...")
+			b.api.StopReceivingUpdates()
 			return
-		case update := <-updates:
-			go b.handleUpdate(ctx, update)
+
+		case update, ok := <-updates:
+			if !ok {
+				log.Info("Канал updates закрыт, бот остановлен")
+				return
+			}
+
+			// лимит параллелизма
+			b.inflight <- struct{}{}
+			go func(upd tgbotapi.Update) {
+				defer func() { <-b.inflight }()
+				b.handleUpdate(ctx, upd)
+			}(update)
 		}
 	}
 }
 
 // handleUpdate обрабатывает одно обновление от Telegram.
 func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
-	// Защита от паник
 	defer middleware.RecoverFromPanic()
 
 	// Обрабатываем новых участников (событие вступления)
 	if update.Message != nil && update.Message.NewChatMembers != nil {
-		if update.Message.Chat.ID == b.cfg.FloodChatID {
+		if update.Message.Chat != nil && update.Message.Chat.ID == b.cfg.FloodChatID {
 			b.handleNewMembers(ctx, update.Message.NewChatMembers)
 		}
 		return
@@ -128,7 +147,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 
 	message := update.Message
 
-	// Логируем
+	// Логируем входящее
 	middleware.LogMessage(message)
 
 	// Проверяем доступ (FLOOD_CHAT_ID или DM участника)
@@ -137,16 +156,20 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 	}
 
 	// Rate limiting
-	if !b.rateLimiter.Allow(message.From.ID) {
-		return // Тихо игнорируем
+	if message.From != nil && !b.rateLimiter.Allow(message.From.ID) {
+	log.WithField("user_id", message.From.ID).Debug("rate limited")
+		return
 	}
 
 	chatID := message.Chat.ID
 	userID := message.From.ID
 
-	// Обеспечиваем регистрацию пользователя
-	b.memberService.EnsureMember(ctx, userID,
-		message.From.UserName, message.From.FirstName, message.From.LastName)
+	// EnsureMember — ошибки нельзя игнорировать, иначе потом будет "оно не работает"
+	if err := b.memberService.EnsureMember(ctx, userID,
+		message.From.UserName, message.From.FirstName, message.From.LastName,
+	); err != nil {
+		log.WithError(err).WithField("user_id", userID).Warn("EnsureMember failed")
+	}
 
 	// В DM проверяем админ-панель
 	if message.Chat.IsPrivate() {
@@ -157,7 +180,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 	}
 
 	// Проверяем «спасибо» для кармы
-	if b.cfg.FeatureKarmaEnabled && message.ReplyToMessage != nil {
+	if b.cfg.FeatureKarmaEnabled && message.ReplyToMessage != nil && message.ReplyToMessage.From != nil {
 		if karma.IsThankYou(message.Text) {
 			b.karmaHandler.HandleThankYou(ctx, chatID, userID, message.ReplyToMessage.From.ID)
 			return
@@ -166,12 +189,20 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 
 	// Парсим команду
 	cmd, args, isCommand := b.parser.ParseCommand(message.Text)
+	log.WithFields(log.Fields{
+      "isCommand": isCommand,
+      "cmd": cmd,
+      "args": args,
+      "text": message.Text,
+    }).Debug("parsed command")
 
 	if isCommand {
 		b.routeCommand(ctx, chatID, userID, cmd, args)
+		return
 	} else if chatID == b.cfg.FloodChatID {
 		// Не команда в основном чате — считаем для стрика
 		if b.cfg.FeatureStreaksEnabled {
+			// если у CountMessage есть error — логируй; если нет — оставляем как есть
 			b.streakService.CountMessage(ctx, userID, message.Text)
 		}
 	}
@@ -179,34 +210,44 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 
 // routeCommand маршрутизирует команду к нужному обработчику.
 func (b *Bot) routeCommand(ctx context.Context, chatID, userID int64, cmd string, args []string) {
+    log.WithFields(log.Fields{
+      "cmd":  cmd,
+      "args": args,
+    }).Debug("routing command")
 	switch cmd {
-	// Экономика
+	case "start", "help":
+        b.sendMessage(chatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
+
+    case "login":
+        if chatID == userID {
+            b.adminHandler.HandleAdminMessage(ctx, chatID, userID, "/login "+strings.Join(args, " "))
+        }
 	case "пленки":
 		b.economyHandler.HandleBalance(ctx, chatID, userID)
+
 	case "отсыпать":
 		b.economyHandler.HandleTransfer(ctx, chatID, userID, args)
+
 	case "транзакции":
 		b.economyHandler.HandleTransactions(ctx, chatID, userID)
 
-	// Карма
 	case "карма":
 		if b.cfg.FeatureKarmaEnabled {
 			b.karmaHandler.HandleKarma(ctx, chatID, userID)
 		}
 
-	// Стрик
 	case "огонек":
 		if b.cfg.FeatureStreaksEnabled {
 			b.streakHandler.HandleOgonek(ctx, chatID, userID)
 		}
 
-	// Казино
 	case "слоты":
 		if b.cfg.FeatureCasinoEnabled {
 			b.casinoHandler.HandleSlots(ctx, chatID, userID)
 		} else {
 			b.sendMessage(chatID, "🎰 Казино временно отключено")
 		}
+
 	case "статслоты":
 		if b.cfg.FeatureCasinoEnabled {
 			b.casinoHandler.HandleSlotStats(ctx, chatID, userID)
@@ -217,15 +258,20 @@ func (b *Bot) routeCommand(ctx context.Context, chatID, userID int64, cmd string
 // handleNewMembers обрабатывает вступление новых участников.
 func (b *Bot) handleNewMembers(ctx context.Context, newMembers []tgbotapi.User) {
 	for _, user := range newMembers {
-		// Регистрируем участника
-		b.memberService.HandleNewMember(ctx, user.ID, user.UserName, user.FirstName, user.LastName)
+		if err := b.memberService.HandleNewMember(ctx, user.ID, user.UserName, user.FirstName, user.LastName); err != nil {
+			log.WithError(err).WithField("user_id", user.ID).Warn("HandleNewMember failed")
+		}
+		if err := b.economyService.CreateBalance(ctx, user.ID); err != nil {
+			log.WithError(err).WithField("user_id", user.ID).Warn("CreateBalance failed")
+		}
+		if err := b.streakService.CreateStreak(ctx, user.ID); err != nil {
+			log.WithError(err).WithField("user_id", user.ID).Warn("CreateStreak failed")
+		}
+		if err := b.karmaService.CreateKarma(ctx, user.ID); err != nil {
+			log.WithError(err).WithField("user_id", user.ID).Warn("CreateKarma failed")
+		}
 
-		// Создаём связанные записи
-		b.economyService.CreateBalance(ctx, user.ID)
-		b.streakService.CreateStreak(ctx, user.ID)
-		b.karmaService.CreateKarma(ctx, user.ID)
-
-		log.WithField("user", user.UserName).Info("Новый участник зарегистрирован")
+		log.WithField("user", user.UserName).Info("Новый участник обработан")
 	}
 }
 
@@ -233,7 +279,7 @@ func (b *Bot) handleNewMembers(ctx context.Context, newMembers []tgbotapi.User) 
 func (b *Bot) sendMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	if _, err := b.api.Send(msg); err != nil {
-		log.WithError(err).Error("Ошибка отправки сообщения")
+		log.WithError(err).WithField("chat_id", chatID).Error("Ошибка отправки сообщения")
 	}
 }
 
@@ -242,7 +288,9 @@ func (b *Bot) SendMessageToUser(userID int64, text string) {
 	msg := tgbotapi.NewMessage(userID, text)
 	if _, err := b.api.Send(msg); err != nil {
 		log.WithError(err).WithField("user_id", userID).Debug("Не удалось отправить сообщение")
-	}
+	} else {
+        log.WithField("user_id", userID).Debug("message sent")
+    }
 }
 
 // CommandParser парсит русские команды с префиксами ! и .
@@ -253,22 +301,14 @@ type CommandParser struct {
 // NewCommandParser создаёт парсер команд.
 func NewCommandParser() *CommandParser {
 	return &CommandParser{
-		validPrefixes: []string{"!", "."},
+		validPrefixes: []string{"!", ".","/"},
 	}
 }
 
 // ParseCommand разбирает текст на команду и аргументы.
-//
-// Примеры:
-//
-//	"!пленки"           → ("пленки", nil, true)
-//	".отсыпать @ivan 100" → ("отсыпать", ["@ivan", "100"], true)
-//	"! пленки"          → ("пленки", nil, true)  — пробел после префикса OK
-//	"привет"            → ("", nil, false)        — не команда
 func (p *CommandParser) ParseCommand(text string) (string, []string, bool) {
 	text = strings.TrimSpace(text)
 
-	// Проверяем префикс
 	hasPrefix := false
 	for _, prefix := range p.validPrefixes {
 		if strings.HasPrefix(text, prefix) {
@@ -282,7 +322,6 @@ func (p *CommandParser) ParseCommand(text string) (string, []string, bool) {
 		return "", nil, false
 	}
 
-	// Убираем лишние пробелы
 	text = strings.TrimSpace(text)
 	parts := strings.Fields(text)
 
@@ -290,7 +329,6 @@ func (p *CommandParser) ParseCommand(text string) (string, []string, bool) {
 		return "", nil, false
 	}
 
-	// Команда в нижнем регистре
 	command := strings.ToLower(parts[0])
 	var args []string
 	if len(parts) > 1 {

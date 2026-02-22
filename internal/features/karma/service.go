@@ -1,4 +1,4 @@
-// Package karma — service.go содержит бизнес-логику кармы.
+﻿// Package karma вЂ” service.go СЃРѕРґРµСЂР¶РёС‚ Р±РёР·РЅРµСЃ-Р»РѕРіРёРєСѓ РєР°СЂРјС‹.
 package karma
 
 import (
@@ -6,22 +6,22 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
-	"telegram-bot/internal/common"
-	"telegram-bot/internal/config"
+	"serotonyl.ru/telegram-bot/internal/common"
+	"serotonyl.ru/telegram-bot/internal/config"
 )
 
-// Service управляет системой кармы.
+// Service СѓРїСЂР°РІР»СЏРµС‚ СЃРёСЃС‚РµРјРѕР№ РєР°СЂРјС‹.
 type Service struct {
 	repo *Repository
 	cfg  *config.Config
 }
 
-// NewService создаёт сервис кармы.
+// NewService СЃРѕР·РґР°С‘С‚ СЃРµСЂРІРёСЃ РєР°СЂРјС‹.
 func NewService(repo *Repository, cfg *config.Config) *Service {
 	return &Service{repo: repo, cfg: cfg}
 }
 
-// GiveKarma даёт +1 карму. Проверяет лимиты и ограничения.
+// GiveKarma РґР°С‘С‚ +1 РєР°СЂРјСѓ. РџСЂРѕРІРµСЂСЏРµС‚ Р»РёРјРёС‚С‹ Рё РѕРіСЂР°РЅРёС‡РµРЅРёСЏ.
 func (s *Service) GiveKarma(ctx context.Context, fromUserID, toUserID int64) error {
 	if fromUserID == toUserID {
 		return common.ErrKarmaSelfGive
@@ -48,13 +48,13 @@ func (s *Service) GiveKarma(ctx context.Context, fromUserID, toUserID int64) err
 	}
 
 	if err := s.repo.LogKarma(ctx, fromUserID, toUserID, 1); err != nil {
-		log.WithError(err).Error("Ошибка записи лога кармы")
+		log.WithError(err).Error("РћС€РёР±РєР° Р·Р°РїРёСЃРё Р»РѕРіР° РєР°СЂРјС‹")
 	}
 
 	return nil
 }
 
-// GetKarma возвращает карму пользователя.
+// GetKarma РІРѕР·РІСЂР°С‰Р°РµС‚ РєР°СЂРјСѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ.
 func (s *Service) GetKarma(ctx context.Context, userID int64) (int, error) {
 	k, err := s.repo.GetByUserID(ctx, userID)
 	if err != nil {
@@ -63,7 +63,7 @@ func (s *Service) GetKarma(ctx context.Context, userID int64) (int, error) {
 	return k.KarmaPoints, nil
 }
 
-// CreateKarma создаёт запись кармы для нового участника.
+// CreateKarma СЃРѕР·РґР°С‘С‚ Р·Р°РїРёСЃСЊ РєР°СЂРјС‹ РґР»СЏ РЅРѕРІРѕРіРѕ СѓС‡Р°СЃС‚РЅРёРєР°.
 func (s *Service) CreateKarma(ctx context.Context, userID int64) error {
 	return s.repo.Create(ctx, userID)
 }

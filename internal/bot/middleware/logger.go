@@ -1,31 +1,27 @@
-// Package middleware содержит промежуточные обработчики для логирования,
-// восстановления после паники и rate-limiting.
 package middleware
 
 import (
-	"time"
-
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	log "github.com/sirupsen/logrus"
 )
 
 // LogMessage логирует входящее сообщение.
-// Записывает: user_id, chat_id, username, текст (первые 50 символов).
+// message.Chat/message.From могут быть nil на service/channel updates.
 func LogMessage(message *tgbotapi.Message) {
-	if message == nil {
+	if message == nil || message.Chat == nil || message.From == nil {
 		return
 	}
 
 	text := message.Text
-	if len(text) > 50 {
-		text = text[:50] + "..."
+	if len(text) > 80 {
+		text = text[:80] + "..."
 	}
 
 	log.WithFields(log.Fields{
-		"user_id":  message.From.ID,
-		"chat_id":  message.Chat.ID,
-		"username": message.From.UserName,
-		"text":     text,
-		"time":     time.Now().Format("15:04:05"),
+		"user_id":   message.From.ID,
+		"chat_id":   message.Chat.ID,
+		"chat_type": message.Chat.Type,
+		"username":  message.From.UserName,
+		"text":      text,
 	}).Debug("Входящее сообщение")
 }

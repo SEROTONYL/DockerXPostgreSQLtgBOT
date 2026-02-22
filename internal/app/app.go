@@ -1,6 +1,6 @@
-// Package app инициализирует все компоненты приложения.
-// app.go — точка сборки: создаёт БД-пул, репозитории, сервисы, обработчики,
-// фильтры и собирает всё в один объект Bot.
+﻿// Package app РёРЅРёС†РёР°Р»РёР·РёСЂСѓРµС‚ РІСЃРµ РєРѕРјРїРѕРЅРµРЅС‚С‹ РїСЂРёР»РѕР¶РµРЅРёСЏ.
+// app.go вЂ” С‚РѕС‡РєР° СЃР±РѕСЂРєРё: СЃРѕР·РґР°С‘С‚ Р‘Р”-РїСѓР», СЂРµРїРѕР·РёС‚РѕСЂРёРё, СЃРµСЂРІРёСЃС‹, РѕР±СЂР°Р±РѕС‚С‡РёРєРё,
+// С„РёР»СЊС‚СЂС‹ Рё СЃРѕР±РёСЂР°РµС‚ РІСЃС‘ РІ РѕРґРёРЅ РѕР±СЉРµРєС‚ Bot.
 package app
 
 import (
@@ -11,20 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	log "github.com/sirupsen/logrus"
 
-	"telegram-bot/internal/bot"
-	"telegram-bot/internal/bot/filters"
-	"telegram-bot/internal/config"
-	"telegram-bot/internal/db/postgres"
-	"telegram-bot/internal/features/admin"
-	"telegram-bot/internal/features/casino"
-	"telegram-bot/internal/features/economy"
-	"telegram-bot/internal/features/karma"
-	"telegram-bot/internal/features/members"
-	"telegram-bot/internal/features/streak"
-	"telegram-bot/internal/jobs"
+	"serotonyl.ru/telegram-bot/internal/bot"
+	"serotonyl.ru/telegram-bot/internal/bot/filters"
+	"serotonyl.ru/telegram-bot/internal/config"
+	"serotonyl.ru/telegram-bot/internal/db/postgres"
+	"serotonyl.ru/telegram-bot/internal/features/admin"
+	"serotonyl.ru/telegram-bot/internal/features/casino"
+	"serotonyl.ru/telegram-bot/internal/features/economy"
+	"serotonyl.ru/telegram-bot/internal/features/karma"
+	"serotonyl.ru/telegram-bot/internal/features/members"
+	"serotonyl.ru/telegram-bot/internal/features/streak"
+	"serotonyl.ru/telegram-bot/internal/jobs"
 )
 
-// App содержит все компоненты приложения.
+// App СЃРѕРґРµСЂР¶РёС‚ РІСЃРµ РєРѕРјРїРѕРЅРµРЅС‚С‹ РїСЂРёР»РѕР¶РµРЅРёСЏ.
 type App struct {
 	Bot       *bot.Bot
 	Scheduler *jobs.Scheduler
@@ -32,29 +32,29 @@ type App struct {
 	BotAPI    *tgbotapi.BotAPI
 }
 
-// New создаёт и инициализирует приложение.
-// Порядок инициализации важен — компоненты зависят друг от друга.
+// New СЃРѕР·РґР°С‘С‚ Рё РёРЅРёС†РёР°Р»РёР·РёСЂСѓРµС‚ РїСЂРёР»РѕР¶РµРЅРёРµ.
+// РџРѕСЂСЏРґРѕРє РёРЅРёС†РёР°Р»РёР·Р°С†РёРё РІР°Р¶РµРЅ вЂ” РєРѕРјРїРѕРЅРµРЅС‚С‹ Р·Р°РІРёСЃСЏС‚ РґСЂСѓРі РѕС‚ РґСЂСѓРіР°.
 func New(ctx context.Context, cfg *config.Config) (*App, error) {
-	// === 1. База данных ===
+	// === 1. Р‘Р°Р·Р° РґР°РЅРЅС‹С… ===
 	pool, err := postgres.NewPool(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка подключения к БД: %w", err)
+		return nil, fmt.Errorf("РѕС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє Р‘Р”: %w", err)
 	}
 
-	// Запускаем миграции
+	// Р—Р°РїСѓСЃРєР°РµРј РјРёРіСЂР°С†РёРё
 	if err := runMigrations(ctx, pool); err != nil {
-		return nil, fmt.Errorf("ошибка миграций: %w", err)
+		return nil, fmt.Errorf("РѕС€РёР±РєР° РјРёРіСЂР°С†РёР№: %w", err)
 	}
 
 	// === 2. Telegram Bot API ===
 	botAPI, err := tgbotapi.NewBotAPI(cfg.TelegramBotToken)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка создания Telegram API: %w", err)
+		return nil, fmt.Errorf("РѕС€РёР±РєР° СЃРѕР·РґР°РЅРёСЏ Telegram API: %w", err)
 	}
 	botAPI.Debug = cfg.AppEnv == "development"
-	log.Infof("Авторизован как @%s", botAPI.Self.UserName)
+	log.Infof("РђРІС‚РѕСЂРёР·РѕРІР°РЅ РєР°Рє @%s", botAPI.Self.UserName)
 
-	// === 3. Репозитории ===
+	// === 3. Р РµРїРѕР·РёС‚РѕСЂРёРё ===
 	memberRepo := members.NewRepository(pool)
 	economyRepo := economy.NewRepository(pool)
 	streakRepo := streak.NewRepository(pool)
@@ -62,7 +62,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	casinoRepo := casino.NewRepository(pool)
 	adminRepo := admin.NewRepository(pool)
 
-	// === 4. Сервисы ===
+	// === 4. РЎРµСЂРІРёСЃС‹ ===
 	memberService := members.NewService(memberRepo)
 	economyService := economy.NewService(economyRepo)
 	streakService := streak.NewService(streakRepo, economyService, cfg)
@@ -70,7 +70,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	casinoService := casino.NewService(casinoRepo, economyService, cfg)
 	adminService := admin.NewService(adminRepo, memberRepo, cfg)
 
-	// === 5. Обработчики ===
+	// === 5. РћР±СЂР°Р±РѕС‚С‡РёРєРё ===
 	memberHandler := members.NewHandler(memberService)
 	economyHandler := economy.NewHandler(economyService, memberService, botAPI)
 	streakHandler := streak.NewHandler(streakService, botAPI, cfg)
@@ -78,10 +78,10 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	casinoHandler := casino.NewHandler(casinoService, botAPI)
 	adminHandler := admin.NewHandler(adminService, memberService, botAPI)
 
-	// === 6. Фильтры ===
+	// === 6. Р¤РёР»СЊС‚СЂС‹ ===
 	chatFilter := filters.NewChatFilter(cfg.FloodChatID, memberService, botAPI)
 
-	// === 7. Собираем бота ===
+	// === 7. РЎРѕР±РёСЂР°РµРј Р±РѕС‚Р° ===
 	b := bot.New(
 		botAPI, cfg,
 		memberService, memberHandler,
@@ -93,7 +93,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		chatFilter,
 	)
 
-	// === 8. Планировщик задач ===
+	// === 8. РџР»Р°РЅРёСЂРѕРІС‰РёРє Р·Р°РґР°С‡ ===
 	scheduler := jobs.NewScheduler(streakService, b.SendMessageToUser)
 
 	return &App{
@@ -104,14 +104,14 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	}, nil
 }
 
-// runMigrations выполняет все SQL-миграции.
+// runMigrations РІС‹РїРѕР»РЅСЏРµС‚ РІСЃРµ SQL-РјРёРіСЂР°С†РёРё.
 func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
-	// Инициализируем систему миграций
+	// РРЅРёС†РёР°Р»РёР·РёСЂСѓРµРј СЃРёСЃС‚РµРјСѓ РјРёРіСЂР°С†РёР№
 	if err := postgres.RunMigrations(ctx, pool, "migrations"); err != nil {
 		return err
 	}
 
-	// Выполняем миграции по порядку
+	// Р’С‹РїРѕР»РЅСЏРµРј РјРёРіСЂР°С†РёРё РїРѕ РїРѕСЂСЏРґРєСѓ
 	migrations := []struct {
 		version int
 		sql     string
@@ -126,16 +126,16 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 
 	for _, m := range migrations {
 		if err := postgres.ExecMigrationSQL(ctx, pool, m.version, m.sql); err != nil {
-			return fmt.Errorf("миграция %d: %w", m.version, err)
+			return fmt.Errorf("РјРёРіСЂР°С†РёСЏ %d: %w", m.version, err)
 		}
-		log.Infof("Миграция %d применена", m.version)
+		log.Infof("РњРёРіСЂР°С†РёСЏ %d РїСЂРёРјРµРЅРµРЅР°", m.version)
 	}
 
 	return nil
 }
 
-// SQL-миграции встроены в код для упрощения деплоя.
-// Также доступны как .sql файлы в папке migrations/.
+// SQL-РјРёРіСЂР°С†РёРё РІСЃС‚СЂРѕРµРЅС‹ РІ РєРѕРґ РґР»СЏ СѓРїСЂРѕС‰РµРЅРёСЏ РґРµРїР»РѕСЏ.
+// РўР°РєР¶Рµ РґРѕСЃС‚СѓРїРЅС‹ РєР°Рє .sql С„Р°Р№Р»С‹ РІ РїР°РїРєРµ migrations/.
 
 var migration001Members = `
 CREATE TABLE IF NOT EXISTS members (
