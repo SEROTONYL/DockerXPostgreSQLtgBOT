@@ -1,6 +1,6 @@
-﻿// Package admin вЂ” handlers.go РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РІР·Р°РёРјРѕРґРµР№СЃС‚РІРёРµ СЃ Р°РґРјРёРЅ-РїР°РЅРµР»СЊСЋ.
-// РџР°РЅРµР»СЊ СЂР°Р±РѕС‚Р°РµС‚ С‡РµСЂРµР· Reply Keyboard РІ Р»РёС‡РЅС‹С… СЃРѕРѕР±С‰РµРЅРёСЏС….
-// РџРѕС‚РѕРє: Р°СѓС‚РµРЅС‚РёС„РёРєР°С†РёСЏ в†’ РєР»Р°РІРёР°С‚СѓСЂР° в†’ РІС‹Р±РѕСЂ РґРµР№СЃС‚РІРёСЏ в†’ РїРѕС€Р°РіРѕРІС‹Р№ РґРёР°Р»РѕРі.
+// Package admin — handlers.go обрабатывает взаимодействие с админ-панелью.
+// Панель работает через Reply Keyboard в личных сообщениях.
+// Поток: аутентификация → клавиатура → выбор действия → пошаговый диалог.
 package admin
 
 import (
@@ -15,52 +15,74 @@ import (
 	"serotonyl.ru/telegram-bot/internal/features/members"
 )
 
-// Handler РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ Р°РґРјРёРЅ-РєРѕРјР°РЅРґС‹.
+// Handler обрабатывает админ-команды.
 type Handler struct {
 	service       *Service
 	memberService *members.Service
 	bot           *tgbotapi.BotAPI
+	sendFn        func(c tgbotapi.Chattable) (tgbotapi.Message, error)
 }
 
-// NewHandler СЃРѕР·РґР°С‘С‚ РѕР±СЂР°Р±РѕС‚С‡РёРє Р°РґРјРёРЅ-РїР°РЅРµР»Рё.
+// NewHandler создаёт обработчик админ-панели.
 func NewHandler(service *Service, memberService *members.Service, bot *tgbotapi.BotAPI) *Handler {
 	return &Handler{
 		service:       service,
 		memberService: memberService,
 		bot:           bot,
+		sendFn:        bot.Send,
 	}
 }
 
-// HandleAdminMessage РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ Р»СЋР±РѕРµ СЃРѕРѕР±С‰РµРЅРёРµ РѕС‚ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР° РІ DM.
-// РћРїСЂРµРґРµР»СЏРµС‚ С‚РµРєСѓС‰РµРµ СЃРѕСЃС‚РѕСЏРЅРёРµ РґРёР°Р»РѕРіР° Рё РјР°СЂС€СЂСѓС‚РёР·РёСЂСѓРµС‚ СЃРѕРѕР±С‰РµРЅРёРµ.
+// HandleAdminMessage обрабатывает любое сообщение от администратора в DM.
+// Определяет текущее состояние диалога и маршрутизирует сообщение.
 func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID int64, text string) bool {
-	// РџСЂРѕРІРµСЂСЏРµРј, СЏРІР»СЏРµС‚СЃСЏ Р»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ Р°РґРјРёРЅРѕРј
-	member, err := h.memberService.GetByUserID(ctx, userID)
-	if err != nil || !member.IsAdmin {
-		return false // РќРµ Р°РґРјРёРЅ
+	fields := strings.Fields(strings.TrimSpace(text))
+	isLoginCommand := len(fields) > 0 && strings.EqualFold(fields[0], "/login")
+
+	// Единый gate: DB is_admin ИЛИ ADMIN_IDS
+	if !h.service.CanEnterAdmin(ctx, userID) {
+		if isLoginCommand {
+			h.sendMessage(chatID, "❌ Доступ запрещён")
+			return true
+		}
+		return false
 	}
 
-	// РџСЂРѕРІРµСЂСЏРµРј СЃРѕСЃС‚РѕСЏРЅРёРµ РґРёР°Р»РѕРіР°
+	// Проверяем состояние диалога
 	state := h.service.GetState(userID)
+	hasActiveSession := h.service.HasActiveSession(ctx, userID)
 
-	// РћР±СЂР°Р±Р°С‚С‹РІР°РµРј СЃРѕСЃС‚РѕСЏРЅРёРµ РѕР¶РёРґР°РЅРёСЏ РїР°СЂРѕР»СЏ
-	if state != nil && state.State == StateAwaitingPassword {
-		h.handlePasswordInput(ctx, chatID, userID, text)
-		return true
-	}
+	if hasActiveSession {
+		if isLoginCommand {
+			h.showKeyboard(chatID)
+			return true
+		}
 
-	// РџСЂРѕРІРµСЂСЏРµРј Р°РєС‚РёРІРЅСѓСЋ СЃРµСЃСЃРёСЋ
-	if !h.service.HasActiveSession(ctx, userID) {
-		// РќРµС‚ СЃРµСЃСЃРёРё вЂ” Р·Р°РїСЂР°С€РёРІР°РµРј РїР°СЂРѕР»СЊ
-		h.sendMessage(chatID, "рџ”ђ Р’РІРµРґРёС‚Рµ РїР°СЂРѕР»СЊ РґР»СЏ РґРѕСЃС‚СѓРїР° Рє Р°РґРјРёРЅ-РїР°РЅРµР»Рё:")
+		// Обновляем активность сессии
+		if err := h.service.repo.UpdateActivity(ctx, userID); err != nil {
+			log.WithError(err).WithField("user_id", userID).Warn("ошибка обновления активности админ-сессии")
+		}
+	} else {
+		// Обрабатываем состояние ожидания пароля
+		if state != nil && state.State == StateAwaitingPassword {
+			h.handlePasswordInput(ctx, chatID, userID, text)
+			return true
+		}
+
+		// Single-step логин: /login <пароль>
+		if isLoginCommand && len(fields) > 1 {
+			password := strings.Join(fields[1:], " ")
+			h.handlePasswordInput(ctx, chatID, userID, password)
+			return true
+		}
+
+		// Нет сессии — запрашиваем пароль
+		h.sendMessage(chatID, "🔐 Введите пароль для доступа к админ-панели:")
 		h.service.SetState(userID, StateAwaitingPassword, nil)
 		return true
 	}
 
-	// РћР±РЅРѕРІР»СЏРµРј Р°РєС‚РёРІРЅРѕСЃС‚СЊ СЃРµСЃСЃРёРё
-	h.service.repo.UpdateActivity(ctx, userID)
-
-	// РћР±СЂР°Р±Р°С‚С‹РІР°РµРј С‚РµРєСѓС‰РµРµ СЃРѕСЃС‚РѕСЏРЅРёРµ
+	// Обрабатываем текущее состояние
 	if state != nil {
 		switch state.State {
 		case StateAssignRoleSelect:
@@ -78,19 +100,19 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 		}
 	}
 
-	// РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєРЅРѕРїРєРё РєР»Р°РІРёР°С‚СѓСЂС‹
+	// Обрабатываем кнопки клавиатуры
 	switch text {
-	case "РќР°Р·РЅР°С‡РёС‚СЊ СЂРѕР»СЊ":
+	case "Назначить роль":
 		h.startAssignRole(ctx, chatID, userID)
 		return true
-	case "РЎРјРµРЅРёС‚СЊ СЂРѕР»СЊ":
+	case "Сменить роль":
 		h.startChangeRole(ctx, chatID, userID)
 		return true
-	case "Р’С‹РґР°С‚СЊ РїР»С‘РЅРєРё", "РћС‚РЅСЏС‚СЊ РїР»С‘РЅРєРё", "Р’С‹РґР°С‚СЊ РєСЂРµРґРёС‚",
-		"РђРЅРЅСѓР»РёСЂРѕРІР°С‚СЊ РєСЂРµРґРёС‚", "РЎРѕР·РґР°С‚СЊ СЃРѕРєСЂР°С‰РµРЅРёРµ", "РЈРґР°Р»РёС‚СЊ СЃРѕРєСЂР°С‰РµРЅРёРµ":
-		h.sendMessage(chatID, "рџ”§ Р¤СѓРЅРєС†РёСЏ РІ СЂР°Р·СЂР°Р±РѕС‚РєРµ")
+	case "Выдать плёнки", "Отнять плёнки", "Выдать кредит",
+		"Аннулировать кредит", "Создать сокращение", "Удалить сокращение":
+		h.sendMessage(chatID, "🔧 Функция в разработке")
 		return true
-	case "РђРґРјРёРЅ", "РџР°РЅРµР»СЊ", "Р°РґРјРёРЅ", "РїР°РЅРµР»СЊ":
+	case "Админ", "Панель", "админ", "панель":
 		h.showKeyboard(chatID)
 		return true
 	}
@@ -98,60 +120,62 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 	return false
 }
 
-// handlePasswordInput РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РІРІРѕРґ РїР°СЂРѕР»СЏ.
+// handlePasswordInput обрабатывает ввод пароля.
 func (h *Handler) handlePasswordInput(ctx context.Context, chatID int64, userID int64, password string) {
 	err := h.service.VerifyPassword(ctx, userID, password)
 	if err != nil {
-		h.sendMessage(chatID, fmt.Sprintf("вќЊ %s", err.Error()))
+		h.sendMessage(chatID, fmt.Sprintf("❌ %s", err.Error()))
 		h.service.ClearState(userID)
 		return
 	}
 
 	h.service.ClearState(userID)
-	h.sendMessage(chatID, "вњ… РђСѓС‚РµРЅС‚РёС„РёРєР°С†РёСЏ СѓСЃРїРµС€РЅР°!")
+	h.sendMessage(chatID, "✅ Аутентификация успешна!")
 	h.showKeyboard(chatID)
 }
 
-// showKeyboard РѕС‚РѕР±СЂР°Р¶Р°РµС‚ РєР»Р°РІРёР°С‚СѓСЂСѓ Р°РґРјРёРЅ-РїР°РЅРµР»Рё.
+// showKeyboard отображает клавиатуру админ-панели.
 func (h *Handler) showKeyboard(chatID int64) {
+	h.ensureSender()
+
 	keyboard := tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("РќР°Р·РЅР°С‡РёС‚СЊ СЂРѕР»СЊ"),
-			tgbotapi.NewKeyboardButton("РЎРјРµРЅРёС‚СЊ СЂРѕР»СЊ"),
+			tgbotapi.NewKeyboardButton("Назначить роль"),
+			tgbotapi.NewKeyboardButton("Сменить роль"),
 		),
 		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("Р’С‹РґР°С‚СЊ РїР»С‘РЅРєРё"),
-			tgbotapi.NewKeyboardButton("РћС‚РЅСЏС‚СЊ РїР»С‘РЅРєРё"),
+			tgbotapi.NewKeyboardButton("Выдать плёнки"),
+			tgbotapi.NewKeyboardButton("Отнять плёнки"),
 		),
 		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("Р’С‹РґР°С‚СЊ РєСЂРµРґРёС‚"),
-			tgbotapi.NewKeyboardButton("РђРЅРЅСѓР»РёСЂРѕРІР°С‚СЊ РєСЂРµРґРёС‚"),
+			tgbotapi.NewKeyboardButton("Выдать кредит"),
+			tgbotapi.NewKeyboardButton("Аннулировать кредит"),
 		),
 		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("РЎРѕР·РґР°С‚СЊ СЃРѕРєСЂР°С‰РµРЅРёРµ"),
-			tgbotapi.NewKeyboardButton("РЈРґР°Р»РёС‚СЊ СЃРѕРєСЂР°С‰РµРЅРёРµ"),
+			tgbotapi.NewKeyboardButton("Создать сокращение"),
+			tgbotapi.NewKeyboardButton("Удалить сокращение"),
 		),
 	)
 
-	msg := tgbotapi.NewMessage(chatID, "вњ… РђРґРјРёРЅ-РїР°РЅРµР»СЊ РѕС‚РєСЂС‹С‚Р°")
+	msg := tgbotapi.NewMessage(chatID, "✅ Админ-панель открыта")
 	msg.ReplyMarkup = keyboard
-	if _, err := h.bot.Send(msg); err != nil {
-		log.WithError(err).Error("РћС€РёР±РєР° РѕС‚РїСЂР°РІРєРё РєР»Р°РІРёР°С‚СѓСЂС‹")
+	if _, err := h.sendFn(msg); err != nil {
+		log.WithError(err).Error("ошибка отправки клавиатуры")
 	}
 }
 
-// --- РќР°Р·РЅР°С‡РёС‚СЊ СЂРѕР»СЊ (3 С€Р°РіР°) ---
+// --- Назначить роль (3 шага) ---
 
-// startAssignRole вЂ” РЁР°Рі 1: РїРѕРєР°Р·Р°С‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№ Р‘Р•Р— СЂРѕР»Рё.
+// startAssignRole — Шаг 1: показать пользователей БЕЗ роли.
 func (h *Handler) startAssignRole(ctx context.Context, chatID int64, userID int64) {
 	users, err := h.service.GetUsersWithoutRole(ctx)
 	if err != nil || len(users) == 0 {
-		h.sendMessage(chatID, "Р’СЃРµ РїРѕР»СЊР·РѕРІР°С‚РµР»Рё СѓР¶Рµ РёРјРµСЋС‚ СЂРѕР»Рё")
+		h.sendMessage(chatID, "Все пользователи уже имеют роли")
 		return
 	}
 
 	var sb strings.Builder
-	sb.WriteString("Р’С‹Р±РµСЂРёС‚Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ (РѕС‚РїСЂР°РІСЊС‚Рµ РЅРѕРјРµСЂ):\n\n")
+	sb.WriteString("Выберите пользователя (отправьте номер):\n\n")
 	for i, user := range users {
 		name := user.DisplayName()
 		sb.WriteString(fmt.Sprintf("%d. %s (%s)\n", i+1, name, user.FirstName))
@@ -161,54 +185,54 @@ func (h *Handler) startAssignRole(ctx context.Context, chatID int64, userID int6
 	h.service.SetState(userID, StateAssignRoleSelect, users)
 }
 
-// handleAssignRoleSelect вЂ” РЁР°Рі 2: РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РІС‹Р±СЂР°Р» РЅРѕРјРµСЂ.
+// handleAssignRoleSelect — Шаг 2: пользователь выбрал номер.
 func (h *Handler) handleAssignRoleSelect(ctx context.Context, chatID int64, userID int64, text string) {
 	state := h.service.GetState(userID)
 	users := state.Data.([]*members.Member)
 
 	num, err := strconv.Atoi(strings.TrimSpace(text))
 	if err != nil || num < 1 || num > len(users) {
-		h.sendMessage(chatID, "вќЊ РќРµРІРµСЂРЅС‹Р№ РЅРѕРјРµСЂ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РµС‰С‘ СЂР°Р·.")
+		h.sendMessage(chatID, "❌ Неверный номер. Попробуйте ещё раз.")
 		return
 	}
 
 	selected := users[num-1]
-	h.sendMessage(chatID, fmt.Sprintf("Р’РІРµРґРёС‚Рµ СЂРѕР»СЊ РґР»СЏ %s (РјР°РєСЃРёРјСѓРј 64 СЃРёРјРІРѕР»Р°):", selected.DisplayName()))
+	h.sendMessage(chatID, fmt.Sprintf("Введите роль для %s (максимум 64 символа):", selected.DisplayName()))
 	h.service.SetState(userID, StateAssignRoleText, selected)
 }
 
-// handleAssignRoleText вЂ” РЁР°Рі 3: РІРІРѕРґ С‚РµРєСЃС‚Р° СЂРѕР»Рё.
+// handleAssignRoleText — Шаг 3: ввод текста роли.
 func (h *Handler) handleAssignRoleText(ctx context.Context, chatID int64, userID int64, text string) {
 	state := h.service.GetState(userID)
 	selected := state.Data.(*members.Member)
 
 	role := strings.TrimSpace(text)
 	if len([]rune(role)) > 64 {
-		h.sendMessage(chatID, "вќЊ Р РѕР»СЊ СЃР»РёС€РєРѕРј РґР»РёРЅРЅР°СЏ (РјР°РєСЃРёРјСѓРј 64 СЃРёРјРІРѕР»Р°)")
+		h.sendMessage(chatID, "❌ Роль слишком длинная (максимум 64 символа)")
 		return
 	}
 
 	if err := h.service.AssignRole(ctx, selected.UserID, role); err != nil {
-		h.sendMessage(chatID, fmt.Sprintf("вќЊ РћС€РёР±РєР°: %s", err.Error()))
+		h.sendMessage(chatID, fmt.Sprintf("❌ Ошибка: %s", err.Error()))
 		h.service.ClearState(userID)
 		return
 	}
 
-	h.sendMessage(chatID, fmt.Sprintf("вњ… Р РѕР»СЊ РЅР°Р·РЅР°С‡РµРЅР°: %s в†’ %s", selected.DisplayName(), role))
+	h.sendMessage(chatID, fmt.Sprintf("✅ Роль назначена: %s → %s", selected.DisplayName(), role))
 	h.service.ClearState(userID)
 }
 
-// --- РЎРјРµРЅРёС‚СЊ СЂРѕР»СЊ (3 С€Р°РіР°) ---
+// --- Сменить роль (3 шага) ---
 
 func (h *Handler) startChangeRole(ctx context.Context, chatID int64, userID int64) {
 	users, err := h.service.GetUsersWithRole(ctx)
 	if err != nil || len(users) == 0 {
-		h.sendMessage(chatID, "РќРµС‚ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№ СЃ РЅР°Р·РЅР°С‡РµРЅРЅС‹РјРё СЂРѕР»СЏРјРё")
+		h.sendMessage(chatID, "Нет пользователей с назначенными ролями")
 		return
 	}
 
 	var sb strings.Builder
-	sb.WriteString("Р’С‹Р±РµСЂРёС‚Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ (РѕС‚РїСЂР°РІСЊС‚Рµ РЅРѕРјРµСЂ):\n\n")
+	sb.WriteString("Выберите пользователя (отправьте номер):\n\n")
 	for i, user := range users {
 		role := ""
 		if user.Role != nil {
@@ -227,7 +251,7 @@ func (h *Handler) handleChangeRoleSelect(ctx context.Context, chatID int64, user
 
 	num, err := strconv.Atoi(strings.TrimSpace(text))
 	if err != nil || num < 1 || num > len(users) {
-		h.sendMessage(chatID, "вќЊ РќРµРІРµСЂРЅС‹Р№ РЅРѕРјРµСЂ")
+		h.sendMessage(chatID, "❌ Неверный номер")
 		return
 	}
 
@@ -236,7 +260,7 @@ func (h *Handler) handleChangeRoleSelect(ctx context.Context, chatID int64, user
 	if selected.Role != nil {
 		currentRole = *selected.Role
 	}
-	h.sendMessage(chatID, fmt.Sprintf("РўРµРєСѓС‰Р°СЏ СЂРѕР»СЊ: %s\nР’РІРµРґРёС‚Рµ РЅРѕРІСѓСЋ СЂРѕР»СЊ:", currentRole))
+	h.sendMessage(chatID, fmt.Sprintf("Текущая роль: %s\nВведите новую роль:", currentRole))
 	h.service.SetState(userID, StateChangeRoleText, selected)
 }
 
@@ -246,23 +270,39 @@ func (h *Handler) handleChangeRoleText(ctx context.Context, chatID int64, userID
 
 	role := strings.TrimSpace(text)
 	if len([]rune(role)) > 64 {
-		h.sendMessage(chatID, "вќЊ Р РѕР»СЊ СЃР»РёС€РєРѕРј РґР»РёРЅРЅР°СЏ (РјР°РєСЃРёРјСѓРј 64 СЃРёРјРІРѕР»Р°)")
+		h.sendMessage(chatID, "❌ Роль слишком длинная (максимум 64 символа)")
 		return
 	}
 
 	if err := h.service.AssignRole(ctx, selected.UserID, role); err != nil {
-		h.sendMessage(chatID, fmt.Sprintf("вќЊ РћС€РёР±РєР°: %s", err.Error()))
+		h.sendMessage(chatID, fmt.Sprintf("❌ Ошибка: %s", err.Error()))
 		h.service.ClearState(userID)
 		return
 	}
 
-	h.sendMessage(chatID, fmt.Sprintf("вњ… Р РѕР»СЊ РёР·РјРµРЅРµРЅР°: %s в†’ %s", selected.DisplayName(), role))
+	h.sendMessage(chatID, fmt.Sprintf("✅ Роль изменена: %s → %s", selected.DisplayName(), role))
 	h.service.ClearState(userID)
 }
 
 func (h *Handler) sendMessage(chatID int64, text string) {
+	h.ensureSender()
+
 	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := h.bot.Send(msg); err != nil {
-		log.WithError(err).Error("РћС€РёР±РєР° РѕС‚РїСЂР°РІРєРё СЃРѕРѕР±С‰РµРЅРёСЏ")
+	if _, err := h.sendFn(msg); err != nil {
+		log.WithError(err).Error("ошибка отправки сообщения")
+	}
+}
+
+func (h *Handler) ensureSender() {
+	if h.sendFn != nil {
+		return
+	}
+	if h.bot != nil {
+		h.sendFn = h.bot.Send
+		return
+	}
+
+	h.sendFn = func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+		return tgbotapi.Message{}, fmt.Errorf("send function is nil")
 	}
 }

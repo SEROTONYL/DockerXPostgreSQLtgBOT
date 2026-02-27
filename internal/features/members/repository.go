@@ -117,6 +117,14 @@ func (r *Repository) UpdateRole(ctx context.Context, userID int64, role string) 
 	return nil
 }
 
+func (r *Repository) UpdateAdminFlag(ctx context.Context, userID int64, isAdmin bool) error {
+	query := `UPDATE members SET is_admin = $2, updated_at = NOW() WHERE user_id = $1`
+	if _, err := r.db.Exec(ctx, query, userID, isAdmin); err != nil {
+		return fmt.Errorf("ошибка обновления флага администратора: %w", err)
+	}
+	return nil
+}
+
 func (r *Repository) GetUsersWithoutRole(ctx context.Context) ([]*Member, error) {
 	query := `
 		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
