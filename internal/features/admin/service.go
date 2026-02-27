@@ -1,4 +1,4 @@
-﻿// Package admin вЂ” service.go СЃРѕРґРµСЂР¶РёС‚ Р»РѕРіРёРєСѓ Р°СѓС‚РµРЅС‚РёС„РёРєР°С†РёРё, СѓРїСЂР°РІР»РµРЅРёСЏ СЃРµСЃСЃРёСЏРјРё
+// Package admin вЂ” service.go СЃРѕРґРµСЂР¶РёС‚ Р»РѕРіРёРєСѓ Р°СѓС‚РµРЅС‚РёС„РёРєР°С†РёРё, СѓРїСЂР°РІР»РµРЅРёСЏ СЃРµСЃСЃРёСЏРјРё
 // Рё state-РјР°С€РёРЅСѓ РґР»СЏ РїРѕС€Р°РіРѕРІС‹С… Р°РґРјРёРЅ-РґРµР№СЃС‚РІРёР№.
 package admin
 
@@ -21,21 +21,65 @@ import (
 
 // Service СѓРїСЂР°РІР»СЏРµС‚ Р°РґРјРёРЅ-РїР°РЅРµР»СЊСЋ.
 type Service struct {
-	repo       *Repository
-	memberRepo *members.Repository
+	repo       adminRepo
+	memberRepo memberRepo
 	cfg        *config.Config
 	states     map[int64]*AdminState // РЎРѕСЃС‚РѕСЏРЅРёСЏ РґРёР°Р»РѕРіРѕРІ (in-memory)
 	statesMu   sync.RWMutex
 }
 
+type adminRepo interface {
+	CreateSession(ctx context.Context, session *AdminSession) error
+	GetActiveSession(ctx context.Context, userID int64) (*AdminSession, error)
+	DeactivateSession(ctx context.Context, userID int64) error
+	UpdateActivity(ctx context.Context, userID int64) error
+	LogAttempt(ctx context.Context, userID int64, success bool) error
+	GetRecentAttempts(ctx context.Context, userID int64, period time.Duration) (int, error)
+}
+
+type memberRepo interface {
+	GetByUserID(ctx context.Context, userID int64) (*members.Member, error)
+	GetUsersWithoutRole(ctx context.Context) ([]*members.Member, error)
+	GetUsersWithRole(ctx context.Context) ([]*members.Member, error)
+	UpdateRole(ctx context.Context, userID int64, role string) error
+	UpdateAdminFlag(ctx context.Context, userID int64, isAdmin bool) error
+}
+
 // NewService СЃРѕР·РґР°С‘С‚ СЃРµСЂРІРёСЃ Р°РґРјРёРЅ-РїР°РЅРµР»Рё.
-func NewService(repo *Repository, memberRepo *members.Repository, cfg *config.Config) *Service {
+func NewService(repo adminRepo, memberRepo memberRepo, cfg *config.Config) *Service {
 	return &Service{
 		repo:       repo,
 		memberRepo: memberRepo,
 		cfg:        cfg,
 		states:     make(map[int64]*AdminState),
 	}
+}
+
+// CanEnterAdmin проверяет, может ли пользователь входить в админ-поток.
+// Единая точка gate-логики: позже можно заменить на permission-check.
+func (s *Service) CanEnterAdmin(ctx context.Context, userID int64) bool {
+	if s.isConfiguredAdmin(userID) {
+		if err := s.memberRepo.UpdateAdminFlag(ctx, userID, true); err != nil {
+			log.WithError(err).WithField("user_id", userID).Warn("не удалось проставить is_admin для ADMIN_IDS")
+		}
+		return true
+	}
+
+	member, err := s.memberRepo.GetByUserID(ctx, userID)
+	if err != nil || member == nil {
+		return false
+	}
+
+	return member.IsAdmin
+}
+
+func (s *Service) isConfiguredAdmin(userID int64) bool {
+	for _, id := range s.cfg.AdminIDs {
+		if id == userID {
+			return true
+		}
+	}
+	return false
 }
 
 // VerifyPassword РїСЂРѕРІРµСЂСЏРµС‚ РїР°СЂРѕР»СЊ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР° СЃ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРµРј Argon2id.
