@@ -91,7 +91,7 @@ func (s *Service) VerifyPassword(ctx context.Context, userID int64, password str
 		return err
 	}
 	if attempts >= 3 {
-		return fmt.Errorf("СЃР»РёС€РєРѕРј РјРЅРѕРіРѕ РїРѕРїС‹С‚РѕРє, РїРѕРґРѕР¶РґРёС‚Рµ 1 С‡Р°СЃ")
+		return fmt.Errorf("слишком много попыток, подождите 1 час")
 	}
 
 	// РџСЂРѕРІРµСЂСЏРµРј РїР°СЂРѕР»СЊ
@@ -101,7 +101,7 @@ func (s *Service) VerifyPassword(ctx context.Context, userID int64, password str
 	s.repo.LogAttempt(ctx, userID, match)
 
 	if !match {
-		return fmt.Errorf("РЅРµРІРµСЂРЅС‹Р№ РїР°СЂРѕР»СЊ")
+		return fmt.Errorf("неверный пароль")
 	}
 
 	// РЎРѕР·РґР°С‘Рј СЃРµСЃСЃРёСЋ (24 С‡Р°СЃР°)
@@ -169,7 +169,7 @@ func (s *Service) GetUsersWithRole(ctx context.Context) ([]*members.Member, erro
 // AssignRole РЅР°Р·РЅР°С‡Р°РµС‚ СЂРѕР»СЊ СѓС‡Р°СЃС‚РЅРёРєСѓ.
 func (s *Service) AssignRole(ctx context.Context, userID int64, role string) error {
 	if len([]rune(role)) > 64 {
-		return fmt.Errorf("СЂРѕР»СЊ СЃР»РёС€РєРѕРј РґР»РёРЅРЅР°СЏ (РјР°РєСЃРёРјСѓРј 64 СЃРёРјРІРѕР»Р°)")
+		return fmt.Errorf("роль слишком длинная (максимум 64 символа)")
 	}
 	return s.memberRepo.UpdateRole(ctx, userID, role)
 }

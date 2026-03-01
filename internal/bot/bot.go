@@ -1,4 +1,4 @@
-﻿// Package bot содержит главный модуль бота — инициализацию, запуск и остановку.
+// Package bot содержит главный модуль бота — инициализацию, запуск и остановку.
 // bot.go создаёт все сервисы, подключает обработчики и запускает polling.
 package bot
 
@@ -140,6 +140,13 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 		return
 	}
 
+	// Обрабатываем callback кнопок админ-панели
+	if update.CallbackQuery != nil {
+		if b.adminHandler.HandleAdminCallback(ctx, update.CallbackQuery) {
+			return
+		}
+	}
+
 	// Обрабатываем обычные сообщения
 	if update.Message == nil || update.Message.Text == "" {
 		return
@@ -157,7 +164,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 
 	// Rate limiting
 	if message.From != nil && !b.rateLimiter.Allow(message.From.ID) {
-	log.WithField("user_id", message.From.ID).Debug("rate limited")
+		log.WithField("user_id", message.From.ID).Debug("rate limited")
 		return
 	}
 
@@ -190,11 +197,11 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 	// Парсим команду
 	cmd, args, isCommand := b.parser.ParseCommand(message.Text)
 	log.WithFields(log.Fields{
-      "isCommand": isCommand,
-      "cmd": cmd,
-      "args": args,
-      "text": message.Text,
-    }).Debug("parsed command")
+		"isCommand": isCommand,
+		"cmd":       cmd,
+		"args":      args,
+		"text":      message.Text,
+	}).Debug("parsed command")
 
 	if isCommand {
 		b.routeCommand(ctx, chatID, userID, cmd, args)
@@ -210,18 +217,18 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 
 // routeCommand маршрутизирует команду к нужному обработчику.
 func (b *Bot) routeCommand(ctx context.Context, chatID, userID int64, cmd string, args []string) {
-    log.WithFields(log.Fields{
-      "cmd":  cmd,
-      "args": args,
-    }).Debug("routing command")
+	log.WithFields(log.Fields{
+		"cmd":  cmd,
+		"args": args,
+	}).Debug("routing command")
 	switch cmd {
 	case "start", "help":
-        b.sendMessage(chatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
+		b.sendMessage(chatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
 
-    case "login":
-        if chatID == userID {
-            b.adminHandler.HandleAdminMessage(ctx, chatID, userID, "/login "+strings.Join(args, " "))
-        }
+	case "login":
+		if chatID == userID {
+			b.adminHandler.HandleAdminMessage(ctx, chatID, userID, "/login "+strings.Join(args, " "))
+		}
 	case "пленки":
 		b.economyHandler.HandleBalance(ctx, chatID, userID)
 
@@ -289,8 +296,8 @@ func (b *Bot) SendMessageToUser(userID int64, text string) {
 	if _, err := b.api.Send(msg); err != nil {
 		log.WithError(err).WithField("user_id", userID).Debug("Не удалось отправить сообщение")
 	} else {
-        log.WithField("user_id", userID).Debug("message sent")
-    }
+		log.WithField("user_id", userID).Debug("message sent")
+	}
 }
 
 // CommandParser парсит русские команды с префиксами ! и .
@@ -301,7 +308,7 @@ type CommandParser struct {
 // NewCommandParser создаёт парсер команд.
 func NewCommandParser() *CommandParser {
 	return &CommandParser{
-		validPrefixes: []string{"!", ".","/"},
+		validPrefixes: []string{"!", ".", "/"},
 	}
 }
 

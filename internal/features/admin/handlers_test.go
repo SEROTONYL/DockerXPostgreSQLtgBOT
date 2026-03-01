@@ -556,10 +556,31 @@ func TestUserPicker_PaginationEdgesStayInBounds(t *testing.T) {
 func TestUserPicker_LongNameTruncation(t *testing.T) {
 	longName := strings.Repeat("А", 80)
 	btn := formatUserPickerButton(&members.Member{UserID: 12345, FirstName: longName})
-	if !strings.Contains(btn, "id:12345") {
+	if !strings.Contains(btn, "[12345]") {
 		t.Fatalf("expected stable id marker, got %q", btn)
 	}
-	if len([]rune(btn)) >= len([]rune("👤 "+longName+" · id:12345")) {
+	if len([]rune(btn)) > 40 {
 		t.Fatalf("expected truncated button text, got %q", btn)
+	}
+}
+
+func TestFormatMemberForPicker_UsernameAndIDFallback(t *testing.T) {
+	role := "модератор"
+	withUsername := &members.Member{UserID: 101, Username: "alice", Role: &role}
+	withoutUsername := &members.Member{UserID: 202, Role: &role}
+
+	if got := formatMemberForPicker(withUsername); got != "[МОДЕРАТОР] @alice" {
+		t.Fatalf("unexpected username format: %q", got)
+	}
+	if got := formatMemberForPicker(withoutUsername); got != "[МОДЕРАТОР] [202]" {
+		t.Fatalf("unexpected id fallback format: %q", got)
+	}
+}
+
+func TestFormatMemberForPicker_NormalizesAtPrefix(t *testing.T) {
+	role := "админ"
+	member := &members.Member{UserID: 303, Username: "@bob", Role: &role}
+	if got := formatMemberForPicker(member); got != "[АДМИН] @bob" {
+		t.Fatalf("unexpected normalized username format: %q", got)
 	}
 }

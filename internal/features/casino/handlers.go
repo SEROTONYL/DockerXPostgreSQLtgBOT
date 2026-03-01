@@ -27,7 +27,7 @@ func NewHandler(service *Service, bot *tgbotapi.BotAPI) *Handler {
 //
 // Р¤РѕСЂРјР°С‚ РѕС‚РІРµС‚Р°:
 //
-//	рџЋ° РЎР›РћРўР« рџЋ°
+//	🎰 СЛОТЫ 🎰
 //
 //	рџЌ’ рџЌ‹ рџ’Ћ рџЌЉ рџЌ‡
 //	рџЌ‹ рџЌ’ в­ђ рџЌ‹ рџЌ‰
@@ -42,18 +42,18 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 	if err != nil {
 		// РџСЂРѕРІРµСЂСЏРµРј С‚РёРї РѕС€РёР±РєРё РґР»СЏ РїРѕРЅСЏС‚РЅРѕРіРѕ СЃРѕРѕР±С‰РµРЅРёСЏ
 		if strings.Contains(err.Error(), "РЅРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ") {
-			h.sendMessage(chatID, fmt.Sprintf("вќЊ РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РїР»РµРЅРѕРє! РЎС‚Р°РІРєР°: %s",
+			h.sendMessage(chatID, fmt.Sprintf("❌ Недостаточно плёнок! Ставка: %s",
 				common.FormatBalance(h.service.cfg.CasinoSlotsBet)))
 		} else {
 			log.WithError(err).Error("РћС€РёР±РєР° СЃРїРёРЅР° СЃР»РѕС‚РѕРІ")
-			h.sendMessage(chatID, "вќЊ РћС€РёР±РєР° РїСЂРё РёРіСЂРµ РІ СЃР»РѕС‚С‹")
+			h.sendMessage(chatID, "❌ Ошибка при игре в слоты")
 		}
 		return
 	}
 
 	// Р¤РѕСЂРјРёСЂСѓРµРј РѕС‚РІРµС‚
 	var sb strings.Builder
-	sb.WriteString("рџЋ° РЎР›РћРўР« рџЋ°\n\n")
+	sb.WriteString("🎰 СЛОТЫ 🎰\n\n")
 
 	// РЎРµС‚РєР°
 	sb.WriteString(FormatGrid(result.Grid))
@@ -62,7 +62,7 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 	if result.IsWin {
 		sb.WriteString("\n")
 		for _, win := range result.WinLines {
-			sb.WriteString(fmt.Sprintf("вњ… Р›РёРЅРёСЏ %d: %dx %s в†’ %s\n",
+			sb.WriteString(fmt.Sprintf("✅ Линия %d: %dx %s → %s\n",
 				win.LineIndex+1, win.Count, win.Symbol,
 				common.FormatBalance(win.Payout)))
 		}
@@ -70,10 +70,10 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 
 	// РЎРєР°С‚С‚РµСЂ-Р±РѕРЅСѓСЃ
 	if result.ScatterCount >= 3 {
-		sb.WriteString(fmt.Sprintf("\nрџЋ° РЎРєР°С‚С‚РµСЂ Р±РѕРЅСѓСЃ! %d СЃРєР°С‚С‚РµСЂРѕРІ в†’ +%s",
+		sb.WriteString(fmt.Sprintf("\n🎰 Скаттер бонус! %d скаттеров → +%s",
 			result.ScatterCount, common.FormatBalance(result.ScatterWin)))
 		if result.FreeSpins > 0 {
-			sb.WriteString(fmt.Sprintf(" + %d С„СЂРёСЃРїРёРЅРѕРІ!", result.FreeSpins))
+			sb.WriteString(fmt.Sprintf(" + %d фриспинов!", result.FreeSpins))
 		}
 		sb.WriteString("\n")
 	}
@@ -81,14 +81,14 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 	// РС‚РѕРі
 	sb.WriteString("\n")
 	if result.IsWin {
-		sb.WriteString(fmt.Sprintf("рџ’° Р’С‹РїР»Р°С‚Р°: %s\n", common.FormatBalance(result.TotalPayout)))
+		sb.WriteString(fmt.Sprintf("💰 Выплата: %s\n", common.FormatBalance(result.TotalPayout)))
 	} else {
-		sb.WriteString("рџ’ё РќРµС‚ РІС‹РёРіСЂС‹С€Р°\n")
+		sb.WriteString("💸 Нет выигрыша\n")
 	}
 
 	// РўРµРєСѓС‰РёР№ Р±Р°Р»Р°РЅСЃ
 	balance, _ := h.service.economyService.GetBalance(ctx, userID)
-	sb.WriteString(fmt.Sprintf("рџ“Љ Р‘Р°Р»Р°РЅСЃ: %s", common.FormatBalance(balance)))
+	sb.WriteString(fmt.Sprintf("📊 Баланс: %s", common.FormatBalance(balance)))
 
 	h.sendMessage(chatID, sb.String())
 }
@@ -97,7 +97,7 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 //
 // Р¤РѕСЂРјР°С‚ РѕС‚РІРµС‚Р°:
 //
-//	рџ“Љ РЎРўРђРўРРЎРўРРљРђ РЎР›РћРўРћР’
+//	📊 СТАТИСТИКА СЛОТОВ
 //	Р’СЃРµРіРѕ СЃРїРёРЅРѕРІ: 47
 //	РџРѕСЃС‚Р°РІР»РµРЅРѕ: 2 350 РїР»РµРЅРѕРє
 //	Р’С‹РёРіСЂР°РЅРѕ: 2 120 РїР»РµРЅРѕРє
@@ -107,7 +107,7 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 func (h *Handler) HandleSlotStats(ctx context.Context, chatID int64, userID int64) {
 	stats, err := h.service.GetStats(ctx, userID)
 	if err != nil {
-		h.sendMessage(chatID, "рџ“Љ РЈ С‚РµР±СЏ РїРѕРєР° РЅРµС‚ СЃС‚Р°С‚РёСЃС‚РёРєРё СЃР»РѕС‚РѕРІ. РЎС‹РіСЂР°Р№ РїРµСЂРІС‹Р№ СЃРїРёРЅ!")
+		h.sendMessage(chatID, "📊 У тебя пока нет статистики слотов. Сыграй первый спин!")
 		return
 	}
 
@@ -118,13 +118,13 @@ func (h *Handler) HandleSlotStats(ctx context.Context, chatID int64, userID int6
 	}
 
 	text := fmt.Sprintf(
-		"рџ“Љ РЎРўРђРўРРЎРўРРљРђ РЎР›РћРўРћР’\n\n"+
-			"Р’СЃРµРіРѕ СЃРїРёРЅРѕРІ: %d\n"+
-			"РџРѕСЃС‚Р°РІР»РµРЅРѕ: %s %s\n"+
-			"Р’С‹РёРіСЂР°РЅРѕ: %s %s\n"+
-			"Р§РёСЃС‚Р°СЏ РїСЂРёР±С‹Р»СЊ: %s%s %s\n\n"+
-			"рџ’Ћ Р›СѓС‡С€РёР№ РІС‹РёРіСЂС‹С€: %s %s\n"+
-			"рџ“€ РўРІРѕР№ RTP: %.2f%%",
+		"📊 СТАТИСТИКА СЛОТОВ\n\n"+
+			"Всего спинов: %d\n"+
+			"Поставлено: %s %s\n"+
+			"Выиграно: %s %s\n"+
+			"Чистая прибыль: %s%s %s\n\n"+
+			"💎 Лучший выигрыш: %s %s\n"+
+			"📈 Твой RTP: %.2f%%",
 		stats.TotalSpins,
 		common.FormatNumber(stats.TotalWagered), common.PluralizeFilms(stats.TotalWagered),
 		common.FormatNumber(stats.TotalWon), common.PluralizeFilms(stats.TotalWon),

@@ -179,7 +179,7 @@ func (s *Service) SendReminders(ctx context.Context, sendFunc func(userID int64,
 		}
 
 		// РћС‚РїСЂР°РІР»СЏРµРј РЅР°РїРѕРјРёРЅР°РЅРёРµ
-		msg := fmt.Sprintf("вљ пёЏ РЈ С‚РµР±СЏ РѕРіРѕРЅРµРє %d %s! РќРµ Р·Р°Р±СѓРґСЊ РЅР°РїРёСЃР°С‚СЊ СЃРѕРѕР±С‰РµРЅРёСЏ, С‡С‚РѕР±С‹ РЅРµ РїРѕС‚РµСЂСЏС‚СЊ РїСЂРѕРіСЂРµСЃСЃ!",
+		msg := fmt.Sprintf("⚠️ У тебя огонек %d %s! Не забудь написать сообщения, чтобы не потерять прогресс!",
 			streak.CurrentStreak, common.PluralizeDays(streak.CurrentStreak))
 		sendFunc(streak.UserID, msg)
 
