@@ -5,15 +5,15 @@ package admin
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot/models"
 	log "github.com/sirupsen/logrus"
 
 	"serotonyl.ru/telegram-bot/internal/features/members"
+	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 const (
@@ -38,34 +38,36 @@ var userPickerPageLabelPattern = regexp.MustCompile(`(?i)^\s*стр\s*\d+\s*/\s*
 
 var editNeedlesNotModified = []string{"message is not modified"}
 var editNeedlesNotFound = []string{"message to edit not found", "message not found"}
+var editNeedlesCantBeEdited = []string{"message can't be edited", "message can\u2019t be edited"}
 var editNeedlesForbidden = []string{"bot was blocked by the user", "chat not found", "forbidden", "not enough rights"}
 
 // Handler обрабатывает админ-команды.
 type Handler struct {
 	service       *Service
 	memberService *members.Service
-	bot           *tgbotapi.BotAPI
-	sendFn        func(c tgbotapi.Chattable) (tgbotapi.Message, error)
-	editFn        func(chatID int64, messageID int, text string, keyboard tgbotapi.InlineKeyboardMarkup) error
+	bot           telegram.Client
+	sendFn        func(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error)
+	editFn        func(chatID int64, messageID int, text string, keyboard models.InlineKeyboardMarkup) error
 }
 
 type editErrorKind string
 
 const (
-	editErrNone        editErrorKind = "none"
-	editErrNotModified editErrorKind = "not_modified"
-	editErrNotFound    editErrorKind = "not_found"
-	editErrForbidden   editErrorKind = "forbidden"
-	editErrOther       editErrorKind = "other"
+	editErrNone         editErrorKind = "none"
+	editErrNotModified  editErrorKind = "not_modified"
+	editErrNotFound     editErrorKind = "not_found"
+	editErrCantBeEdited editErrorKind = "cant_be_edited"
+	editErrForbidden    editErrorKind = "forbidden"
+	editErrOther        editErrorKind = "other"
 )
 
 // NewHandler создаёт обработчик админ-панели.
-func NewHandler(service *Service, memberService *members.Service, bot *tgbotapi.BotAPI) *Handler {
+func NewHandler(service *Service, memberService *members.Service, bot telegram.Client) *Handler {
 	return &Handler{
 		service:       service,
 		memberService: memberService,
 		bot:           bot,
-		sendFn:        bot.Send,
+		sendFn:        bot.SendMessage,
 		editFn:        nil,
 	}
 }
@@ -162,24 +164,30 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 }
 
 // HandleAdminCallback обрабатывает callback_query кнопок админки.
-func (h *Handler) HandleAdminCallback(ctx context.Context, q *tgbotapi.CallbackQuery) bool {
-	if q == nil || q.From == nil || q.Message == nil {
+func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQuery) bool {
+	if q == nil {
+		return false
+	}
+	h.answerCallback(q.ID, "")
+
+	msg := callbackMessage(q)
+	if msg == nil {
 		return false
 	}
 
-	chatID := q.Message.Chat.ID
+	chatID := msg.Chat.ID
 	userID := q.From.ID
 	data := q.Data
-	panelMsgID := q.Message.MessageID
+	panelMsgID := msg.ID
 	h.attachPanelMessageID(userID, panelMsgID)
 
 	if !h.service.CanEnterAdmin(ctx, userID) {
-		h.answerCallback(q.ID, "❌ Доступ запрещён")
+		h.answerCallback(q.ID, "")
 		return true
 	}
 
 	if !h.service.HasActiveSession(ctx, userID) {
-		h.answerCallback(q.ID, "Сессия истекла")
+		h.answerCallback(q.ID, "")
 		h.sendMessage(chatID, "🔐 Введите пароль для доступа к админ-панели:")
 		h.service.SetState(userID, StateAwaitingPassword, nil)
 		return true
@@ -191,29 +199,25 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *tgbotapi.CallbackQ
 
 	switch data {
 	case cbAdminAssignRole:
-		h.answerCallback(q.ID, "")
 		h.startAssignRole(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAdminChangeRole:
-		h.answerCallback(q.ID, "")
 		h.startChangeRole(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAdminStub:
-		h.answerCallback(q.ID, "Функция в разработке")
+		h.answerCallback(q.ID, "")
 		return true
 	case cbRoleInputBack:
-		h.answerCallback(q.ID, "")
 		h.handleRoleInputBack(chatID, userID, panelMsgID)
 		return true
 	}
 
 	if strings.HasPrefix(data, cbPickerPrefix) {
-		h.answerCallback(q.ID, "")
 		h.handleUserPickerCallback(chatID, userID, panelMsgID, data)
 		return true
 	}
 
-	h.answerCallback(q.ID, "Неизвестная кнопка")
+	h.answerCallback(q.ID, "")
 	return true
 }
 
@@ -237,22 +241,22 @@ func (h *Handler) handlePasswordInput(ctx context.Context, chatID int64, userID 
 func (h *Handler) showKeyboard(chatID int64, userID int64, panelMsgID int) error {
 	h.ensureSender()
 
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Назначить роль", cbAdminAssignRole),
-			tgbotapi.NewInlineKeyboardButtonData("Сменить роль", cbAdminChangeRole),
+	keyboard := newInlineKeyboardMarkup(
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonData("Назначить роль", cbAdminAssignRole),
+			newInlineKeyboardButtonData("Сменить роль", cbAdminChangeRole),
 		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Выдать плёнки", cbAdminStub),
-			tgbotapi.NewInlineKeyboardButtonData("Отнять плёнки", cbAdminStub),
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonData("Выдать плёнки", cbAdminStub),
+			newInlineKeyboardButtonData("Отнять плёнки", cbAdminStub),
 		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Выдать кредит", cbAdminStub),
-			tgbotapi.NewInlineKeyboardButtonData("Аннулировать кредит", cbAdminStub),
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonData("Выдать кредит", cbAdminStub),
+			newInlineKeyboardButtonData("Аннулировать кредит", cbAdminStub),
 		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Создать сокращение", cbAdminStub),
-			tgbotapi.NewInlineKeyboardButtonData("Удалить сокращение", cbAdminStub),
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonData("Создать сокращение", cbAdminStub),
+			newInlineKeyboardButtonData("Удалить сокращение", cbAdminStub),
 		),
 	)
 
@@ -460,24 +464,29 @@ func (h *Handler) renderUserPickerPage(chatID, userID int64, panelMsgID int, sta
 		end = len(data.UsersSnapshot)
 	}
 
-	rows := make([][]tgbotapi.InlineKeyboardButton, 0, (end-start)+2)
-	for _, user := range data.UsersSnapshot[start:end] {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(formatUserPickerButton(user), pickerCallbackData(data.Mode, cbPickerSelect, user.UserID)),
+	usersOnPage := data.UsersSnapshot[start:end]
+	rows := make([][]models.InlineKeyboardButton, 0, len(usersOnPage)+2)
+	for i, user := range usersOnPage {
+		style := "primary"
+		if i%2 != 0 {
+			style = "success"
+		}
+		rows = append(rows, newInlineKeyboardRow(
+			newInlineKeyboardButtonDataStyled(formatUserPickerButton(user), pickerCallbackData(data.Mode, cbPickerSelect, user.UserID), style),
 		))
 	}
 
 	pageLabel := fmt.Sprintf("Стр %d/%d", data.PageIndex+1, totalPages)
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(userPickerPrevButton, pickerCallbackData(data.Mode, cbPickerPrev, 0)),
-		tgbotapi.NewInlineKeyboardButtonData(pageLabel, pickerCallbackData(data.Mode, "page", 0)),
-		tgbotapi.NewInlineKeyboardButtonData(userPickerNextButton, pickerCallbackData(data.Mode, cbPickerNext, 0)),
+	rows = append(rows, newInlineKeyboardRow(
+		newInlineKeyboardButtonData(userPickerPrevButton, pickerCallbackData(data.Mode, cbPickerPrev, 0)),
+		newInlineKeyboardButtonData(pageLabel, pickerCallbackData(data.Mode, "page", 0)),
+		newInlineKeyboardButtonData(userPickerNextButton, pickerCallbackData(data.Mode, cbPickerNext, 0)),
 	))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(userPickerBackButton, pickerCallbackData(data.Mode, cbPickerBack, 0)),
+	rows = append(rows, newInlineKeyboardRow(
+		newInlineKeyboardButtonDataStyled(userPickerBackButton, pickerCallbackData(data.Mode, cbPickerBack, 0), "danger"),
 	))
 
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	keyboard := newInlineKeyboardMarkup(rows...)
 
 	caption := "Выбери участника:"
 	if data.Mode == UserPickerAssignWithoutRole {
@@ -666,12 +675,11 @@ func pickerCallbackData(mode UserPickerMode, action string, userID int64) string
 	return fmt.Sprintf("%s%s:%s", cbPickerPrefix, mode, action)
 }
 
-func (h *Handler) answerCallback(callbackID, text string) {
-	if h.bot == nil || callbackID == "" {
+func (h *Handler) answerCallback(callbackID, _ string) {
+	if callbackID == "" {
 		return
 	}
-	cb := tgbotapi.NewCallback(callbackID, text)
-	if _, err := h.bot.Request(cb); err != nil {
+	if err := h.bot.AnswerCallback(callbackID); err != nil {
 		log.WithError(err).Debug("ошибка ответа на callback")
 	}
 }
@@ -679,8 +687,7 @@ func (h *Handler) answerCallback(callbackID, text string) {
 func (h *Handler) sendMessage(chatID int64, text string) {
 	h.ensureSender()
 
-	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := h.sendFn(msg); err != nil {
+	if _, err := h.sendFn(chatID, text, nil); err != nil {
 		log.WithError(err).Error("ошибка отправки сообщения")
 	}
 }
@@ -690,16 +697,16 @@ func (h *Handler) ensureSender() {
 		return
 	}
 	if h.bot != nil {
-		h.sendFn = h.bot.Send
+		h.sendFn = h.bot.SendMessage
 		return
 	}
 
-	h.sendFn = func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
-		return tgbotapi.Message{}, fmt.Errorf("send function is nil")
+	h.sendFn = func(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
+		return 0, fmt.Errorf("send function is nil")
 	}
 }
 
-func (h *Handler) editAdminScreen(chatID int64, messageID int, text string, keyboard tgbotapi.InlineKeyboardMarkup) error {
+func (h *Handler) editAdminScreen(chatID int64, messageID int, text string, keyboard models.InlineKeyboardMarkup) error {
 	if h.editFn != nil {
 		return h.editFn(chatID, messageID, text, keyboard)
 	}
@@ -707,32 +714,12 @@ func (h *Handler) editAdminScreen(chatID int64, messageID int, text string, keyb
 		return fmt.Errorf("bot or message id is not available")
 	}
 
-	cfg := tgbotapi.NewEditMessageText(chatID, messageID, text)
-	cfg.ReplyMarkup = &keyboard
-	if _, err := h.bot.Send(cfg); err != nil {
-		return err
-	}
-	return nil
+	return h.bot.EditMessage(chatID, messageID, text, &keyboard)
 }
 
 func classifyEditError(err error) (editErrorKind, int, string) {
 	if err == nil {
 		return editErrNone, 0, ""
-	}
-
-	var tgErr *tgbotapi.Error
-	if errors.As(err, &tgErr) {
-		d := strings.ToLower(tgErr.Message)
-		switch {
-		case containsAny(d, editNeedlesNotModified):
-			return editErrNotModified, tgErr.Code, tgErr.Message
-		case containsAny(d, editNeedlesNotFound):
-			return editErrNotFound, tgErr.Code, tgErr.Message
-		case containsAny(d, editNeedlesForbidden):
-			return editErrForbidden, tgErr.Code, tgErr.Message
-		default:
-			return editErrOther, tgErr.Code, tgErr.Message
-		}
 	}
 
 	d := strings.ToLower(err.Error())
@@ -741,6 +728,8 @@ func classifyEditError(err error) (editErrorKind, int, string) {
 		return editErrNotModified, 0, err.Error()
 	case containsAny(d, editNeedlesNotFound):
 		return editErrNotFound, 0, err.Error()
+	case containsAny(d, editNeedlesCantBeEdited):
+		return editErrCantBeEdited, 0, err.Error()
 	case containsAny(d, editNeedlesForbidden):
 		return editErrForbidden, 0, err.Error()
 	default:
@@ -812,35 +801,33 @@ func (h *Handler) renderChangeRoleInput(chatID, userID int64, selected *members.
 func (h *Handler) renderRoleInputScreen(chatID, userID int64, text string) {
 	panelMsgID := h.panelMessageIDFromState(userID)
 	if panelMsgID > 0 {
-		if err := h.renderAdminScreen(chatID, userID, panelMsgID, "role_input", text, tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(userPickerBackButton, cbRoleInputBack)),
+		if err := h.renderAdminScreen(chatID, userID, panelMsgID, "role_input", text, newInlineKeyboardMarkup(
+			newInlineKeyboardRow(newInlineKeyboardButtonData(userPickerBackButton, cbRoleInputBack)),
 		)); err != nil {
 			h.sendUIErrorHint(chatID, err)
 		}
 		return
 	}
-	if err := h.renderAdminScreen(chatID, userID, 0, "role_input", text, tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(userPickerBackButton, cbRoleInputBack)),
+	if err := h.renderAdminScreen(chatID, userID, 0, "role_input", text, newInlineKeyboardMarkup(
+		newInlineKeyboardRow(newInlineKeyboardButtonData(userPickerBackButton, cbRoleInputBack)),
 	)); err != nil {
 		h.sendUIErrorHint(chatID, err)
 	}
 }
 
-func (h *Handler) renderAdminScreen(chatID, userID int64, panelMsgID int, screenName, text string, keyboard tgbotapi.InlineKeyboardMarkup) error {
+func (h *Handler) renderAdminScreen(chatID, userID int64, panelMsgID int, screenName, text string, keyboard models.InlineKeyboardMarkup) error {
 	h.ensureSender()
 
 	if panelMsgID > 0 {
 		err := h.editAdminScreen(chatID, panelMsgID, text, keyboard)
-		if err == nil {
+		kind, tgCode, tgText := classifyEditError(err)
+		if kind == editErrNone || kind == editErrNotModified {
 			h.attachPanelMessageID(userID, panelMsgID)
 			return nil
 		}
 
-		kind, tgCode, tgText := classifyEditError(err)
 		switch kind {
-		case editErrNotModified:
-			return nil
-		case editErrNotFound:
+		case editErrNotFound, editErrCantBeEdited:
 			h.logAdminUIError(userID, chatID, panelMsgID, screenName, "edit", tgCode, tgText, err)
 		case editErrForbidden, editErrOther:
 			h.logAdminUIError(userID, chatID, panelMsgID, screenName, "edit", tgCode, tgText, err)
@@ -848,15 +835,13 @@ func (h *Handler) renderAdminScreen(chatID, userID int64, panelMsgID int, screen
 		}
 	}
 
-	msg := tgbotapi.NewMessage(chatID, text)
-	msg.ReplyMarkup = keyboard
-	sent, err := h.sendFn(msg)
+	sent, err := h.sendFn(chatID, text, &keyboard)
 	if err != nil {
 		_, tgCode, tgText := classifyEditError(err)
 		h.logAdminUIError(userID, chatID, panelMsgID, screenName, "send", tgCode, tgText, err)
 		return err
 	}
-	h.attachPanelMessageID(userID, sent.MessageID)
+	h.attachPanelMessageID(userID, sent)
 	return nil
 }
 
@@ -900,4 +885,33 @@ func (h *Handler) handleRoleInputBack(chatID, userID int64, panelMsgID int) {
 	default:
 		h.showKeyboardSafe(chatID, userID, panelMsgID)
 	}
+}
+
+func callbackMessage(q *models.CallbackQuery) *models.Message {
+	if q == nil {
+		return nil
+	}
+	return q.Message.Message
+}
+
+func shouldFallbackToSend(kind editErrorKind) bool {
+	return kind == editErrNotFound || kind == editErrCantBeEdited
+}
+
+func newInlineKeyboardMarkup(rows ...[]models.InlineKeyboardButton) models.InlineKeyboardMarkup {
+	return models.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+func newInlineKeyboardRow(buttons ...models.InlineKeyboardButton) []models.InlineKeyboardButton {
+	return buttons
+}
+
+func newInlineKeyboardButtonData(text, data string) models.InlineKeyboardButton {
+	return models.InlineKeyboardButton{Text: text, CallbackData: data}
+}
+
+func newInlineKeyboardButtonDataStyled(text, data, style string) models.InlineKeyboardButton {
+	b := newInlineKeyboardButtonData(text, data)
+	b.Style = style
+	return b
 }

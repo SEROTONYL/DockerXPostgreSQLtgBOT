@@ -1,4 +1,4 @@
-﻿// Package app РёРЅРёС†РёР°Р»РёР·РёСЂСѓРµС‚ РІСЃРµ РєРѕРјРїРѕРЅРµРЅС‚С‹ РїСЂРёР»РѕР¶РµРЅРёСЏ.
+// Package app РёРЅРёС†РёР°Р»РёР·РёСЂСѓРµС‚ РІСЃРµ РєРѕРјРїРѕРЅРµРЅС‚С‹ РїСЂРёР»РѕР¶РµРЅРёСЏ.
 // app.go вЂ” С‚РѕС‡РєР° СЃР±РѕСЂРєРё: СЃРѕР·РґР°С‘С‚ Р‘Р”-РїСѓР», СЂРµРїРѕР·РёС‚РѕСЂРёРё, СЃРµСЂРІРёСЃС‹, РѕР±СЂР°Р±РѕС‚С‡РёРєРё,
 // С„РёР»СЊС‚СЂС‹ Рё СЃРѕР±РёСЂР°РµС‚ РІСЃС‘ РІ РѕРґРёРЅ РѕР±СЉРµРєС‚ Bot.
 package app
@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	botapi "github.com/go-telegram/bot"
 	"github.com/jackc/pgx/v5/pgxpool"
 	log "github.com/sirupsen/logrus"
 
@@ -22,6 +22,7 @@ import (
 	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/features/streak"
 	"serotonyl.ru/telegram-bot/internal/jobs"
+	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 // App СЃРѕРґРµСЂР¶РёС‚ РІСЃРµ РєРѕРјРїРѕРЅРµРЅС‚С‹ РїСЂРёР»РѕР¶РµРЅРёСЏ.
@@ -29,7 +30,7 @@ type App struct {
 	Bot       *bot.Bot
 	Scheduler *jobs.Scheduler
 	DB        *pgxpool.Pool
-	BotAPI    *tgbotapi.BotAPI
+	BotAPI    *botapi.Bot
 }
 
 // New СЃРѕР·РґР°С‘С‚ Рё РёРЅРёС†РёР°Р»РёР·РёСЂСѓРµС‚ РїСЂРёР»РѕР¶РµРЅРёРµ.
@@ -47,12 +48,15 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	}
 
 	// === 2. Telegram Bot API ===
-	botAPI, err := tgbotapi.NewBotAPI(cfg.TelegramBotToken)
+	botAPI, err := botapi.New(cfg.TelegramBotToken)
 	if err != nil {
 		return nil, fmt.Errorf("РѕС€РёР±РєР° СЃРѕР·РґР°РЅРёСЏ Telegram API: %w", err)
 	}
-	botAPI.Debug = cfg.AppEnv == "development"
-	log.Infof("РђРІС‚РѕСЂРёР·РѕРІР°РЅ РєР°Рє @%s", botAPI.Self.UserName)
+	me, err := botAPI.GetMe(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("РѕС€РёР±РєР° getMe Telegram API: %w", err)
+	}
+	log.Infof("РђРІС‚РѕСЂРёР·РѕРІР°РЅ РєР°Рє @%s", me.Username)
 
 	// === 3. Р РµРїРѕР·РёС‚РѕСЂРёРё ===
 	memberRepo := members.NewRepository(pool)
@@ -70,20 +74,23 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	casinoService := casino.NewService(casinoRepo, economyService, cfg)
 	adminService := admin.NewService(adminRepo, memberRepo, cfg)
 
-	// === 5. РћР±СЂР°Р±РѕС‚С‡РёРєРё ===
+	// === 5. Telegram adapter ===
+	tg := telegram.NewAdapter(botAPI)
+
+	// === 6. РћР±СЂР°Р±РѕС‚С‡РёРєРё ===
 	memberHandler := members.NewHandler(memberService)
-	economyHandler := economy.NewHandler(economyService, memberService, botAPI)
-	streakHandler := streak.NewHandler(streakService, botAPI, cfg)
-	karmaHandler := karma.NewHandler(karmaService, botAPI)
-	casinoHandler := casino.NewHandler(casinoService, botAPI)
-	adminHandler := admin.NewHandler(adminService, memberService, botAPI)
+	economyHandler := economy.NewHandler(economyService, memberService, tg)
+	streakHandler := streak.NewHandler(streakService, tg, cfg)
+	karmaHandler := karma.NewHandler(karmaService, tg)
+	casinoHandler := casino.NewHandler(casinoService, tg)
+	adminHandler := admin.NewHandler(adminService, memberService, tg)
 
 	// === 6. Р¤РёР»СЊС‚СЂС‹ ===
-	chatFilter := filters.NewChatFilter(cfg.FloodChatID, memberService, botAPI)
+	chatFilter := filters.NewChatFilter(cfg.FloodChatID, memberService, tg)
 
 	// === 7. РЎРѕР±РёСЂР°РµРј Р±РѕС‚Р° ===
 	b := bot.New(
-		botAPI, cfg,
+		botAPI, tg, cfg,
 		memberService, memberHandler,
 		economyService, economyHandler,
 		streakService, streakHandler,

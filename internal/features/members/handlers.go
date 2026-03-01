@@ -5,7 +5,7 @@ package members
 import (
 	"context"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot/models"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -25,10 +25,10 @@ func NewHandler(service *Service) *Handler {
 // Для каждого нового участника:
 // 1. Регистрирует в таблице members
 // 2. Создаёт связанные записи (баланс, стрик, карма) — через другие сервисы
-func (h *Handler) HandleNewChatMembers(ctx context.Context, newMembers []tgbotapi.User) {
+func (h *Handler) HandleNewChatMembers(ctx context.Context, newMembers []models.User) {
 	for _, user := range newMembers {
 		// Регистрируем каждого нового участника
-		err := h.service.HandleNewMember(ctx, user.ID, user.UserName, user.FirstName, user.LastName)
+		err := h.service.HandleNewMember(ctx, user.ID, user.Username, user.FirstName, user.LastName)
 		if err != nil {
 			log.WithError(err).WithField("user_id", user.ID).Error("Ошибка регистрации нового участника")
 		}

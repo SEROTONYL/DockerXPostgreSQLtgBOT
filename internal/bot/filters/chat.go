@@ -3,19 +3,20 @@ package filters
 import (
 	"context"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot/models"
 	log "github.com/sirupsen/logrus"
 
 	"serotonyl.ru/telegram-bot/internal/features/members"
+	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 type ChatFilter struct {
 	floodChatID   int64
 	memberService *members.Service
-	bot           *tgbotapi.BotAPI
+	bot           telegram.Client
 }
 
-func NewChatFilter(floodChatID int64, memberService *members.Service, bot *tgbotapi.BotAPI) *ChatFilter {
+func NewChatFilter(floodChatID int64, memberService *members.Service, bot telegram.Client) *ChatFilter {
 	return &ChatFilter{
 		floodChatID:   floodChatID,
 		memberService: memberService,
@@ -23,8 +24,8 @@ func NewChatFilter(floodChatID int64, memberService *members.Service, bot *tgbot
 	}
 }
 
-func (f *ChatFilter) CheckAccess(ctx context.Context, message *tgbotapi.Message) bool {
-	if message == nil || message.Chat == nil {
+func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) bool {
+	if message == nil {
 		log.WithField("component", "ChatFilter").Warn("nil message/chat")
 		return false
 	}
@@ -67,7 +68,7 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *tgbotapi.Message)
 	}
 
 	// 2) Личка: сначала быстро по БД
-	if message.Chat.IsPrivate() {
+	if message.Chat.Type == models.ChatTypePrivate {
 		isMember, err := f.memberService.IsMember(ctx, userID)
 		if err != nil {
 			logger.WithError(err).Error("member check failed (db)")
@@ -79,34 +80,28 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *tgbotapi.Message)
 		}
 
 		// 2.1) БД не знает пользователя: проверяем членство через Telegram API
-		cm, err := f.bot.GetChatMember(tgbotapi.GetChatMemberConfig{
-			ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
-				ChatID: f.floodChatID,
-				UserID: userID, // <-- ВАЖНО: int64, без int(...)
-			},
-		})
+		cm, err := f.bot.GetChatMember(f.floodChatID, userID)
 		if err != nil {
 			logger.WithError(err).Error("member check failed (telegram GetChatMember)")
 			return false
 		}
 
-		switch cm.Status {
-		case "creator", "administrator", "member", "restricted":
+		switch cm.Type {
+		case models.ChatMemberTypeOwner, models.ChatMemberTypeAdministrator, models.ChatMemberTypeMember, models.ChatMemberTypeRestricted:
 			if err := f.memberService.EnsureMember(
 				ctx, userID,
-				message.From.UserName,
+				message.From.Username,
 				message.From.FirstName,
 				message.From.LastName,
 			); err != nil {
 				logger.WithError(err).Warn("failed to backfill member to DB (allowing anyway)")
 			}
-			logger.WithField("tg_status", cm.Status).Info("allow: private (telegram member, backfilled)")
+			logger.WithField("tg_status", cm.Type).Info("allow: private (telegram member, backfilled)")
 			return true
 
 		default:
-			logger.WithField("tg_status", cm.Status).Info("deny: private (not a chat member)")
-			msg := tgbotapi.NewMessage(chatID, "❌ Бот работает только для участников основного чата")
-			if _, sendErr := f.bot.Send(msg); sendErr != nil {
+			logger.WithField("tg_status", cm.Type).Info("deny: private (not a chat member)")
+			if _, sendErr := f.bot.SendMessage(chatID, "❌ Бот работает только для участников основного чата", nil); sendErr != nil {
 				logger.WithError(sendErr).Warn("failed to send deny message")
 			}
 			return false

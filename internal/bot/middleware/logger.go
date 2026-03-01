@@ -1,14 +1,14 @@
 package middleware
 
 import (
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot/models"
 	log "github.com/sirupsen/logrus"
 )
 
 // LogMessage логирует входящее сообщение.
 // message.Chat/message.From могут быть nil на service/channel updates.
-func LogMessage(message *tgbotapi.Message) {
-	if message == nil || message.Chat == nil || message.From == nil {
+func LogMessage(message *models.Message) {
+	if message == nil || message.From == nil {
 		return
 	}
 
@@ -21,7 +21,7 @@ func LogMessage(message *tgbotapi.Message) {
 		"user_id":   message.From.ID,
 		"chat_id":   message.Chat.ID,
 		"chat_type": message.Chat.Type,
-		"username":  message.From.UserName,
+		"username":  message.From.Username,
 		"text":      text,
 	}).Debug("Входящее сообщение")
 }
