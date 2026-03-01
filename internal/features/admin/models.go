@@ -2,7 +2,11 @@
 // models.go описывает структуры сессий и попыток входа.
 package admin
 
-import "time"
+import (
+	"time"
+
+	"serotonyl.ru/telegram-bot/internal/features/members"
+)
 
 // AdminSession — активная сессия администратора.
 type AdminSession struct {
@@ -26,17 +30,34 @@ type LoginAttempt struct {
 // AdminState — состояние диалога с админом (конечный автомат).
 // Админ-панель работает по шагам: выбор действия → выбор пользователя → ввод роли.
 type AdminState struct {
-	State      string      // Текущее состояние ("", "awaiting_password", "assign_role_select", ...)
-	Data       interface{} // Данные контекста (список пользователей, выбранный пользователь)
-	ExpiresAt  time.Time   // Когда состояние истекает (5 минут)
+	State     string      // Текущее состояние ("", "awaiting_password", "assign_role_select", ...)
+	Data      interface{} // Данные контекста (список пользователей, выбранный пользователь)
+	ExpiresAt time.Time   // Когда состояние истекает (5 минут)
+}
+
+// UserPickerMode определяет режим выборщика пользователей.
+type UserPickerMode string
+
+const (
+	UserPickerAssignWithoutRole UserPickerMode = "assign_without_role"
+	UserPickerChangeWithRole    UserPickerMode = "change_with_role"
+)
+
+// UserPickerData хранит состояние постраничного выбора пользователя в админ-флоу.
+type UserPickerData struct {
+	Mode           UserPickerMode
+	UsersSnapshot  []*members.Member
+	PageIndex      int
+	PageSize       int
+	SelectedUserID int64
 }
 
 // Возможные состояния админ-диалога
 const (
-	StateNone              = ""                    // Нет активного состояния
-	StateAwaitingPassword  = "awaiting_password"   // Ждём пароль
-	StateAssignRoleSelect  = "assign_role_select"  // Ждём выбор пользователя (без роли)
-	StateAssignRoleText    = "assign_role_text"    // Ждём текст новой роли
-	StateChangeRoleSelect  = "change_role_select"  // Ждём выбор пользователя (с ролью)
-	StateChangeRoleText    = "change_role_text"    // Ждём новую роль
+	StateNone             = ""                   // Нет активного состояния
+	StateAwaitingPassword = "awaiting_password"  // Ждём пароль
+	StateAssignRoleSelect = "assign_role_select" // Ждём выбор пользователя (без роли)
+	StateAssignRoleText   = "assign_role_text"   // Ждём текст новой роли
+	StateChangeRoleSelect = "change_role_select" // Ждём выбор пользователя (с ролью)
+	StateChangeRoleText   = "change_role_text"   // Ждём новую роль
 )

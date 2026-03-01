@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -193,5 +194,232 @@ func TestHandleAdminMessage_LoginSingleStepAttemptsPassword(t *testing.T) {
 	}
 	if state := svc.GetState(77); state != nil {
 		t.Fatalf("expected no awaiting_password state after single-step attempt")
+	}
+}
+
+type fakeMemberRepoPicker struct {
+	member           *members.Member
+	usersWithoutRole []*members.Member
+	usersWithRole    []*members.Member
+}
+
+func (f *fakeMemberRepoPicker) GetByUserID(ctx context.Context, userID int64) (*members.Member, error) {
+	if f.member != nil {
+		return f.member, nil
+	}
+	return nil, errors.New("not found")
+}
+func (f *fakeMemberRepoPicker) GetUsersWithoutRole(ctx context.Context) ([]*members.Member, error) {
+	return f.usersWithoutRole, nil
+}
+func (f *fakeMemberRepoPicker) GetUsersWithRole(ctx context.Context) ([]*members.Member, error) {
+	return f.usersWithRole, nil
+}
+func (f *fakeMemberRepoPicker) UpdateRole(ctx context.Context, userID int64, role string) error {
+	return nil
+}
+func (f *fakeMemberRepoPicker) UpdateAdminFlag(ctx context.Context, userID int64, isAdmin bool) error {
+	return nil
+}
+
+func TestAssignRole_UserButtonSelectMovesToRoleTextState(t *testing.T) {
+	repo := &fakeMemberRepoPicker{
+		member:           &members.Member{IsAdmin: true},
+		usersWithoutRole: []*members.Member{{UserID: 101, Username: "alice", FirstName: "Alice"}},
+	}
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, repo, &config.Config{})
+	var sent []string
+	h := &Handler{service: svc, sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+		if m, ok := c.(tgbotapi.MessageConfig); ok {
+			sent = append(sent, m.Text)
+		}
+		return tgbotapi.Message{}, nil
+	}}
+
+	if !h.HandleAdminMessage(context.Background(), 1, 77, "Назначить роль") {
+		t.Fatalf("expected handled")
+	}
+	if !h.HandleAdminMessage(context.Background(), 1, 77, "👤 @alice · id:101") {
+		t.Fatalf("expected handled")
+	}
+
+	state := svc.GetState(77)
+	if state == nil || state.State != StateAssignRoleText {
+		t.Fatalf("expected %s state, got %#v", StateAssignRoleText, state)
+	}
+	if len(sent) == 0 || !strings.Contains(sent[len(sent)-1], "Введите роль") {
+		t.Fatalf("expected role prompt, got %#v", sent)
+	}
+}
+
+func TestUserPicker_PaginationNextPrev(t *testing.T) {
+	users := make([]*members.Member, 0, 9)
+	for i := 1; i <= 9; i++ {
+		users = append(users, &members.Member{UserID: int64(1000 + i), Username: fmt.Sprintf("u%d", i), FirstName: "User"})
+	}
+	repo := &fakeMemberRepoPicker{member: &members.Member{IsAdmin: true}, usersWithoutRole: users}
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, repo, &config.Config{})
+	h := &Handler{service: svc, sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) { return tgbotapi.Message{}, nil }}
+
+	h.HandleAdminMessage(context.Background(), 1, 77, "Назначить роль")
+	state := svc.GetState(77)
+	if state == nil {
+		t.Fatalf("expected state")
+	}
+	data, ok := state.Data.(*UserPickerData)
+	if !ok {
+		t.Fatalf("expected picker data")
+	}
+	if data.PageIndex != 0 {
+		t.Fatalf("expected page 0")
+	}
+
+	h.HandleAdminMessage(context.Background(), 1, 77, userPickerNextButton)
+	if data.PageIndex != 1 {
+		t.Fatalf("expected page 1, got %d", data.PageIndex)
+	}
+
+	h.HandleAdminMessage(context.Background(), 1, 77, userPickerPrevButton)
+	if data.PageIndex != 0 {
+		t.Fatalf("expected page 0 after prev, got %d", data.PageIndex)
+	}
+}
+
+func TestUserPicker_BackClearsStateAndShowsMenu(t *testing.T) {
+	repo := &fakeMemberRepoPicker{
+		member:           &members.Member{IsAdmin: true},
+		usersWithoutRole: []*members.Member{{UserID: 101, Username: "alice", FirstName: "Alice"}},
+	}
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, repo, &config.Config{})
+	var markups []interface{}
+	h := &Handler{service: svc, sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+		if m, ok := c.(tgbotapi.MessageConfig); ok {
+			markups = append(markups, m.ReplyMarkup)
+		}
+		return tgbotapi.Message{}, nil
+	}}
+
+	h.HandleAdminMessage(context.Background(), 1, 77, "Назначить роль")
+	h.HandleAdminMessage(context.Background(), 1, 77, userPickerBackButton)
+
+	if state := svc.GetState(77); state != nil {
+		t.Fatalf("expected cleared state")
+	}
+	if len(markups) == 0 {
+		t.Fatalf("expected keyboard markup messages")
+	}
+}
+
+func TestUserPicker_InvalidInputReRenders(t *testing.T) {
+	repo := &fakeMemberRepoPicker{
+		member:           &members.Member{IsAdmin: true},
+		usersWithoutRole: []*members.Member{{UserID: 101, Username: "alice", FirstName: "Alice"}},
+	}
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, repo, &config.Config{})
+	var sent []string
+	h := &Handler{service: svc, sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+		if m, ok := c.(tgbotapi.MessageConfig); ok {
+			sent = append(sent, m.Text)
+		}
+		return tgbotapi.Message{}, nil
+	}}
+
+	h.HandleAdminMessage(context.Background(), 1, 77, "Назначить роль")
+	h.HandleAdminMessage(context.Background(), 1, 77, "какой-то текст")
+
+	found := false
+	for _, s := range sent {
+		if strings.Contains(s, "Некорректный выбор") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected invalid selection message, got %#v", sent)
+	}
+}
+
+func TestUserPicker_ExpiredStateHandledGracefully(t *testing.T) {
+	repo := &fakeMemberRepoPicker{member: &members.Member{IsAdmin: true}}
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, repo, &config.Config{})
+	var sent []string
+	h := &Handler{service: svc, sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+		if m, ok := c.(tgbotapi.MessageConfig); ok {
+			sent = append(sent, m.Text)
+		}
+		return tgbotapi.Message{}, nil
+	}}
+
+	svc.SetState(77, StateAssignRoleSelect, &UserPickerData{Mode: UserPickerAssignWithoutRole, UsersSnapshot: []*members.Member{{UserID: 1}}, PageSize: 8})
+	svc.states[77].ExpiresAt = time.Now().Add(-time.Minute)
+
+	h.handleAssignRoleSelect(context.Background(), 1, 77, "👤 test · id:1")
+
+	if len(sent) == 0 || !strings.Contains(sent[0], "Состояние сброшено") {
+		t.Fatalf("expected graceful reset message, got %#v", sent)
+	}
+}
+
+func TestStartAssignRole_EmptyListShowsMessage(t *testing.T) {
+	repo := &fakeMemberRepoPicker{member: &members.Member{IsAdmin: true}, usersWithoutRole: []*members.Member{}}
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, repo, &config.Config{})
+	var sent []string
+	h := &Handler{service: svc, sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+		if m, ok := c.(tgbotapi.MessageConfig); ok {
+			sent = append(sent, m.Text)
+		}
+		return tgbotapi.Message{}, nil
+	}}
+
+	h.HandleAdminMessage(context.Background(), 1, 77, "Назначить роль")
+
+	if len(sent) == 0 || !strings.Contains(sent[0], "Все пользователи уже имеют роли") {
+		t.Fatalf("expected empty-list message, got %#v", sent)
+	}
+	if state := svc.GetState(77); state != nil {
+		t.Fatalf("expected no picker state for empty list")
+	}
+}
+
+func TestUserPicker_PaginationEdgesStayInBounds(t *testing.T) {
+	users := make([]*members.Member, 0, 9)
+	for i := 1; i <= 9; i++ {
+		users = append(users, &members.Member{UserID: int64(2000 + i), Username: fmt.Sprintf("edge%d", i), FirstName: "Edge"})
+	}
+	repo := &fakeMemberRepoPicker{member: &members.Member{IsAdmin: true}, usersWithoutRole: users}
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, repo, &config.Config{})
+	h := &Handler{service: svc, sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) { return tgbotapi.Message{}, nil }}
+
+	h.HandleAdminMessage(context.Background(), 1, 77, "Назначить роль")
+	state := svc.GetState(77)
+	data := state.Data.(*UserPickerData)
+
+	// already at first page: prev should keep 0
+	h.HandleAdminMessage(context.Background(), 1, 77, userPickerPrevButton)
+	if data.PageIndex != 0 {
+		t.Fatalf("expected first page to stay at 0, got %d", data.PageIndex)
+	}
+
+	// go to last page
+	h.HandleAdminMessage(context.Background(), 1, 77, userPickerNextButton)
+	if data.PageIndex != 1 {
+		t.Fatalf("expected to move to last page 1, got %d", data.PageIndex)
+	}
+
+	// already at last page: next should stay last
+	h.HandleAdminMessage(context.Background(), 1, 77, userPickerNextButton)
+	if data.PageIndex != 1 {
+		t.Fatalf("expected last page to stay at 1, got %d", data.PageIndex)
+	}
+}
+
+func TestUserPicker_LongNameTruncation(t *testing.T) {
+	longName := strings.Repeat("А", 80)
+	btn := formatUserPickerButton(&members.Member{UserID: 12345, FirstName: longName})
+	if !strings.Contains(btn, "id:12345") {
+		t.Fatalf("expected stable id marker, got %q", btn)
+	}
+	if len([]rune(btn)) >= len([]rune("👤 "+longName+" · id:12345")) {
+		t.Fatalf("expected truncated button text, got %q", btn)
 	}
 }
