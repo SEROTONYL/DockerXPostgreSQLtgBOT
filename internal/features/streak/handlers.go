@@ -44,7 +44,7 @@ func (h *Handler) HandleOgonek(ctx context.Context, chatID int64, userID int64) 
 	streak, err := h.service.GetStreak(ctx, userID)
 	if err != nil {
 		log.WithError(err).Error("РћС€РёР±РєР° РїРѕР»СѓС‡РµРЅРёСЏ СЃС‚СЂРёРєР°")
-		h.sendMessage(chatID, "вќЊ РћС€РёР±РєР° РїРѕР»СѓС‡РµРЅРёСЏ РґР°РЅРЅС‹С… СЃС‚СЂРёРєР°")
+		h.sendMessage(chatID, "❌ Ошибка получения данных стрика")
 		return
 	}
 
@@ -53,10 +53,10 @@ func (h *Handler) HandleOgonek(ctx context.Context, chatID int64, userID int64) 
 		// РќРѕСЂРјР° СѓР¶Рµ РІС‹РїРѕР»РЅРµРЅР° СЃРµРіРѕРґРЅСЏ
 		bonus := CalculateReward(streak.CurrentStreak - 1) // -1 С‚.Рє. СѓР¶Рµ СѓРІРµР»РёС‡РµРЅ
 		text = fmt.Sprintf(
-			"рџ”Ґ РўРІРѕР№ РѕРіРѕРЅРµРє\n\n"+
-				"РўРµРєСѓС‰Р°СЏ СЃРµСЂРёСЏ: %d %s\n"+
-				"Р›СѓС‡С€Р°СЏ СЃРµСЂРёСЏ: %d %s\n\n"+
-				"вњ… РќРѕСЂРјР° РІС‹РїРѕР»РЅРµРЅР°! +%s",
+			"🔥 Твой огонек\n\n"+
+				"Текущая серия: %d %s\n"+
+				"Лучшая серия: %d %s\n\n"+
+				"✅ Норма выполнена! +%s",
 			streak.CurrentStreak, common.PluralizeDays(streak.CurrentStreak),
 			streak.LongestStreak, common.PluralizeDays(streak.LongestStreak),
 			common.FormatBalance(bonus),
@@ -70,12 +70,12 @@ func (h *Handler) HandleOgonek(ctx context.Context, chatID int64, userID int64) 
 		nextBonus := CalculateReward(streak.CurrentStreak)
 
 		text = fmt.Sprintf(
-			"рџ”Ґ РўРІРѕР№ РѕРіРѕРЅРµРє\n\n"+
-				"РўРµРєСѓС‰Р°СЏ СЃРµСЂРёСЏ: %d %s\n"+
-				"Р›СѓС‡С€Р°СЏ СЃРµСЂРёСЏ: %d %s\n\n"+
-				"рџ“Љ РЎРµРіРѕРґРЅСЏ: %d/%d %s\n"+
-				"РЎС‚Р°С‚СѓСЃ: Р’ РїСЂРѕС†РµСЃСЃРµ (РѕСЃС‚Р°Р»РѕСЃСЊ %d)\n"+
-				"РќР°РіСЂР°РґР°: %s",
+			"🔥 Твой огонек\n\n"+
+				"Текущая серия: %d %s\n"+
+				"Лучшая серия: %d %s\n\n"+
+				"📊 Сегодня: %d/%d %s\n"+
+				"Статус: В процессе (осталось %d)\n"+
+				"Награда: %s",
 			streak.CurrentStreak, common.PluralizeDays(streak.CurrentStreak),
 			streak.LongestStreak, common.PluralizeDays(streak.LongestStreak),
 			streak.MessagesToday, h.cfg.StreakMessagesNeed,

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,5 +79,40 @@ func TestCanEnterAdmin_AllowWhenMemberIsAdmin(t *testing.T) {
 	allowed := svc.CanEnterAdmin(context.Background(), 555)
 	if !allowed {
 		t.Fatalf("expected allow")
+	}
+}
+
+type fakeAdminRepoAttempts struct{ attempts int }
+
+func (f *fakeAdminRepoAttempts) CreateSession(ctx context.Context, session *AdminSession) error {
+	return nil
+}
+func (f *fakeAdminRepoAttempts) GetActiveSession(ctx context.Context, userID int64) (*AdminSession, error) {
+	return nil, nil
+}
+func (f *fakeAdminRepoAttempts) DeactivateSession(ctx context.Context, userID int64) error {
+	return nil
+}
+func (f *fakeAdminRepoAttempts) UpdateActivity(ctx context.Context, userID int64) error { return nil }
+func (f *fakeAdminRepoAttempts) LogAttempt(ctx context.Context, userID int64, success bool) error {
+	return nil
+}
+func (f *fakeAdminRepoAttempts) GetRecentAttempts(ctx context.Context, userID int64, period time.Duration) (int, error) {
+	return f.attempts, nil
+}
+
+func TestVerifyPassword_NoMojibakeInErrors(t *testing.T) {
+	svc := NewService(&fakeAdminRepoAttempts{attempts: 3}, &fakeMemberRepo{}, &config.Config{})
+	err := svc.VerifyPassword(context.Background(), 1, "any")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	for _, bad := range []string{"РќРµ", "РѕР»", "РµСЂ", "Р°Рґ"} {
+		if strings.Contains(err.Error(), bad) {
+			t.Fatalf("error contains mojibake marker %q: %q", bad, err.Error())
+		}
+	}
+	if err.Error() != "слишком много попыток, подождите 1 час" {
+		t.Fatalf("unexpected text: %q", err.Error())
 	}
 }

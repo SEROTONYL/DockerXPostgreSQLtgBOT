@@ -20,6 +20,15 @@ const (
 	userPickerNextButton = "▶️"
 	userPickerBackButton = "⬅️ Назад"
 	userPickerPageSize   = 8
+
+	cbAdminAssignRole = "admin:assign_role"
+	cbAdminChangeRole = "admin:change_role"
+	cbAdminStub       = "admin:stub"
+	cbPickerPrefix    = "admin:picker:"
+	cbPickerSelect    = "select"
+	cbPickerPrev      = "prev"
+	cbPickerNext      = "next"
+	cbPickerBack      = "back"
 )
 
 var userPickerIDPattern = regexp.MustCompile(`(?i)(?:id:|#)(\d+)`)
@@ -130,6 +139,56 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 	return false
 }
 
+// HandleAdminCallback обрабатывает callback_query кнопок админки.
+func (h *Handler) HandleAdminCallback(ctx context.Context, q *tgbotapi.CallbackQuery) bool {
+	if q == nil || q.From == nil || q.Message == nil {
+		return false
+	}
+
+	chatID := q.Message.Chat.ID
+	userID := q.From.ID
+	data := q.Data
+
+	if !h.service.CanEnterAdmin(ctx, userID) {
+		h.answerCallback(q.ID, "❌ Доступ запрещён")
+		return true
+	}
+
+	if !h.service.HasActiveSession(ctx, userID) {
+		h.answerCallback(q.ID, "Сессия истекла")
+		h.sendMessage(chatID, "🔐 Введите пароль для доступа к админ-панели:")
+		h.service.SetState(userID, StateAwaitingPassword, nil)
+		return true
+	}
+
+	if err := h.service.repo.UpdateActivity(ctx, userID); err != nil {
+		log.WithError(err).WithField("user_id", userID).Warn("ошибка обновления активности админ-сессии")
+	}
+
+	switch data {
+	case cbAdminAssignRole:
+		h.answerCallback(q.ID, "")
+		h.startAssignRole(ctx, chatID, userID)
+		return true
+	case cbAdminChangeRole:
+		h.answerCallback(q.ID, "")
+		h.startChangeRole(ctx, chatID, userID)
+		return true
+	case cbAdminStub:
+		h.answerCallback(q.ID, "Функция в разработке")
+		return true
+	}
+
+	if strings.HasPrefix(data, cbPickerPrefix) {
+		h.answerCallback(q.ID, "")
+		h.handleUserPickerCallback(chatID, userID, data)
+		return true
+	}
+
+	h.answerCallback(q.ID, "Неизвестная кнопка")
+	return true
+}
+
 // handlePasswordInput обрабатывает ввод пароля.
 func (h *Handler) handlePasswordInput(ctx context.Context, chatID int64, userID int64, password string) {
 	err := h.service.VerifyPassword(ctx, userID, password)
@@ -148,22 +207,22 @@ func (h *Handler) handlePasswordInput(ctx context.Context, chatID int64, userID 
 func (h *Handler) showKeyboard(chatID int64) {
 	h.ensureSender()
 
-	keyboard := tgbotapi.NewReplyKeyboard(
-		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("Назначить роль"),
-			tgbotapi.NewKeyboardButton("Сменить роль"),
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Назначить роль", cbAdminAssignRole),
+			tgbotapi.NewInlineKeyboardButtonData("Сменить роль", cbAdminChangeRole),
 		),
-		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("Выдать плёнки"),
-			tgbotapi.NewKeyboardButton("Отнять плёнки"),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Выдать плёнки", cbAdminStub),
+			tgbotapi.NewInlineKeyboardButtonData("Отнять плёнки", cbAdminStub),
 		),
-		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("Выдать кредит"),
-			tgbotapi.NewKeyboardButton("Аннулировать кредит"),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Выдать кредит", cbAdminStub),
+			tgbotapi.NewInlineKeyboardButtonData("Аннулировать кредит", cbAdminStub),
 		),
-		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("Создать сокращение"),
-			tgbotapi.NewKeyboardButton("Удалить сокращение"),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Создать сокращение", cbAdminStub),
+			tgbotapi.NewInlineKeyboardButtonData("Удалить сокращение", cbAdminStub),
 		),
 	)
 
@@ -348,24 +407,24 @@ func (h *Handler) renderUserPickerPage(chatID, userID int64, stateName string) {
 		end = len(data.UsersSnapshot)
 	}
 
-	rows := make([][]tgbotapi.KeyboardButton, 0, (end-start)+2)
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, (end-start)+2)
 	for _, user := range data.UsersSnapshot[start:end] {
-		rows = append(rows, tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton(formatUserPickerButton(user)),
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(formatUserPickerButton(user), pickerCallbackData(data.Mode, cbPickerSelect, user.UserID)),
 		))
 	}
 
 	pageLabel := fmt.Sprintf("Стр %d/%d", data.PageIndex+1, totalPages)
-	rows = append(rows, tgbotapi.NewKeyboardButtonRow(
-		tgbotapi.NewKeyboardButton(userPickerPrevButton),
-		tgbotapi.NewKeyboardButton(pageLabel),
-		tgbotapi.NewKeyboardButton(userPickerNextButton),
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(userPickerPrevButton, pickerCallbackData(data.Mode, cbPickerPrev, 0)),
+		tgbotapi.NewInlineKeyboardButtonData(pageLabel, pickerCallbackData(data.Mode, "page", 0)),
+		tgbotapi.NewInlineKeyboardButtonData(userPickerNextButton, pickerCallbackData(data.Mode, cbPickerNext, 0)),
 	))
-	rows = append(rows, tgbotapi.NewKeyboardButtonRow(
-		tgbotapi.NewKeyboardButton(userPickerBackButton),
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(userPickerBackButton, pickerCallbackData(data.Mode, cbPickerBack, 0)),
 	))
 
-	keyboard := tgbotapi.NewReplyKeyboard(rows...)
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
 
 	caption := "Выбери участника:"
 	if data.Mode == UserPickerAssignWithoutRole {
@@ -373,13 +432,63 @@ func (h *Handler) renderUserPickerPage(chatID, userID int64, stateName string) {
 	} else if data.Mode == UserPickerChangeWithRole {
 		caption = "Выбери участника с ролью:"
 	}
-	caption = fmt.Sprintf("%s\nПоказаны имена в кнопках (id — точный идентификатор).", caption)
+	caption = fmt.Sprintf("%s\nФормат: [РОЛЬ] @username, иначе [РОЛЬ] [id].", caption)
 
 	h.ensureSender()
 	msg := tgbotapi.NewMessage(chatID, caption)
 	msg.ReplyMarkup = keyboard
 	if _, err := h.sendFn(msg); err != nil {
 		log.WithError(err).Error("ошибка отправки user picker")
+	}
+}
+
+func (h *Handler) handleUserPickerCallback(chatID, userID int64, data string) {
+	parts := strings.Split(data, ":")
+	if len(parts) < 4 {
+		return
+	}
+
+	mode := UserPickerMode(parts[2])
+	action := parts[3]
+	stateName := StateAssignRoleSelect
+	if mode == UserPickerChangeWithRole {
+		stateName = StateChangeRoleSelect
+	}
+
+	switch action {
+	case cbPickerBack:
+		h.service.ClearState(userID)
+		h.showKeyboard(chatID)
+		return
+	case cbPickerPrev:
+		h.handleUserPickerInput(chatID, userID, stateName, userPickerPrevButton)
+		return
+	case cbPickerNext:
+		h.handleUserPickerInput(chatID, userID, stateName, userPickerNextButton)
+		return
+	case "page":
+		return
+	case cbPickerSelect:
+		if len(parts) != 5 {
+			return
+		}
+		text := "id:" + parts[4]
+		selected, ok := h.handleUserPickerInput(chatID, userID, stateName, text)
+		if !ok || selected == nil {
+			return
+		}
+		if stateName == StateAssignRoleSelect {
+			h.sendMessage(chatID, fmt.Sprintf("Введите роль для %s (максимум 64 символа):", selected.DisplayName()))
+			h.service.SetState(userID, StateAssignRoleText, selected)
+			return
+		}
+
+		currentRole := ""
+		if selected.Role != nil {
+			currentRole = *selected.Role
+		}
+		h.sendMessage(chatID, fmt.Sprintf("Текущая роль: %s\nВведите новую роль:", currentRole))
+		h.service.SetState(userID, StateChangeRoleText, selected)
 	}
 }
 
@@ -454,12 +563,20 @@ func isUserPickerPageLabel(text string) bool {
 }
 
 func formatUserPickerButton(user *members.Member) string {
-	display := user.DisplayName()
-	if user.FirstName != "" && !strings.HasPrefix(display, "@") {
-		display = user.FirstName
+	return shortenForButton(formatMemberForPicker(user), 40)
+}
+
+func formatMemberForPicker(user *members.Member) string {
+	role := "БЕЗ РОЛИ"
+	if user.Role != nil && strings.TrimSpace(*user.Role) != "" {
+		role = strings.ToUpper(strings.TrimSpace(*user.Role))
 	}
-	display = shortenForButton(display, 28)
-	return fmt.Sprintf("👤 %s · id:%d", display, user.UserID)
+	username := strings.TrimSpace(user.Username)
+	if username != "" {
+		username = strings.TrimPrefix(username, "@")
+		return fmt.Sprintf("[%s] @%s", role, username)
+	}
+	return fmt.Sprintf("[%s] [%d]", role, user.UserID)
 }
 
 func shortenForButton(s string, max int) string {
@@ -488,6 +605,23 @@ func parseUserIDFromButton(text string) (int64, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+func pickerCallbackData(mode UserPickerMode, action string, userID int64) string {
+	if action == cbPickerSelect {
+		return fmt.Sprintf("%s%s:%s:%d", cbPickerPrefix, mode, action, userID)
+	}
+	return fmt.Sprintf("%s%s:%s", cbPickerPrefix, mode, action)
+}
+
+func (h *Handler) answerCallback(callbackID, text string) {
+	if h.bot == nil || callbackID == "" {
+		return
+	}
+	cb := tgbotapi.NewCallback(callbackID, text)
+	if _, err := h.bot.Request(cb); err != nil {
+		log.WithError(err).Debug("ошибка ответа на callback")
+	}
 }
 
 func (h *Handler) sendMessage(chatID int64, text string) {

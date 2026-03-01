@@ -89,11 +89,11 @@ func (s *Service) GetTransactionHistory(ctx context.Context, userID int64) (stri
 	}
 
 	if len(transactions) == 0 {
-		return "рџ“‹ РЈ РІР°СЃ РїРѕРєР° РЅРµС‚ С‚СЂР°РЅР·Р°РєС†РёР№", nil
+		return "📋 У вас пока нет транзакций", nil
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("рџ“‹ РџРѕСЃР»РµРґРЅРёРµ %d С‚СЂР°РЅР·Р°РєС†РёР№:\n\n", len(transactions)))
+	sb.WriteString(fmt.Sprintf("📋 Последние %d транзакций:\n\n", len(transactions)))
 
 	// Р¤РѕСЂРјРёСЂСѓРµРј СЃС‚СЂРѕРєРё С‚СЂР°РЅР·Р°РєС†РёР№
 	var lines []string
