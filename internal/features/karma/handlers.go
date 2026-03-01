@@ -5,18 +5,19 @@ import (
 	"context"
 	"fmt"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	log "github.com/sirupsen/logrus"
+
+	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 // Handler обрабатывает события кармы.
 type Handler struct {
 	service *Service
-	bot     *tgbotapi.BotAPI
+	bot     telegram.Client
 }
 
 // NewHandler создаёт обработчик кармы.
-func NewHandler(service *Service, bot *tgbotapi.BotAPI) *Handler {
+func NewHandler(service *Service, bot telegram.Client) *Handler {
 	return &Handler{service: service, bot: bot}
 }
 
@@ -42,8 +43,7 @@ func (h *Handler) HandleThankYou(ctx context.Context, chatID int64, fromUserID, 
 }
 
 func (h *Handler) sendMessage(chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := h.bot.Send(msg); err != nil {
+	if _, err := h.bot.SendMessage(chatID, text, nil); err != nil {
 		log.WithError(err).Error("Ошибка отправки сообщения")
 	}
 }

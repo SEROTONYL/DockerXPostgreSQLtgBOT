@@ -1,4 +1,4 @@
-﻿// Package casino вЂ” handlers.go РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РєРѕРјР°РЅРґС‹ !СЃР»РѕС‚С‹ Рё !СЃС‚Р°С‚СЃР»РѕС‚С‹.
+// Package casino вЂ” handlers.go РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РєРѕРјР°РЅРґС‹ !СЃР»РѕС‚С‹ Рё !СЃС‚Р°С‚СЃР»РѕС‚С‹.
 package casino
 
 import (
@@ -6,20 +6,20 @@ import (
 	"fmt"
 	"strings"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	log "github.com/sirupsen/logrus"
 
 	"serotonyl.ru/telegram-bot/internal/common"
+	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 // Handler РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РєРѕРјР°РЅРґС‹ РєР°Р·РёРЅРѕ.
 type Handler struct {
 	service *Service
-	bot     *tgbotapi.BotAPI
+	bot     telegram.Client
 }
 
 // NewHandler СЃРѕР·РґР°С‘С‚ РѕР±СЂР°Р±РѕС‚С‡РёРє РєР°Р·РёРЅРѕ.
-func NewHandler(service *Service, bot *tgbotapi.BotAPI) *Handler {
+func NewHandler(service *Service, bot telegram.Client) *Handler {
 	return &Handler{service: service, bot: bot}
 }
 
@@ -137,8 +137,7 @@ func (h *Handler) HandleSlotStats(ctx context.Context, chatID int64, userID int6
 }
 
 func (h *Handler) sendMessage(chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := h.bot.Send(msg); err != nil {
+	if _, err := h.bot.SendMessage(chatID, text, nil); err != nil {
 		log.WithError(err).Error("РћС€РёР±РєР° РѕС‚РїСЂР°РІРєРё СЃРѕРѕР±С‰РµРЅРёСЏ")
 	}
 }

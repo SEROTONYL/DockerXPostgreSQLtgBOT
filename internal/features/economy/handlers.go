@@ -1,4 +1,4 @@
-﻿// Package economy вЂ” handlers.go РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РєРѕРјР°РЅРґС‹:
+// Package economy вЂ” handlers.go РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РєРѕРјР°РЅРґС‹:
 // !РїР»РµРЅРєРё (Р±Р°Р»Р°РЅСЃ), !РѕС‚СЃС‹РїР°С‚СЊ (РїРµСЂРµРІРѕРґ), !С‚СЂР°РЅР·Р°РєС†РёРё (РёСЃС‚РѕСЂРёСЏ).
 package economy
 
@@ -8,22 +8,22 @@ import (
 	"strconv"
 	"strings"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	log "github.com/sirupsen/logrus"
 
 	"serotonyl.ru/telegram-bot/internal/common"
 	"serotonyl.ru/telegram-bot/internal/features/members"
+	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 // Handler РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РєРѕРјР°РЅРґС‹ СЌРєРѕРЅРѕРјРёРєРё.
 type Handler struct {
-	service       *Service          // РЎРµСЂРІРёСЃ СЌРєРѕРЅРѕРјРёРєРё
-	memberService *members.Service  // РЎРµСЂРІРёСЃ СѓС‡Р°СЃС‚РЅРёРєРѕРІ (РґР»СЏ РїРѕРёСЃРєР° РїРѕР»СѓС‡Р°С‚РµР»СЏ)
-	bot           *tgbotapi.BotAPI  // API Telegram РґР»СЏ РѕС‚РїСЂР°РІРєРё РѕС‚РІРµС‚РѕРІ
+	service       *Service         // РЎРµСЂРІРёСЃ СЌРєРѕРЅРѕРјРёРєРё
+	memberService *members.Service // РЎРµСЂРІРёСЃ СѓС‡Р°СЃС‚РЅРёРєРѕРІ (РґР»СЏ РїРѕРёСЃРєР° РїРѕР»СѓС‡Р°С‚РµР»СЏ)
+	bot           telegram.Client  // API Telegram РґР»СЏ РѕС‚РїСЂР°РІРєРё РѕС‚РІРµС‚РѕРІ
 }
 
 // NewHandler СЃРѕР·РґР°С‘С‚ РЅРѕРІС‹Р№ РѕР±СЂР°Р±РѕС‚С‡РёРє СЌРєРѕРЅРѕРјРёС‡РµСЃРєРёС… РєРѕРјР°РЅРґ.
-func NewHandler(service *Service, memberService *members.Service, bot *tgbotapi.BotAPI) *Handler {
+func NewHandler(service *Service, memberService *members.Service, bot telegram.Client) *Handler {
 	return &Handler{
 		service:       service,
 		memberService: memberService,
@@ -121,18 +121,12 @@ func (h *Handler) HandleTransactions(ctx context.Context, chatID int64, userID i
 	}
 
 	// РћС‚РїСЂР°РІР»СЏРµРј СЃ MarkdownV2 РґР»СЏ РїРѕРґРґРµСЂР¶РєРё СЃРїРѕР№Р»РµСЂРѕРІ
-	msg := tgbotapi.NewMessage(chatID, history)
-	msg.ParseMode = "MarkdownV2"
-	if _, err := h.bot.Send(msg); err != nil {
-		// Р•СЃР»Рё MarkdownV2 РЅРµ СЃСЂР°Р±РѕС‚Р°Р» вЂ” РѕС‚РїСЂР°РІР»СЏРµРј Р±РµР· С„РѕСЂРјР°С‚РёСЂРѕРІР°РЅРёСЏ
-		h.sendMessage(chatID, history)
-	}
+	h.sendMessage(chatID, history)
 }
 
 // sendMessage вЂ” РІСЃРїРѕРјРѕРіР°С‚РµР»СЊРЅС‹Р№ РјРµС‚РѕРґ РґР»СЏ РѕС‚РїСЂР°РІРєРё С‚РµРєСЃС‚РѕРІС‹С… СЃРѕРѕР±С‰РµРЅРёР№.
 func (h *Handler) sendMessage(chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := h.bot.Send(msg); err != nil {
+	if _, err := h.bot.SendMessage(chatID, text, nil); err != nil {
 		log.WithError(err).Error("РћС€РёР±РєР° РѕС‚РїСЂР°РІРєРё СЃРѕРѕР±С‰РµРЅРёСЏ")
 	}
 }
