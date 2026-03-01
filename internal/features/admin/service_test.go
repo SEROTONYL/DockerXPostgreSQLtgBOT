@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -115,4 +116,22 @@ func TestVerifyPassword_NoMojibakeInErrors(t *testing.T) {
 	if err.Error() != "слишком много попыток, подождите 1 час" {
 		t.Fatalf("unexpected text: %q", err.Error())
 	}
+}
+
+func TestPanelMessageID_ConcurrentSetGetRaceSafe(t *testing.T) {
+	svc := NewService(&fakeAdminRepo{}, &fakeMemberRepo{}, &config.Config{})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				uid := int64((worker % 5) + 1)
+				svc.SetPanelMessageID(uid, worker*1000+j+1)
+				_ = svc.GetPanelMessageID(uid)
+			}
+		}(i)
+	}
+	wg.Wait()
 }
