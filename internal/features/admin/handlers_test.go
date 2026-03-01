@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	log "github.com/sirupsen/logrus"
 
 	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/features/members"
@@ -569,10 +571,10 @@ func TestFormatMemberForPicker_UsernameAndIDFallback(t *testing.T) {
 	withUsername := &members.Member{UserID: 101, Username: "alice", Role: &role}
 	withoutUsername := &members.Member{UserID: 202, Role: &role}
 
-	if got := formatMemberForPicker(withUsername); got != "[МОДЕРАТОР] @alice" {
+	if got := formatMemberForPicker(withUsername); got != "[модератор] @alice" {
 		t.Fatalf("unexpected username format: %q", got)
 	}
-	if got := formatMemberForPicker(withoutUsername); got != "[МОДЕРАТОР] [202]" {
+	if got := formatMemberForPicker(withoutUsername); got != "[модератор] [202]" {
 		t.Fatalf("unexpected id fallback format: %q", got)
 	}
 }
@@ -580,7 +582,166 @@ func TestFormatMemberForPicker_UsernameAndIDFallback(t *testing.T) {
 func TestFormatMemberForPicker_NormalizesAtPrefix(t *testing.T) {
 	role := "админ"
 	member := &members.Member{UserID: 303, Username: "@bob", Role: &role}
-	if got := formatMemberForPicker(member); got != "[АДМИН] @bob" {
+	if got := formatMemberForPicker(member); got != "[админ] @bob" {
 		t.Fatalf("unexpected normalized username format: %q", got)
+	}
+}
+
+func TestFormatMemberForPicker_DoesNotUppercaseRole(t *testing.T) {
+	role := "Мяу"
+	member := &members.Member{UserID: 404, Username: "kysxDDD", Role: &role}
+
+	got := formatMemberForPicker(member)
+	if got != "[Мяу] @kysxDDD" {
+		t.Fatalf("unexpected role formatting: %q", got)
+	}
+	if strings.Contains(got, "[МЯУ]") {
+		t.Fatalf("role must not be uppercased: %q", got)
+	}
+}
+
+func TestShowKeyboard_EditOK_DoesNotSendNewMessage(t *testing.T) {
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, &fakeMemberRepoFlow{member: &members.Member{IsAdmin: true}}, &config.Config{})
+	sendCalls := 0
+	h := &Handler{
+		service: svc,
+		sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+			sendCalls++
+			return tgbotapi.Message{}, nil
+		},
+		editFn: func(chatID int64, messageID int, text string, keyboard tgbotapi.InlineKeyboardMarkup) error {
+			return nil
+		},
+	}
+
+	if err := h.showKeyboard(1, 77, 123); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sendCalls != 0 {
+		t.Fatalf("send should not be called when edit succeeds, got %d", sendCalls)
+	}
+}
+
+func TestShowKeyboard_EditNotModified_DoesNotSendNewMessage(t *testing.T) {
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, &fakeMemberRepoFlow{member: &members.Member{IsAdmin: true}}, &config.Config{})
+	sendCalls := 0
+	h := &Handler{
+		service: svc,
+		sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+			sendCalls++
+			return tgbotapi.Message{}, nil
+		},
+		editFn: func(chatID int64, messageID int, text string, keyboard tgbotapi.InlineKeyboardMarkup) error {
+			return &tgbotapi.Error{Code: 400, Message: "Bad Request: message is not modified"}
+		},
+	}
+
+	if err := h.showKeyboard(1, 77, 123); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sendCalls != 0 {
+		t.Fatalf("send should not be called for not modified, got %d", sendCalls)
+	}
+}
+
+func TestShowKeyboard_EditNotFound_FallsBackToSendAndUpdatesPanelID(t *testing.T) {
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, &fakeMemberRepoFlow{member: &members.Member{IsAdmin: true}}, &config.Config{})
+	sendCalls := 0
+	h := &Handler{
+		service: svc,
+		sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+			sendCalls++
+			return tgbotapi.Message{MessageID: 555}, nil
+		},
+		editFn: func(chatID int64, messageID int, text string, keyboard tgbotapi.InlineKeyboardMarkup) error {
+			return &tgbotapi.Error{Code: 400, Message: "Bad Request: message to edit not found"}
+		},
+	}
+
+	if err := h.showKeyboard(1, 77, 123); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sendCalls != 1 {
+		t.Fatalf("expected send fallback once, got %d", sendCalls)
+	}
+	if got := svc.GetPanelMessageID(77); got != 555 {
+		t.Fatalf("expected updated panel message id=555, got %d", got)
+	}
+}
+
+func TestShowKeyboard_EditForbidden_ReturnsErrorAndDoesNotSend(t *testing.T) {
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, &fakeMemberRepoFlow{member: &members.Member{IsAdmin: true}}, &config.Config{})
+	sendCalls := 0
+	h := &Handler{
+		service: svc,
+		sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+			sendCalls++
+			return tgbotapi.Message{}, nil
+		},
+		editFn: func(chatID int64, messageID int, text string, keyboard tgbotapi.InlineKeyboardMarkup) error {
+			return &tgbotapi.Error{Code: 403, Message: "Forbidden: bot was blocked by the user"}
+		},
+	}
+
+	var buf bytes.Buffer
+	originalOut := log.StandardLogger().Out
+	log.SetOutput(&buf)
+	defer log.SetOutput(originalOut)
+
+	err := h.showKeyboard(1, 77, 123)
+	if err == nil {
+		t.Fatalf("expected forbidden error")
+	}
+	if sendCalls != 0 {
+		t.Fatalf("send should not be called for forbidden edit, got %d", sendCalls)
+	}
+	if buf.Len() == 0 {
+		t.Fatalf("expected diagnostic log entry")
+	}
+}
+
+func TestClassifyEditError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want editErrorKind
+	}{
+		{name: "not modified", err: &tgbotapi.Error{Code: 400, Message: "Bad Request: message is not modified"}, want: editErrNotModified},
+		{name: "not found", err: &tgbotapi.Error{Code: 400, Message: "Bad Request: message to edit not found"}, want: editErrNotFound},
+		{name: "forbidden", err: &tgbotapi.Error{Code: 403, Message: "Forbidden: bot was blocked by the user"}, want: editErrForbidden},
+		{name: "other", err: errors.New("internal server error"), want: editErrOther},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _, _ := classifyEditError(tt.err)
+			if got != tt.want {
+				t.Fatalf("want %s, got %s", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestClassifyEditError_ForbiddenCaseInsensitive(t *testing.T) {
+	tests := []string{
+		"Bot was blocked by the user",
+		"bot was blocked by the user",
+		"FORBIDDEN: bot was blocked by the user",
+	}
+
+	for _, msg := range tests {
+		t.Run(msg, func(t *testing.T) {
+			err := &tgbotapi.Error{Code: 403, Message: msg}
+			kind, code, text := classifyEditError(err)
+			if kind != editErrForbidden {
+				t.Fatalf("expected forbidden kind, got %s", kind)
+			}
+			if code != 403 {
+				t.Fatalf("expected code 403, got %d", code)
+			}
+			if text != msg {
+				t.Fatalf("expected original text %q, got %q", msg, text)
+			}
+		})
 	}
 }

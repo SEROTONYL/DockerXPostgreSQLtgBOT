@@ -30,9 +30,10 @@ type LoginAttempt struct {
 // AdminState — состояние диалога с админом (конечный автомат).
 // Админ-панель работает по шагам: выбор действия → выбор пользователя → ввод роли.
 type AdminState struct {
-	State     string      // Текущее состояние ("", "awaiting_password", "assign_role_select", ...)
-	Data      interface{} // Данные контекста (список пользователей, выбранный пользователь)
-	ExpiresAt time.Time   // Когда состояние истекает (5 минут)
+	State      string      // Текущее состояние ("", "awaiting_password", "assign_role_select", ...)
+	Data       interface{} // Данные контекста (список пользователей, выбранный пользователь)
+	PanelMsgID int         // message_id «панельного» сообщения для editMessage* single-thread UI
+	ExpiresAt  time.Time   // Когда состояние истекает (5 минут)
 }
 
 // UserPickerMode определяет режим выборщика пользователей.
@@ -50,6 +51,12 @@ type UserPickerData struct {
 	PageIndex      int
 	PageSize       int
 	SelectedUserID int64
+}
+
+// RoleInputData хранит контекст шага ввода роли и возврата «Назад» к выбору участника.
+type RoleInputData struct {
+	SelectedUser *members.Member
+	Picker       *UserPickerData
 }
 
 // Возможные состояния админ-диалога

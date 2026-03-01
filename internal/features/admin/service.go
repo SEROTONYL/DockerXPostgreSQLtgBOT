@@ -25,6 +25,8 @@ type Service struct {
 	memberRepo memberRepo
 	cfg        *config.Config
 	states     map[int64]*AdminState // РЎРѕСЃС‚РѕСЏРЅРёСЏ РґРёР°Р»РѕРіРѕРІ (in-memory)
+	panelMsgs  map[int64]int         // message_id panel-сообщения на администратора
+	panelMsgAt map[int64]time.Time   // последняя активность panel message_id
 	statesMu   sync.RWMutex
 }
 
@@ -52,6 +54,8 @@ func NewService(repo adminRepo, memberRepo memberRepo, cfg *config.Config) *Serv
 		memberRepo: memberRepo,
 		cfg:        cfg,
 		states:     make(map[int64]*AdminState),
+		panelMsgs:  make(map[int64]int),
+		panelMsgAt: make(map[int64]time.Time),
 	}
 }
 
@@ -124,14 +128,13 @@ func (s *Service) HasActiveSession(ctx context.Context, userID int64) bool {
 // GetState РІРѕР·РІСЂР°С‰Р°РµС‚ С‚РµРєСѓС‰РµРµ СЃРѕСЃС‚РѕСЏРЅРёРµ РґРёР°Р»РѕРіР°.
 func (s *Service) GetState(userID int64) *AdminState {
 	s.statesMu.RLock()
-	defer s.statesMu.RUnlock()
-
 	state, ok := s.states[userID]
+	s.statesMu.RUnlock()
 	if !ok {
 		return nil
 	}
-	// РџСЂРѕРІРµСЂСЏРµРј РёСЃС‚РµС‡РµРЅРёРµ
 	if time.Now().After(state.ExpiresAt) {
+		s.ClearState(userID)
 		return nil
 	}
 	return state
@@ -154,6 +157,37 @@ func (s *Service) ClearState(userID int64) {
 	s.statesMu.Lock()
 	defer s.statesMu.Unlock()
 	delete(s.states, userID)
+	delete(s.panelMsgs, userID)
+	delete(s.panelMsgAt, userID)
+}
+
+// SetPanelMessageID запоминает message_id «панельного» сообщения для single-thread UI.
+func (s *Service) SetPanelMessageID(userID int64, messageID int) {
+	if messageID <= 0 {
+		return
+	}
+	s.statesMu.Lock()
+	defer s.statesMu.Unlock()
+	s.cleanupPanelMessagesLocked()
+	s.panelMsgs[userID] = messageID
+	s.panelMsgAt[userID] = time.Now()
+}
+
+// GetPanelMessageID возвращает message_id «панельного» сообщения.
+func (s *Service) GetPanelMessageID(userID int64) int {
+	s.statesMu.RLock()
+	defer s.statesMu.RUnlock()
+	return s.panelMsgs[userID]
+}
+
+func (s *Service) cleanupPanelMessagesLocked() {
+	cutoff := time.Now().Add(-24 * time.Hour)
+	for userID, ts := range s.panelMsgAt {
+		if ts.Before(cutoff) {
+			delete(s.panelMsgs, userID)
+			delete(s.panelMsgAt, userID)
+		}
+	}
 }
 
 // GetUsersWithoutRole РІРѕР·РІСЂР°С‰Р°РµС‚ СѓС‡Р°СЃС‚РЅРёРєРѕРІ Р±РµР· СЂРѕР»Рё.
