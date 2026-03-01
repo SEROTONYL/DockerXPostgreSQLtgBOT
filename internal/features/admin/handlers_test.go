@@ -201,6 +201,8 @@ type fakeMemberRepoPicker struct {
 	member           *members.Member
 	usersWithoutRole []*members.Member
 	usersWithRole    []*members.Member
+	usersWithoutErr  error
+	usersWithErr     error
 }
 
 func (f *fakeMemberRepoPicker) GetByUserID(ctx context.Context, userID int64) (*members.Member, error) {
@@ -210,9 +212,15 @@ func (f *fakeMemberRepoPicker) GetByUserID(ctx context.Context, userID int64) (*
 	return nil, errors.New("not found")
 }
 func (f *fakeMemberRepoPicker) GetUsersWithoutRole(ctx context.Context) ([]*members.Member, error) {
+	if f.usersWithoutErr != nil {
+		return nil, f.usersWithoutErr
+	}
 	return f.usersWithoutRole, nil
 }
 func (f *fakeMemberRepoPicker) GetUsersWithRole(ctx context.Context) ([]*members.Member, error) {
+	if f.usersWithErr != nil {
+		return nil, f.usersWithErr
+	}
 	return f.usersWithRole, nil
 }
 func (f *fakeMemberRepoPicker) UpdateRole(ctx context.Context, userID int64, role string) error {
@@ -339,6 +347,61 @@ func TestUserPicker_InvalidInputReRenders(t *testing.T) {
 	}
 }
 
+func TestUserPicker_PageLabelClickNoInvalidSelectionMessageAndKeepsState(t *testing.T) {
+	users := make([]*members.Member, 0, 9)
+	for i := 1; i <= 9; i++ {
+		users = append(users, &members.Member{UserID: int64(3000 + i), Username: fmt.Sprintf("p%d", i), FirstName: "Page"})
+	}
+	repo := &fakeMemberRepoPicker{member: &members.Member{IsAdmin: true}, usersWithoutRole: users}
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, repo, &config.Config{})
+	var sent []string
+	h := &Handler{service: svc, sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+		if m, ok := c.(tgbotapi.MessageConfig); ok {
+			sent = append(sent, m.Text)
+		}
+		return tgbotapi.Message{}, nil
+	}}
+
+	h.HandleAdminMessage(context.Background(), 1, 77, "Назначить роль")
+	h.HandleAdminMessage(context.Background(), 1, 77, userPickerNextButton)
+
+	stateBefore := svc.GetState(77)
+	if stateBefore == nil || stateBefore.State != StateAssignRoleSelect {
+		t.Fatalf("expected picker state before page-label click, got %#v", stateBefore)
+	}
+	dataBefore, ok := stateBefore.Data.(*UserPickerData)
+	if !ok {
+		t.Fatalf("expected picker data before page-label click")
+	}
+	if dataBefore.PageIndex != 1 {
+		t.Fatalf("expected second page before label click, got %d", dataBefore.PageIndex)
+	}
+
+	sentCountBeforeLabelClick := len(sent)
+	h.HandleAdminMessage(context.Background(), 1, 77, "  сТР  2 / 2   ")
+
+	stateAfter := svc.GetState(77)
+	if stateAfter == nil || stateAfter.State != StateAssignRoleSelect {
+		t.Fatalf("expected picker state after page-label click, got %#v", stateAfter)
+	}
+	dataAfter, ok := stateAfter.Data.(*UserPickerData)
+	if !ok {
+		t.Fatalf("expected picker data after page-label click")
+	}
+	if dataAfter.PageIndex != 1 {
+		t.Fatalf("expected page index unchanged after label click, got %d", dataAfter.PageIndex)
+	}
+
+	for _, s := range sent {
+		if strings.Contains(s, "Некорректный выбор") {
+			t.Fatalf("did not expect invalid-selection message for page label click, got %#v", sent)
+		}
+	}
+	if len(sent) != sentCountBeforeLabelClick {
+		t.Fatalf("expected page-label click to be no-op without new messages, before=%d after=%d", sentCountBeforeLabelClick, len(sent))
+	}
+}
+
 func TestUserPicker_ExpiredStateHandledGracefully(t *testing.T) {
 	repo := &fakeMemberRepoPicker{member: &members.Member{IsAdmin: true}}
 	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, repo, &config.Config{})
@@ -378,6 +441,83 @@ func TestStartAssignRole_EmptyListShowsMessage(t *testing.T) {
 	}
 	if state := svc.GetState(77); state != nil {
 		t.Fatalf("expected no picker state for empty list")
+	}
+}
+
+func TestStartAssignRole_ErrorShowsErrorMessage(t *testing.T) {
+	repo := &fakeMemberRepoPicker{member: &members.Member{IsAdmin: true}, usersWithoutErr: errors.New("db down")}
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, repo, &config.Config{})
+	var sent []string
+	h := &Handler{service: svc, sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+		if m, ok := c.(tgbotapi.MessageConfig); ok {
+			sent = append(sent, m.Text)
+		}
+		return tgbotapi.Message{}, nil
+	}}
+
+	h.HandleAdminMessage(context.Background(), 1, 77, "Назначить роль")
+
+	found := false
+	for _, msg := range sent {
+		if strings.Contains(msg, "Ошибка получения списка пользователей") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected fetch error message, got %#v", sent)
+	}
+	if state := svc.GetState(77); state != nil {
+		t.Fatalf("expected no picker state on fetch error")
+	}
+}
+
+func TestStartChangeRole_EmptyListShowsMessage(t *testing.T) {
+	repo := &fakeMemberRepoPicker{member: &members.Member{IsAdmin: true}, usersWithRole: []*members.Member{}}
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, repo, &config.Config{})
+	var sent []string
+	h := &Handler{service: svc, sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+		if m, ok := c.(tgbotapi.MessageConfig); ok {
+			sent = append(sent, m.Text)
+		}
+		return tgbotapi.Message{}, nil
+	}}
+
+	h.HandleAdminMessage(context.Background(), 1, 77, "Сменить роль")
+
+	if len(sent) == 0 || !strings.Contains(sent[0], "Нет пользователей с назначенными ролями") {
+		t.Fatalf("expected empty-list message, got %#v", sent)
+	}
+	if state := svc.GetState(77); state != nil {
+		t.Fatalf("expected no picker state for empty list")
+	}
+}
+
+func TestStartChangeRole_ErrorShowsErrorMessage(t *testing.T) {
+	repo := &fakeMemberRepoPicker{member: &members.Member{IsAdmin: true}, usersWithErr: errors.New("query failed")}
+	svc := NewService(&fakeAdminRepoFlow{hasSession: true}, repo, &config.Config{})
+	var sent []string
+	h := &Handler{service: svc, sendFn: func(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+		if m, ok := c.(tgbotapi.MessageConfig); ok {
+			sent = append(sent, m.Text)
+		}
+		return tgbotapi.Message{}, nil
+	}}
+
+	h.HandleAdminMessage(context.Background(), 1, 77, "Сменить роль")
+
+	found := false
+	for _, msg := range sent {
+		if strings.Contains(msg, "Ошибка получения списка пользователей") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected fetch error message, got %#v", sent)
+	}
+	if state := svc.GetState(77); state != nil {
+		t.Fatalf("expected no picker state on fetch error")
 	}
 }
 

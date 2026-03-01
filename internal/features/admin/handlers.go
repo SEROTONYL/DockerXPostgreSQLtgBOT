@@ -23,6 +23,7 @@ const (
 )
 
 var userPickerIDPattern = regexp.MustCompile(`(?i)(?:id:|#)(\d+)`)
+var userPickerPageLabelPattern = regexp.MustCompile(`(?i)^\s*стр\s*\d+\s*/\s*\d+\s*$`)
 
 // Handler обрабатывает админ-команды.
 type Handler struct {
@@ -178,7 +179,11 @@ func (h *Handler) showKeyboard(chatID int64) {
 // startAssignRole — Шаг 1: показать пользователей БЕЗ роли.
 func (h *Handler) startAssignRole(ctx context.Context, chatID int64, userID int64) {
 	users, err := h.service.GetUsersWithoutRole(ctx)
-	if err != nil || len(users) == 0 {
+	if err != nil {
+		h.sendMessage(chatID, fmt.Sprintf("❌ Ошибка получения списка пользователей: %s", err.Error()))
+		return
+	}
+	if len(users) == 0 {
 		h.sendMessage(chatID, "Все пользователи уже имеют роли")
 		return
 	}
@@ -235,7 +240,11 @@ func (h *Handler) handleAssignRoleText(ctx context.Context, chatID int64, userID
 
 func (h *Handler) startChangeRole(ctx context.Context, chatID int64, userID int64) {
 	users, err := h.service.GetUsersWithRole(ctx)
-	if err != nil || len(users) == 0 {
+	if err != nil {
+		h.sendMessage(chatID, fmt.Sprintf("❌ Ошибка получения списка пользователей: %s", err.Error()))
+		return
+	}
+	if len(users) == 0 {
 		h.sendMessage(chatID, "Нет пользователей с назначенными ролями")
 		return
 	}
@@ -417,6 +426,10 @@ func (h *Handler) handleUserPickerInput(chatID, userID int64, stateName, text st
 		return nil, false
 	}
 
+	if isUserPickerPageLabel(text) {
+		return nil, false
+	}
+
 	pickedUserID, ok := parseUserIDFromButton(text)
 	if !ok {
 		h.sendMessage(chatID, "❌ Некорректный выбор. Используйте кнопки ниже.")
@@ -434,6 +447,10 @@ func (h *Handler) handleUserPickerInput(chatID, userID int64, stateName, text st
 	h.sendMessage(chatID, "❌ Пользователь не найден в текущем списке. Выберите снова.")
 	h.renderUserPickerPage(chatID, userID, stateName)
 	return nil, false
+}
+
+func isUserPickerPageLabel(text string) bool {
+	return userPickerPageLabelPattern.MatchString(strings.TrimSpace(text))
 }
 
 func formatUserPickerButton(user *members.Member) string {
