@@ -6,7 +6,7 @@ package admin
 import (
 	"context"
 	"fmt"
-	"strconv"
+	"regexp"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -14,6 +14,15 @@ import (
 
 	"serotonyl.ru/telegram-bot/internal/features/members"
 )
+
+const (
+	userPickerPrevButton = "◀️"
+	userPickerNextButton = "▶️"
+	userPickerBackButton = "⬅️ Назад"
+	userPickerPageSize   = 8
+)
+
+var userPickerIDPattern = regexp.MustCompile(`(?i)(?:id:|#)(\d+)`)
 
 // Handler обрабатывает админ-команды.
 type Handler struct {
@@ -174,29 +183,16 @@ func (h *Handler) startAssignRole(ctx context.Context, chatID int64, userID int6
 		return
 	}
 
-	var sb strings.Builder
-	sb.WriteString("Выберите пользователя (отправьте номер):\n\n")
-	for i, user := range users {
-		name := user.DisplayName()
-		sb.WriteString(fmt.Sprintf("%d. %s (%s)\n", i+1, name, user.FirstName))
-	}
-
-	h.sendMessage(chatID, sb.String())
-	h.service.SetState(userID, StateAssignRoleSelect, users)
+	h.startUserPicker(chatID, userID, StateAssignRoleSelect, UserPickerAssignWithoutRole, users)
 }
 
-// handleAssignRoleSelect — Шаг 2: пользователь выбрал номер.
+// handleAssignRoleSelect — Шаг 2: пользователь выбрал кнопку.
 func (h *Handler) handleAssignRoleSelect(ctx context.Context, chatID int64, userID int64, text string) {
-	state := h.service.GetState(userID)
-	users := state.Data.([]*members.Member)
-
-	num, err := strconv.Atoi(strings.TrimSpace(text))
-	if err != nil || num < 1 || num > len(users) {
-		h.sendMessage(chatID, "❌ Неверный номер. Попробуйте ещё раз.")
+	selected, ok := h.handleUserPickerInput(chatID, userID, StateAssignRoleSelect, text)
+	if !ok {
 		return
 	}
 
-	selected := users[num-1]
 	h.sendMessage(chatID, fmt.Sprintf("Введите роль для %s (максимум 64 символа):", selected.DisplayName()))
 	h.service.SetState(userID, StateAssignRoleText, selected)
 }
@@ -204,7 +200,20 @@ func (h *Handler) handleAssignRoleSelect(ctx context.Context, chatID int64, user
 // handleAssignRoleText — Шаг 3: ввод текста роли.
 func (h *Handler) handleAssignRoleText(ctx context.Context, chatID int64, userID int64, text string) {
 	state := h.service.GetState(userID)
-	selected := state.Data.(*members.Member)
+	if state == nil {
+		h.sendMessage(chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
+		h.service.ClearState(userID)
+		h.showKeyboard(chatID)
+		return
+	}
+
+	selected, ok := state.Data.(*members.Member)
+	if !ok || selected == nil {
+		h.sendMessage(chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
+		h.service.ClearState(userID)
+		h.showKeyboard(chatID)
+		return
+	}
 
 	role := strings.TrimSpace(text)
 	if len([]rune(role)) > 64 {
@@ -231,31 +240,15 @@ func (h *Handler) startChangeRole(ctx context.Context, chatID int64, userID int6
 		return
 	}
 
-	var sb strings.Builder
-	sb.WriteString("Выберите пользователя (отправьте номер):\n\n")
-	for i, user := range users {
-		role := ""
-		if user.Role != nil {
-			role = *user.Role
-		}
-		sb.WriteString(fmt.Sprintf("%d. %s - %s\n", i+1, user.DisplayName(), role))
-	}
-
-	h.sendMessage(chatID, sb.String())
-	h.service.SetState(userID, StateChangeRoleSelect, users)
+	h.startUserPicker(chatID, userID, StateChangeRoleSelect, UserPickerChangeWithRole, users)
 }
 
 func (h *Handler) handleChangeRoleSelect(ctx context.Context, chatID int64, userID int64, text string) {
-	state := h.service.GetState(userID)
-	users := state.Data.([]*members.Member)
-
-	num, err := strconv.Atoi(strings.TrimSpace(text))
-	if err != nil || num < 1 || num > len(users) {
-		h.sendMessage(chatID, "❌ Неверный номер")
+	selected, ok := h.handleUserPickerInput(chatID, userID, StateChangeRoleSelect, text)
+	if !ok {
 		return
 	}
 
-	selected := users[num-1]
 	currentRole := ""
 	if selected.Role != nil {
 		currentRole = *selected.Role
@@ -266,7 +259,20 @@ func (h *Handler) handleChangeRoleSelect(ctx context.Context, chatID int64, user
 
 func (h *Handler) handleChangeRoleText(ctx context.Context, chatID int64, userID int64, text string) {
 	state := h.service.GetState(userID)
-	selected := state.Data.(*members.Member)
+	if state == nil {
+		h.sendMessage(chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
+		h.service.ClearState(userID)
+		h.showKeyboard(chatID)
+		return
+	}
+
+	selected, ok := state.Data.(*members.Member)
+	if !ok || selected == nil {
+		h.sendMessage(chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
+		h.service.ClearState(userID)
+		h.showKeyboard(chatID)
+		return
+	}
 
 	role := strings.TrimSpace(text)
 	if len([]rune(role)) > 64 {
@@ -282,6 +288,189 @@ func (h *Handler) handleChangeRoleText(ctx context.Context, chatID int64, userID
 
 	h.sendMessage(chatID, fmt.Sprintf("✅ Роль изменена: %s → %s", selected.DisplayName(), role))
 	h.service.ClearState(userID)
+}
+
+func (h *Handler) startUserPicker(chatID, userID int64, stateName string, mode UserPickerMode, users []*members.Member) {
+	data := &UserPickerData{
+		Mode:          mode,
+		UsersSnapshot: users,
+		PageIndex:     0,
+		PageSize:      userPickerPageSize,
+	}
+	h.service.SetState(userID, stateName, data)
+	h.renderUserPickerPage(chatID, userID, stateName)
+}
+
+func (h *Handler) renderUserPickerPage(chatID, userID int64, stateName string) {
+	state := h.service.GetState(userID)
+	if state == nil || state.State != stateName {
+		h.sendMessage(chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
+		h.service.ClearState(userID)
+		h.showKeyboard(chatID)
+		return
+	}
+
+	data, ok := state.Data.(*UserPickerData)
+	if !ok || data == nil || len(data.UsersSnapshot) == 0 {
+		h.sendMessage(chatID, "⚠️ Список пользователей недоступен. Вернитесь в админ-меню.")
+		h.service.ClearState(userID)
+		h.showKeyboard(chatID)
+		return
+	}
+
+	if data.PageSize <= 0 {
+		data.PageSize = userPickerPageSize
+	}
+
+	totalPages := (len(data.UsersSnapshot) + data.PageSize - 1) / data.PageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if data.PageIndex < 0 {
+		data.PageIndex = 0
+	}
+	if data.PageIndex >= totalPages {
+		data.PageIndex = totalPages - 1
+	}
+
+	start := data.PageIndex * data.PageSize
+	end := start + data.PageSize
+	if end > len(data.UsersSnapshot) {
+		end = len(data.UsersSnapshot)
+	}
+
+	rows := make([][]tgbotapi.KeyboardButton, 0, (end-start)+2)
+	for _, user := range data.UsersSnapshot[start:end] {
+		rows = append(rows, tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton(formatUserPickerButton(user)),
+		))
+	}
+
+	pageLabel := fmt.Sprintf("Стр %d/%d", data.PageIndex+1, totalPages)
+	rows = append(rows, tgbotapi.NewKeyboardButtonRow(
+		tgbotapi.NewKeyboardButton(userPickerPrevButton),
+		tgbotapi.NewKeyboardButton(pageLabel),
+		tgbotapi.NewKeyboardButton(userPickerNextButton),
+	))
+	rows = append(rows, tgbotapi.NewKeyboardButtonRow(
+		tgbotapi.NewKeyboardButton(userPickerBackButton),
+	))
+
+	keyboard := tgbotapi.NewReplyKeyboard(rows...)
+
+	caption := "Выбери участника:"
+	if data.Mode == UserPickerAssignWithoutRole {
+		caption = "Выбери участника без роли:"
+	} else if data.Mode == UserPickerChangeWithRole {
+		caption = "Выбери участника с ролью:"
+	}
+	caption = fmt.Sprintf("%s\nПоказаны имена в кнопках (id — точный идентификатор).", caption)
+
+	h.ensureSender()
+	msg := tgbotapi.NewMessage(chatID, caption)
+	msg.ReplyMarkup = keyboard
+	if _, err := h.sendFn(msg); err != nil {
+		log.WithError(err).Error("ошибка отправки user picker")
+	}
+}
+
+func (h *Handler) handleUserPickerInput(chatID, userID int64, stateName, text string) (*members.Member, bool) {
+	state := h.service.GetState(userID)
+	if state == nil || state.State != stateName {
+		h.sendMessage(chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
+		h.service.ClearState(userID)
+		h.showKeyboard(chatID)
+		return nil, false
+	}
+
+	data, ok := state.Data.(*UserPickerData)
+	if !ok || data == nil || len(data.UsersSnapshot) == 0 {
+		h.sendMessage(chatID, "⚠️ Список пользователей недоступен. Вернитесь в админ-меню.")
+		h.service.ClearState(userID)
+		h.showKeyboard(chatID)
+		return nil, false
+	}
+
+	switch text {
+	case userPickerBackButton:
+		h.service.ClearState(userID)
+		h.showKeyboard(chatID)
+		return nil, false
+	case userPickerPrevButton:
+		if data.PageIndex > 0 {
+			data.PageIndex--
+		}
+		h.renderUserPickerPage(chatID, userID, stateName)
+		return nil, false
+	case userPickerNextButton:
+		if data.PageSize <= 0 {
+			data.PageSize = userPickerPageSize
+		}
+		totalPages := (len(data.UsersSnapshot) + data.PageSize - 1) / data.PageSize
+		if totalPages == 0 {
+			totalPages = 1
+		}
+		if data.PageIndex < totalPages-1 {
+			data.PageIndex++
+		}
+		h.renderUserPickerPage(chatID, userID, stateName)
+		return nil, false
+	}
+
+	pickedUserID, ok := parseUserIDFromButton(text)
+	if !ok {
+		h.sendMessage(chatID, "❌ Некорректный выбор. Используйте кнопки ниже.")
+		h.renderUserPickerPage(chatID, userID, stateName)
+		return nil, false
+	}
+
+	for _, user := range data.UsersSnapshot {
+		if user.UserID == pickedUserID {
+			data.SelectedUserID = pickedUserID
+			return user, true
+		}
+	}
+
+	h.sendMessage(chatID, "❌ Пользователь не найден в текущем списке. Выберите снова.")
+	h.renderUserPickerPage(chatID, userID, stateName)
+	return nil, false
+}
+
+func formatUserPickerButton(user *members.Member) string {
+	display := user.DisplayName()
+	if user.FirstName != "" && !strings.HasPrefix(display, "@") {
+		display = user.FirstName
+	}
+	display = shortenForButton(display, 28)
+	return fmt.Sprintf("👤 %s · id:%d", display, user.UserID)
+}
+
+func shortenForButton(s string, max int) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) == 0 {
+		return "пользователь"
+	}
+	if len(r) <= max {
+		return string(r)
+	}
+	if max <= 1 {
+		return string(r[:1])
+	}
+	return string(r[:max-1]) + "…"
+}
+
+func parseUserIDFromButton(text string) (int64, bool) {
+	matches := userPickerIDPattern.FindStringSubmatch(strings.TrimSpace(text))
+	if len(matches) != 2 {
+		return 0, false
+	}
+
+	var id int64
+	_, err := fmt.Sscanf(matches[1], "%d", &id)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
 }
 
 func (h *Handler) sendMessage(chatID int64, text string) {
