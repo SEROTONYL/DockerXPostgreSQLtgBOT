@@ -231,8 +231,8 @@ func TestPickerFlow_OpenPicker_ShowsUserList(t *testing.T) {
 	if !hasButton(e.markup, userPickerBackButton, cbPickerBack) {
 		t.Fatalf("expected back button")
 	}
-	if !hasButton(e.markup, "Отменить действие", cbAdminCancelAction) {
-		t.Fatalf("expected cancel action button")
+	if hasButton(e.markup, "Отменить действие", cbAdminCancelAction) {
+		t.Fatalf("did not expect cancel action button")
 	}
 	if b := buttonByText(e.markup, formatUserPickerButton(repo.with[0], UserPickerChangeWithRole)); b == nil || b.Style != "primary" {
 		t.Fatalf("expected first user button style primary, got %#v", b)
@@ -303,8 +303,8 @@ func TestPickerFlow_SelectUser_ShowsRolePrompt(t *testing.T) {
 	if !hasButton(e.markup, userPickerBackButton, cbRoleInputBack) {
 		t.Fatalf("expected role-input back button")
 	}
-	if !hasButton(e.markup, "Отменить действие", cbAdminCancelAction) {
-		t.Fatalf("expected cancel action button on role input")
+	if hasButton(e.markup, "Отменить действие", cbAdminCancelAction) {
+		t.Fatalf("did not expect cancel action button on role input")
 	}
 }
 
@@ -402,10 +402,14 @@ func TestChangeRole_SubmitRole_ShowsSuccess_AndPanel(t *testing.T) {
 	}
 
 	foundSuccess := false
+	foundUndo := false
 	foundPanel := false
 	for _, c := range tg.calls {
 		if c.kind == "send" && strings.Contains(c.text, "✅ Роль изменена") {
 			foundSuccess = true
+			if hasButton(c.markup, "↩️ Отменить изменение", cbAdminUndoLast) {
+				foundUndo = true
+			}
 		}
 		if c.kind == "send" && strings.Contains(c.text, "Админ-панель") {
 			foundPanel = true
@@ -414,8 +418,92 @@ func TestChangeRole_SubmitRole_ShowsSuccess_AndPanel(t *testing.T) {
 	if !foundSuccess {
 		t.Fatalf("expected success message send")
 	}
+	if !foundUndo {
+		t.Fatalf("expected undo button in success message")
+	}
 	if !foundPanel {
 		t.Fatalf("expected panel to be shown after success")
+	}
+}
+
+func TestChangeRole_UndoLast_RestoresRole_AndShowsPanel(t *testing.T) {
+	tg := &fakeTG{}
+	adminAID := int64(77)
+	oldRole := "old_role"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{adminAID: {UserID: adminAID, IsAdmin: true}, 1001: {UserID: 1001, Username: "u1", Role: &oldRole}},
+		with:    []*members.Member{{UserID: 1001, Username: "u1", Role: &oldRole}},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(adminAID, 42, adminAID, cbAdminChangeRole))
+	_ = h.HandleAdminCallback(context.Background(), callback(adminAID, 42, adminAID, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, 1001)))
+	_ = h.HandleAdminMessage(context.Background(), adminAID, adminAID, "new_role")
+	ok := h.HandleAdminCallback(context.Background(), callback(adminAID, 42, adminAID, cbAdminUndoLast))
+	if !ok {
+		t.Fatalf("expected undo callback handled")
+	}
+
+	if repo.members[1001] == nil || repo.members[1001].Role == nil || *repo.members[1001].Role != oldRole {
+		t.Fatalf("expected old role restored, got %#v", repo.members[1001])
+	}
+
+	foundUndoSuccess := false
+	foundPanel := false
+	for _, c := range tg.calls {
+		if c.kind == "send" && strings.Contains(c.text, "↩️ Откат выполнен") {
+			foundUndoSuccess = true
+		}
+		if c.kind == "edit" && strings.Contains(c.text, "Админ-панель") {
+			foundPanel = true
+		}
+	}
+	if !foundUndoSuccess {
+		t.Fatalf("expected undo success message")
+	}
+	if !foundPanel {
+		t.Fatalf("expected panel render after undo")
+	}
+}
+
+func TestUndo_IsolatedPerAdmin(t *testing.T) {
+	tg := &fakeTG{}
+	adminAID := int64(77)
+	adminBID := int64(88)
+	oldRole := "old_role"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{
+			adminAID: {UserID: adminAID, IsAdmin: true},
+			adminBID: {UserID: adminBID, IsAdmin: true},
+			1001:     {UserID: 1001, Username: "u1", Role: &oldRole},
+		},
+		with: []*members.Member{{UserID: 1001, Username: "u1", Role: &oldRole}},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(adminAID, 42, adminAID, cbAdminChangeRole))
+	_ = h.HandleAdminCallback(context.Background(), callback(adminAID, 42, adminAID, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, 1001)))
+	_ = h.HandleAdminMessage(context.Background(), adminAID, adminAID, "new_role")
+
+	_ = h.HandleAdminCallback(context.Background(), callback(adminBID, 52, adminBID, cbAdminUndoLast))
+	if repo.members[1001] == nil || repo.members[1001].Role == nil || *repo.members[1001].Role != "new_role" {
+		t.Fatalf("expected role to remain new_role after admin B undo attempt, got %#v", repo.members[1001])
+	}
+
+	foundNoAction := false
+	for _, c := range tg.calls {
+		if c.kind == "send" && strings.Contains(c.text, "Нет действия для отката") {
+			foundNoAction = true
+			break
+		}
+	}
+	if !foundNoAction {
+		t.Fatalf("expected neutral message for admin B without undo slot")
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(adminAID, 42, adminAID, cbAdminUndoLast))
+	if repo.members[1001] == nil || repo.members[1001].Role == nil || *repo.members[1001].Role != oldRole {
+		t.Fatalf("expected old role restored by admin A undo, got %#v", repo.members[1001])
 	}
 }
 
