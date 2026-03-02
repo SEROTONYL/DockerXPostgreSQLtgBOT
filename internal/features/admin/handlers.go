@@ -7,8 +7,8 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"sync"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-telegram/bot/models"
@@ -24,17 +24,18 @@ const (
 	userPickerBackButton = "⬅️ Назад"
 	userPickerPageSize   = 8
 
-	cbAdminAssignRole = "admin:assign_role"
-	cbAdminChangeRole = "admin:change_role"
-	cbAdminStub       = "admin:stub"
-	cbPickerPrefix    = "admin:picker:"
-	cbPickerSelect    = "select"
-	cbPickerPrev      = "prev"
-	cbPickerNext      = "next"
-	cbPickerBack      = "back"
-	cbRoleInputBack   = "admin:role_input_back"
+	cbAdminAssignRole   = "admin:assign_role"
+	cbAdminChangeRole   = "admin:change_role"
+	cbAdminStub         = "admin:stub"
+	cbPickerPrefix      = "admin:picker:"
+	cbPickerSelect      = "select"
+	cbPickerPrev        = "prev"
+	cbPickerNext        = "next"
+	cbPickerBack        = "back"
+	cbRoleInputBack     = "admin:role_input_back"
 	cbAdminCancelAction = "admin:cancel_action"
-	cbAdminUndoLast   = "admin:undo_last"
+	cbAdminUndoLast     = "admin:undo_last"
+	cbAdminReturnPanel  = "admin:return_panel"
 )
 
 var userPickerIDPattern = regexp.MustCompile(`(?i)(?:id:|#)(\d+)`)
@@ -231,6 +232,10 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 	case cbAdminUndoLast:
 		h.handleUndoLastRole(ctx, chatID, userID, panelMsgID)
 		return true
+	case cbAdminReturnPanel:
+		h.service.ClearState(userID)
+		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		return true
 	}
 
 	if strings.HasPrefix(data, cbPickerPrefix) {
@@ -357,9 +362,8 @@ func (h *Handler) handleAssignRoleText(ctx context.Context, chatID int64, userID
 	}
 
 	h.setUndoRoleChange(userID, selected.UserID, "", role)
-	h.sendRoleChangeSuccess(chatID, fmt.Sprintf("✅ Роль назначена: %s → %s", selected.DisplayName(), role))
+	h.sendRoleChangeSuccess(chatID, userID, h.panelMessageIDFromState(userID), fmt.Sprintf("✅ Роль назначена: %s → %s", selected.DisplayName(), role))
 	h.service.ClearState(userID)
-	h.showKeyboardSafe(chatID, userID, h.panelMessageIDFromState(userID))
 }
 
 // --- Сменить роль (3 шага) ---
@@ -437,9 +441,8 @@ func (h *Handler) handleChangeRoleText(ctx context.Context, chatID int64, userID
 	}
 
 	h.setUndoRoleChange(userID, selected.UserID, oldRole, role)
-	h.sendRoleChangeSuccess(chatID, fmt.Sprintf("✅ Роль изменена: %s → %s", selected.DisplayName(), role))
+	h.sendRoleChangeSuccess(chatID, userID, h.panelMessageIDFromState(userID), fmt.Sprintf("✅ Роль изменена: %s → %s", selected.DisplayName(), role))
 	h.service.ClearState(userID)
-	h.showKeyboardSafe(chatID, userID, h.panelMessageIDFromState(userID))
 }
 
 func (h *Handler) startUserPicker(chatID, userID int64, panelMsgID int, stateName string, mode UserPickerMode, users []*members.Member) {
@@ -860,14 +863,19 @@ func (h *Handler) renderRoleInputScreen(chatID, userID int64, text string) {
 	}
 }
 
-func (h *Handler) sendRoleChangeSuccess(chatID int64, text string) {
-	h.ensureSender()
-	markup := newInlineKeyboardMarkup(
-		newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("↩️ Отменить изменение", cbAdminUndoLast, "danger")),
-	)
-	if _, err := h.sendFn(chatID, text, &markup); err != nil {
-		log.WithError(err).Error("ошибка отправки сообщения")
+func (h *Handler) sendRoleChangeSuccess(chatID, userID int64, panelMsgID int, text string) {
+	if err := h.renderAdminScreen(chatID, userID, panelMsgID, "role_change_success", text, h.roleChangeSuccessActionsMarkup()); err != nil {
+		h.sendUIErrorHint(chatID, err)
 	}
+}
+
+func (h *Handler) roleChangeSuccessActionsMarkup() models.InlineKeyboardMarkup {
+	return newInlineKeyboardMarkup(
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonDataStyled("↩️ Отменить изменение", cbAdminUndoLast, "danger"),
+			newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"),
+		),
+	)
 }
 
 func (h *Handler) setUndoRoleChange(adminUserID, targetUserID int64, oldRole, newRole string) {
@@ -894,13 +902,14 @@ func (h *Handler) handleUndoLastRole(ctx context.Context, chatID, userID int64, 
 
 	if err := h.service.AssignRole(ctx, undo.targetUserID, undo.oldRole); err != nil {
 		h.sendMessage(chatID, fmt.Sprintf("❌ Ошибка отката: %s", err.Error()))
-		h.showKeyboardSafe(chatID, userID, panelMsgID)
 		return
 	}
 
-	h.sendMessage(chatID, fmt.Sprintf("↩️ Откат выполнен: %d %s → %s", undo.targetUserID, undo.newRole, undo.oldRole))
+	if err := h.renderAdminScreen(chatID, userID, panelMsgID, "role_change_undo", fmt.Sprintf("↩️ Откат выполнен: %d %s → %s", undo.targetUserID, undo.newRole, undo.oldRole), h.roleChangeSuccessActionsMarkup()); err != nil {
+		h.sendUIErrorHint(chatID, err)
+		return
+	}
 	h.service.ClearState(userID)
-	h.showKeyboardSafe(chatID, userID, panelMsgID)
 }
 
 func (h *Handler) renderAdminScreen(chatID, userID int64, panelMsgID int, screenName, text string, keyboard models.InlineKeyboardMarkup) error {
