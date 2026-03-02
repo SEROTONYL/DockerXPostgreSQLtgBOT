@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"serotonyl.ru/telegram-bot/internal/features/members"
+	"serotonyl.ru/telegram-bot/internal/uiwizard"
 )
 
 // AdminSession — активная сессия администратора.
@@ -73,18 +74,32 @@ type BalanceAdjustOperation struct {
 }
 
 type BalanceAdjustData struct {
-	Mode            BalanceAdjustMode
-	UsersSnapshot   []*members.Member
-	SelectedUserIDs map[int64]bool
-	PageIndex       int
-	PageSize        int
-	Amount          int64
-	AmountSource    string
-	AwaitingManual  bool
-	LastOperation   []BalanceAdjustOperation
-	LastOperationID string
-	LastOperationAt time.Time
-	Undone          bool
+	Wizard           *uiwizard.WizardState
+	Mode             BalanceAdjustMode
+	FlowChatID       int64
+	FlowMessageID    int
+	FlowStartedAt    time.Time
+	UsersSnapshot    []*members.Member
+	SelectedUserIDs  map[int64]bool
+	PageIndex        int
+	PageSize         int
+	Amount           int64
+	AmountSource     string
+	AwaitingManual   bool
+	PendingDeltaName string
+	LastOperation    []BalanceAdjustOperation
+	LastOperationID  string
+	LastOperationAt  time.Time
+	Undone           bool
+}
+
+type BalanceDelta struct {
+	ID        int64
+	ChatID    int64
+	Name      string
+	Amount    int64
+	CreatedBy int64
+	CreatedAt time.Time
 }
 
 // Возможные состояния админ-диалога
@@ -99,4 +114,6 @@ const (
 	StateBalanceAdjustPicker  = "admin:balance_adjust_picker"
 	StateBalanceAdjustAmount  = "admin:balance_adjust_amount"
 	StateBalanceAdjustConfirm = "admin:balance_adjust_confirm"
+	StateBalanceDeltaName     = "admin:balance_delta_name"
+	StateBalanceDeltaAmount   = "admin:balance_delta_amount"
 )

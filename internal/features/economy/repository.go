@@ -4,13 +4,17 @@ package economy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Repository предоставляет методы для работы с балансами и транзакциями.
+var ErrInsufficientFunds = errors.New("insufficient funds")
+
 type Repository struct {
 	db *pgxpool.Pool
 }
@@ -41,6 +45,9 @@ func (r *Repository) GetBalance(ctx context.Context, userID int64) (int64, error
 	var balance int64
 	err := r.db.QueryRow(ctx, query, userID).Scan(&balance)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, nil
+		}
 		return 0, fmt.Errorf("ошибка получения баланса: %w", err)
 	}
 	return balance, nil
@@ -62,6 +69,10 @@ func (r *Repository) AddBalance(ctx context.Context, userID int64, amount int64,
 		return fmt.Errorf("ошибка начала транзакции: %w", err)
 	}
 	defer tx.Rollback(ctx)
+
+	if err = r.ensureBalanceRowTx(ctx, tx, userID); err != nil {
+		return err
+	}
 
 	// Обновляем баланс и total_earned
 	_, err = tx.Exec(ctx, `
@@ -94,6 +105,10 @@ func (r *Repository) DeductBalance(ctx context.Context, userID int64, amount int
 	}
 	defer tx.Rollback(ctx)
 
+	if err = r.ensureBalanceRowTx(ctx, tx, userID); err != nil {
+		return err
+	}
+
 	// Проверяем баланс перед списанием (с блокировкой строки FOR UPDATE)
 	var currentBalance int64
 	err = tx.QueryRow(ctx, `
@@ -104,7 +119,7 @@ func (r *Repository) DeductBalance(ctx context.Context, userID int64, amount int
 	}
 
 	if currentBalance < amount {
-		return fmt.Errorf("недостаточно пленок: нужно %d, есть %d", amount, currentBalance)
+		return fmt.Errorf("%w: нужно %d, есть %d", ErrInsufficientFunds, amount, currentBalance)
 	}
 
 	// Списываем
@@ -138,6 +153,13 @@ func (r *Repository) Transfer(ctx context.Context, fromUserID, toUserID, amount 
 	}
 	defer tx.Rollback(ctx)
 
+	if err = r.ensureBalanceRowTx(ctx, tx, fromUserID); err != nil {
+		return err
+	}
+	if err = r.ensureBalanceRowTx(ctx, tx, toUserID); err != nil {
+		return err
+	}
+
 	// Блокируем строку отправителя и проверяем баланс
 	var senderBalance int64
 	err = tx.QueryRow(ctx, `
@@ -148,7 +170,7 @@ func (r *Repository) Transfer(ctx context.Context, fromUserID, toUserID, amount 
 	}
 
 	if senderBalance < amount {
-		return fmt.Errorf("недостаточно пленок: нужно %d, есть %d", amount, senderBalance)
+		return fmt.Errorf("%w: нужно %d, есть %d", ErrInsufficientFunds, amount, senderBalance)
 	}
 
 	// Списываем у отправителя
@@ -181,6 +203,18 @@ func (r *Repository) Transfer(ctx context.Context, fromUserID, toUserID, amount 
 	}
 
 	return tx.Commit(ctx)
+}
+
+func (r *Repository) ensureBalanceRowTx(ctx context.Context, tx pgx.Tx, userID int64) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO balances (user_id, balance, total_earned, total_spent)
+		VALUES ($1, 0, 0, 0)
+		ON CONFLICT (user_id) DO NOTHING
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("ошибка подготовки баланса: %w", err)
+	}
+	return nil
 }
 
 // GetTransactions возвращает последние N транзакций пользователя.

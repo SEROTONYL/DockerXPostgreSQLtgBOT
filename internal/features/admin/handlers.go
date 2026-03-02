@@ -161,7 +161,7 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 		case StateChangeRoleText:
 			h.handleChangeRoleText(ctx, chatID, userID, text)
 			return true
-		case StateBalanceAdjustAmount:
+		case StateBalanceAdjustAmount, StateBalanceDeltaName, StateBalanceDeltaAmount:
 			if h.handleBalanceAdjustManualAmount(ctx, chatID, userID, strings.TrimSpace(text)) {
 				return true
 			}

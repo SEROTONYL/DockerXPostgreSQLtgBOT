@@ -23,6 +23,12 @@ func (f *fakeAdminRepo) LogAttempt(ctx context.Context, userID int64, success bo
 func (f *fakeAdminRepo) GetRecentAttempts(ctx context.Context, userID int64, period time.Duration) (int, error) {
 	return 0, nil
 }
+func (f *fakeAdminRepo) ListBalanceDeltas(ctx context.Context, chatID int64) ([]*BalanceDelta, error) {
+	return nil, nil
+}
+func (f *fakeAdminRepo) CreateBalanceDelta(ctx context.Context, chatID int64, name string, amount int64, createdBy int64) error {
+	return nil
+}
 
 type fakeMemberRepo struct {
 	member           *members.Member
@@ -100,6 +106,12 @@ func (f *fakeAdminRepoAttempts) LogAttempt(ctx context.Context, userID int64, su
 }
 func (f *fakeAdminRepoAttempts) GetRecentAttempts(ctx context.Context, userID int64, period time.Duration) (int, error) {
 	return f.attempts, nil
+}
+func (f *fakeAdminRepoAttempts) ListBalanceDeltas(ctx context.Context, chatID int64) ([]*BalanceDelta, error) {
+	return nil, nil
+}
+func (f *fakeAdminRepoAttempts) CreateBalanceDelta(ctx context.Context, chatID int64, name string, amount int64, createdBy int64) error {
+	return nil
 }
 
 func TestVerifyPassword_NoMojibakeInErrors(t *testing.T) {
