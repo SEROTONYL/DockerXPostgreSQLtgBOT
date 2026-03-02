@@ -225,19 +225,22 @@ func TestPickerFlow_OpenPicker_ShowsUserList(t *testing.T) {
 	if e == nil {
 		t.Fatalf("expected EditMessage")
 	}
-	if !strings.Contains(e.text, "Выбери участника с ролью") {
+	if !strings.Contains(e.text, "Выбери участника") {
 		t.Fatalf("unexpected picker text: %q", e.text)
 	}
 	if !hasButton(e.markup, userPickerBackButton, cbPickerBack) {
 		t.Fatalf("expected back button")
 	}
-	if b := buttonByText(e.markup, formatUserPickerButton(repo.with[0])); b == nil || b.Style != "primary" {
+	if !hasButton(e.markup, "Отменить действие", cbAdminCancelAction) {
+		t.Fatalf("expected cancel action button")
+	}
+	if b := buttonByText(e.markup, formatUserPickerButton(repo.with[0], UserPickerChangeWithRole)); b == nil || b.Style != "primary" {
 		t.Fatalf("expected first user button style primary, got %#v", b)
 	}
-	if b := buttonByText(e.markup, formatUserPickerButton(repo.with[1])); b == nil || b.Style != "success" {
+	if b := buttonByText(e.markup, formatUserPickerButton(repo.with[1], UserPickerChangeWithRole)); b == nil || b.Style != "success" {
 		t.Fatalf("expected second user button style success, got %#v", b)
 	}
-	if b := buttonByText(e.markup, formatUserPickerButton(repo.with[2])); b == nil || b.Style != "primary" {
+	if b := buttonByText(e.markup, formatUserPickerButton(repo.with[2], UserPickerChangeWithRole)); b == nil || b.Style != "primary" {
 		t.Fatalf("expected third user button style primary, got %#v", b)
 	}
 	if b := buttonByText(e.markup, userPickerBackButton); b == nil || b.Style != "danger" {
@@ -269,11 +272,11 @@ func TestPickerFlow_Pagination_StyleRestartsOnNewPage(t *testing.T) {
 	if e == nil || e.markup == nil {
 		t.Fatalf("expected edit with picker markup")
 	}
-	firstPageSecondBtn := buttonByText(e.markup, formatUserPickerButton(users[8]))
+	firstPageSecondBtn := buttonByText(e.markup, formatUserPickerButton(users[8], UserPickerChangeWithRole))
 	if firstPageSecondBtn == nil || firstPageSecondBtn.Style != "primary" {
 		t.Fatalf("expected first button on second page to restart with primary, got %#v", firstPageSecondBtn)
 	}
-	if b := buttonByText(e.markup, formatUserPickerButton(users[9])); b == nil || b.Style != "success" {
+	if b := buttonByText(e.markup, formatUserPickerButton(users[9], UserPickerChangeWithRole)); b == nil || b.Style != "success" {
 		t.Fatalf("expected second button on second page style success, got %#v", b)
 	}
 }
@@ -299,6 +302,86 @@ func TestPickerFlow_SelectUser_ShowsRolePrompt(t *testing.T) {
 	}
 	if !hasButton(e.markup, userPickerBackButton, cbRoleInputBack) {
 		t.Fatalf("expected role-input back button")
+	}
+	if !hasButton(e.markup, "Отменить действие", cbAdminCancelAction) {
+		t.Fatalf("expected cancel action button on role input")
+	}
+}
+
+func TestCancelAction_FromPicker_ReturnsToPanel(t *testing.T) {
+	tg := &fakeTG{}
+	role := "old"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with:    []*members.Member{{UserID: 1001, Username: "u1", Role: &role}},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminChangeRole))
+	ok := h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminCancelAction))
+	if !ok {
+		t.Fatalf("expected callback handled")
+	}
+	if tg.count("ack") < 2 {
+		t.Fatalf("expected callback ack for picker open and cancel")
+	}
+
+	e := tg.last("edit")
+	if e == nil || !strings.Contains(e.text, "Админ-панель") {
+		t.Fatalf("expected return to panel by edit, got %#v", e)
+	}
+	if st := h.service.GetState(77); st != nil {
+		t.Fatalf("expected admin flow state cleared, got %q", st.State)
+	}
+}
+
+func TestCancelAction_FromRoleInput_ReturnsToPanel(t *testing.T) {
+	tg := &fakeTG{}
+	role := "old"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with:    []*members.Member{{UserID: 1001, Username: "u1", Role: &role}},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminChangeRole))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, 1001)))
+	ok := h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminCancelAction))
+	if !ok {
+		t.Fatalf("expected callback handled")
+	}
+
+	e := tg.last("edit")
+	if e == nil || !strings.Contains(e.text, "Админ-панель") {
+		t.Fatalf("expected return to panel by edit, got %#v", e)
+	}
+	if st := h.service.GetState(77); st != nil {
+		t.Fatalf("expected admin flow state cleared, got %q", st.State)
+	}
+}
+
+func TestFormatMemberForAssignPicker(t *testing.T) {
+	withUsername := &members.Member{UserID: 1001, Username: "user"}
+	if got := formatMemberForAssignPicker(withUsername); got != "@user • 1001" {
+		t.Fatalf("unexpected assign format with username: %q", got)
+	}
+
+	withName := &members.Member{UserID: 1002, FirstName: "Ivan"}
+	if got := formatMemberForAssignPicker(withName); got != "Ivan • 1002" {
+		t.Fatalf("unexpected assign format with first name: %q", got)
+	}
+}
+
+func TestFormatMemberForRolePicker(t *testing.T) {
+	role := "мяу"
+	withUsername := &members.Member{UserID: 1001, Username: "u", Role: &role}
+	if got := formatMemberForRolePicker(withUsername); got != "мяу • @u" {
+		t.Fatalf("unexpected role format with username: %q", got)
+	}
+
+	withoutUsername := &members.Member{UserID: 1002, Role: &role}
+	if got := formatMemberForRolePicker(withoutUsername); got != "мяу • 1002" {
+		t.Fatalf("unexpected role format without username: %q", got)
 	}
 }
 
@@ -353,7 +436,7 @@ func TestBackButton_Works_FromRoleInput(t *testing.T) {
 	if e == nil {
 		t.Fatalf("expected EditMessage")
 	}
-	if !strings.Contains(e.text, "Выбери участника с ролью") {
+	if !strings.Contains(e.text, "Выбери участника") {
 		t.Fatalf("expected return to picker, got: %q", e.text)
 	}
 }
