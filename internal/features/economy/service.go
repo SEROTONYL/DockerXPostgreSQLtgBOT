@@ -1,5 +1,5 @@
-﻿// Package economy вЂ” service.go СЃРѕРґРµСЂР¶РёС‚ Р±РёР·РЅРµСЃ-Р»РѕРіРёРєСѓ СЌРєРѕРЅРѕРјРёРєРё.
-// Р’Р°Р»РёРґР°С†РёСЏ, РїРµСЂРµРІРѕРґС‹, РїРѕР»СѓС‡РµРЅРёРµ Р±Р°Р»Р°РЅСЃР° Рё РёСЃС‚РѕСЂРёРё С‚СЂР°РЅР·Р°РєС†РёР№.
+// Package economy — service.go содержит бизнес-логику экономики.
+// Валидация, переводы, получение баланса и истории транзакций.
 package economy
 
 import (
@@ -12,23 +12,23 @@ import (
 	"serotonyl.ru/telegram-bot/internal/common"
 )
 
-// Service СѓРїСЂР°РІР»СЏРµС‚ СЌРєРѕРЅРѕРјРёРєРѕР№ Р±РѕС‚Р° (РїР»РµРЅРєРё).
+// Service управляет экономикой бота (пленки).
 type Service struct {
-	repo *Repository // Р РµРїРѕР·РёС‚РѕСЂРёР№ РґР»СЏ СЂР°Р±РѕС‚С‹ СЃ Р‘Р”
+	repo *Repository // Репозиторий для работы с БД
 }
 
-// NewService СЃРѕР·РґР°С‘С‚ РЅРѕРІС‹Р№ СЃРµСЂРІРёСЃ СЌРєРѕРЅРѕРјРёРєРё.
+// NewService создаёт новый сервис экономики.
 func NewService(repo *Repository) *Service {
 	return &Service{repo: repo}
 }
 
-// GetBalance РІРѕР·РІСЂР°С‰Р°РµС‚ С‚РµРєСѓС‰РёР№ Р±Р°Р»Р°РЅСЃ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ.
+// GetBalance возвращает текущий баланс пользователя.
 func (s *Service) GetBalance(ctx context.Context, userID int64) (int64, error) {
 	return s.repo.GetBalance(ctx, userID)
 }
 
-// AddBalance РЅР°С‡РёСЃР»СЏРµС‚ РїР»РµРЅРєРё РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ.
-// РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ Р±РѕРЅСѓСЃРѕРІ СЃС‚СЂРёРєРѕРІ, РІС‹РёРіСЂС‹С€РµР№ РєР°Р·РёРЅРѕ Рё С‚.Рґ.
+// AddBalance начисляет пленки пользователю.
+// Используется для бонусов стриков, выигрышей казино и т.д.
 func (s *Service) AddBalance(ctx context.Context, userID int64, amount int64, txType, description string) error {
 	if amount <= 0 {
 		return common.ErrInvalidAmount
@@ -36,8 +36,8 @@ func (s *Service) AddBalance(ctx context.Context, userID int64, amount int64, tx
 	return s.repo.AddBalance(ctx, userID, amount, txType, description)
 }
 
-// DeductBalance СЃРїРёСЃС‹РІР°РµС‚ РїР»РµРЅРєРё.
-// РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ СЃС‚Р°РІРѕРє РєР°Р·РёРЅРѕ Рё РґСЂСѓРіРёС… С‚СЂР°С‚.
+// DeductBalance списывает пленки.
+// Используется для ставок казино и других трат.
 func (s *Service) DeductBalance(ctx context.Context, userID int64, amount int64, txType, description string) error {
 	if amount <= 0 {
 		return common.ErrInvalidAmount
@@ -45,27 +45,27 @@ func (s *Service) DeductBalance(ctx context.Context, userID int64, amount int64,
 	return s.repo.DeductBalance(ctx, userID, amount, txType, description)
 }
 
-// Transfer РїРµСЂРµРІРѕРґРёС‚ РїР»РµРЅРєРё РѕС‚ РѕРґРЅРѕРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ Рє РґСЂСѓРіРѕРјСѓ.
-// Р’С‹РїРѕР»РЅСЏРµС‚ РІСЃРµ РЅРµРѕР±С…РѕРґРёРјС‹Рµ РїСЂРѕРІРµСЂРєРё:
-//   - РќРµР»СЊР·СЏ РїРµСЂРµРІРѕРґРёС‚СЊ СЃРµР±Рµ
-//   - РЎСѓРјРјР° РґРѕР»Р¶РЅР° Р±С‹С‚СЊ РїРѕР»РѕР¶РёС‚РµР»СЊРЅРѕР№
-//   - РЈ РѕС‚РїСЂР°РІРёС‚РµР»СЏ РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ РґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РїР»РµРЅРѕРє
+// Transfer переводит пленки от одного пользователя к другому.
+// Выполняет все необходимые проверки:
+//   - Нельзя переводить себе
+//   - Сумма должна быть положительной
+//   - У отправителя должно быть достаточно пленок
 func (s *Service) Transfer(ctx context.Context, fromUserID, toUserID, amount int64) error {
-	// РџСЂРѕРІРµСЂРєР°: РЅРµР»СЊР·СЏ РѕС‚РїСЂР°РІРёС‚СЊ СЃРµР±Рµ
+	// Проверка: нельзя отправить себе
 	if fromUserID == toUserID {
 		return common.ErrSelfTransfer
 	}
 
-	// РџСЂРѕРІРµСЂРєР°: СЃСѓРјРјР° РґРѕР»Р¶РЅР° Р±С‹С‚СЊ РїРѕР»РѕР¶РёС‚РµР»СЊРЅРѕР№
+	// Проверка: сумма должна быть положительной
 	if amount <= 0 {
 		return common.ErrInvalidAmount
 	}
 
-	// Р’С‹РїРѕР»РЅСЏРµРј РїРµСЂРµРІРѕРґ (РїСЂРѕРІРµСЂРєР° Р±Р°Р»Р°РЅСЃР° РІРЅСѓС‚СЂРё СЂРµРїРѕР·РёС‚РѕСЂРёСЏ)
+	// Выполняем перевод (проверка баланса внутри репозитория)
 	err := s.repo.Transfer(ctx, fromUserID, toUserID, amount)
 	if err != nil {
-		// Р•СЃР»Рё РѕС€РёР±РєР° СЃРѕРґРµСЂР¶РёС‚ "РЅРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ" вЂ” СЌС‚Рѕ РЅРµС…РІР°С‚РєР° РїР»РµРЅРѕРє
-		if strings.Contains(err.Error(), "РЅРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ") {
+		// Если ошибка содержит "недостаточно" — это нехватка пленок
+		if strings.Contains(err.Error(), "недостаточно") {
 			return common.ErrInsufficientBalance
 		}
 		return err
@@ -75,13 +75,13 @@ func (s *Service) Transfer(ctx context.Context, fromUserID, toUserID, amount int
 		"from": fromUserID,
 		"to":   toUserID,
 		"amount": amount,
-	}).Info("РџРµСЂРµРІРѕРґ РІС‹РїРѕР»РЅРµРЅ")
+	}).Info("Перевод выполнен")
 
 	return nil
 }
 
-// GetTransactionHistory РІРѕР·РІСЂР°С‰Р°РµС‚ С„РѕСЂРјР°С‚РёСЂРѕРІР°РЅРЅСѓСЋ РёСЃС‚РѕСЂРёСЋ С‚СЂР°РЅР·Р°РєС†РёР№.
-// РџРѕСЃР»РµРґРЅРёРµ 10 С‚СЂР°РЅР·Р°РєС†РёР№. Р•СЃР»Рё Р±РѕР»СЊС€Рµ 5 вЂ” РѕР±РѕСЂР°С‡РёРІР°РµС‚ РІ СЃРїРѕР№Р»РµСЂ.
+// GetTransactionHistory возвращает форматированную историю транзакций.
+// Последние 10 транзакций. Если больше 5 — оборачивает в спойлер.
 func (s *Service) GetTransactionHistory(ctx context.Context, userID int64) (string, error) {
 	transactions, err := s.repo.GetTransactions(ctx, userID, 10)
 	if err != nil {
@@ -95,10 +95,10 @@ func (s *Service) GetTransactionHistory(ctx context.Context, userID int64) (stri
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("📋 Последние %d транзакций:\n\n", len(transactions)))
 
-	// Р¤РѕСЂРјРёСЂСѓРµРј СЃС‚СЂРѕРєРё С‚СЂР°РЅР·Р°РєС†РёР№
+	// Формируем строки транзакций
 	var lines []string
 	for i, tx := range transactions {
-		// РћРїСЂРµРґРµР»СЏРµРј Р·РЅР°Рє: + РµСЃР»Рё РїРѕР»СѓС‡РёР»Рё, - РµСЃР»Рё РѕС‚РїСЂР°РІРёР»Рё
+		// Определяем знак: + если получили, - если отправили
 		sign := "+"
 		if tx.FromUserID != nil && *tx.FromUserID == userID {
 			sign = "-"
@@ -115,13 +115,13 @@ func (s *Service) GetTransactionHistory(ctx context.Context, userID int64) (stri
 		lines = append(lines, line)
 	}
 
-	// Р•СЃР»Рё Р±РѕР»СЊС€Рµ 5 вЂ” РѕР±РѕСЂР°С‡РёРІР°РµРј РІ СЃРїРѕР№Р»РµСЂ (||С‚РµРєСЃС‚||)
+	// Если больше 5 — оборачиваем в спойлер (||текст||)
 	if len(lines) > 5 {
-		// РџРµСЂРІС‹Рµ 5 РїРѕРєР°Р·С‹РІР°РµРј РѕС‚РєСЂС‹С‚Рѕ
+		// Первые 5 показываем открыто
 		for _, line := range lines[:5] {
 			sb.WriteString(line + "\n")
 		}
-		// РћСЃС‚Р°Р»СЊРЅС‹Рµ РІ СЃРїРѕР№Р»РµСЂРµ
+		// Остальные в спойлере
 		sb.WriteString("\n||")
 		for _, line := range lines[5:] {
 			sb.WriteString(line + "\n")
@@ -136,7 +136,7 @@ func (s *Service) GetTransactionHistory(ctx context.Context, userID int64) (stri
 	return sb.String(), nil
 }
 
-// CreateBalance СЃРѕР·РґР°С‘С‚ РЅР°С‡Р°Р»СЊРЅС‹Р№ Р±Р°Р»Р°РЅСЃ РґР»СЏ РЅРѕРІРѕРіРѕ СѓС‡Р°СЃС‚РЅРёРєР° (0 РїР»РµРЅРѕРє).
+// CreateBalance создаёт начальный баланс для нового участника (0 пленок).
 func (s *Service) CreateBalance(ctx context.Context, userID int64) error {
 	return s.repo.EnsureBalance(ctx, userID)
 }

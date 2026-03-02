@@ -1,5 +1,5 @@
-﻿// Package streak вЂ” service.go СЃРѕРґРµСЂР¶РёС‚ РѕСЃРЅРѕРІРЅСѓСЋ Р±РёР·РЅРµСЃ-Р»РѕРіРёРєСѓ СЃС‚СЂРёРє-СЃРёСЃС‚РµРјС‹.
-// РЎРµСЂРІРёСЃ СЃС‡РёС‚Р°РµС‚ СЃРѕРѕР±С‰РµРЅРёСЏ, РЅР°С‡РёСЃР»СЏРµС‚ Р±РѕРЅСѓСЃС‹ Рё СѓРїСЂР°РІР»СЏРµС‚ РµР¶РµРґРЅРµРІРЅС‹Рј СЃР±СЂРѕСЃРѕРј.
+// Package streak — service.go содержит основную бизнес-логику стрик-системы.
+// Сервис считает сообщения, начисляет бонусы и управляет ежедневным сбросом.
 package streak
 
 import (
@@ -13,14 +13,14 @@ import (
 	"serotonyl.ru/telegram-bot/internal/features/economy"
 )
 
-// Service СѓРїСЂР°РІР»СЏРµС‚ СЃС‚СЂРёРє-СЃРёСЃС‚РµРјРѕР№.
+// Service управляет стрик-системой.
 type Service struct {
-	repo           *Repository      // Р РµРїРѕР·РёС‚РѕСЂРёР№ СЃС‚СЂРёРєРѕРІ
-	economyService *economy.Service // РЎРµСЂРІРёСЃ СЌРєРѕРЅРѕРјРёРєРё РґР»СЏ РЅР°С‡РёСЃР»РµРЅРёСЏ Р±РѕРЅСѓСЃРѕРІ
-	cfg            *config.Config   // РљРѕРЅС„РёРіСѓСЂР°С†РёСЏ
+	repo           *Repository      // Репозиторий стриков
+	economyService *economy.Service // Сервис экономики для начисления бонусов
+	cfg            *config.Config   // Конфигурация
 }
 
-// NewService СЃРѕР·РґР°С‘С‚ РЅРѕРІС‹Р№ СЃРµСЂРІРёСЃ СЃС‚СЂРёРєРѕРІ.
+// NewService создаёт новый сервис стриков.
 func NewService(repo *Repository, economyService *economy.Service, cfg *config.Config) *Service {
 	return &Service{
 		repo:           repo,
@@ -29,25 +29,25 @@ func NewService(repo *Repository, economyService *economy.Service, cfg *config.C
 	}
 }
 
-// CountMessage РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РІС…РѕРґСЏС‰РµРµ СЃРѕРѕР±С‰РµРЅРёРµ РґР»СЏ РїРѕРґСЃС‡С‘С‚Р° СЃС‚СЂРёРєР°.
-// Р’С‹Р·С‹РІР°РµС‚СЃСЏ РґР»СЏ РљРђР–Р”РћР“Рћ СЃРѕРѕР±С‰РµРЅРёСЏ РІ FLOOD_CHAT_ID.
+// CountMessage обрабатывает входящее сообщение для подсчёта стрика.
+// Вызывается для КАЖДОГО сообщения в FLOOD_CHAT_ID.
 //
-// РђР»РіРѕСЂРёС‚Рј:
-//  1. РџСЂРѕРІРµСЂСЏРµРј, СЃРѕРґРµСЂР¶РёС‚ Р»Рё СЃРѕРѕР±С‰РµРЅРёРµ 3+ СЃР»РѕРІ
-//  2. РџСЂРѕРІРµСЂСЏРµРј, РЅРµ СЏРІР»СЏРµС‚СЃСЏ Р»Рё РєРѕРјР°РЅРґРѕР№
-//  3. РџСЂРѕРІРµСЂСЏРµРј, РЅРµ РІС‹РїРѕР»РЅРµРЅР° Р»Рё СѓР¶Рµ РЅРѕСЂРјР°
-//  4. РЈРІРµР»РёС‡РёРІР°РµРј СЃС‡С‘С‚С‡РёРє
-//  5. Р•СЃР»Рё РґРѕСЃС‚РёРіРЅСѓС‚Р° РЅРѕСЂРјР° (50) вЂ” РЅР°С‡РёСЃР»СЏРµРј Р±РѕРЅСѓСЃ РњРћР›Р§Рђ
+// Алгоритм:
+//  1. Проверяем, содержит ли сообщение 3+ слов
+//  2. Проверяем, не является ли командой
+//  3. Проверяем, не выполнена ли уже норма
+//  4. Увеличиваем счётчик
+//  5. Если достигнута норма (50) — начисляем бонус МОЛЧА
 func (s *Service) CountMessage(ctx context.Context, userID int64, text string) error {
-	// РЁР°Рі 1-2: РџСЂРѕРІРµСЂСЏРµРј, РїРѕРґС…РѕРґРёС‚ Р»Рё СЃРѕРѕР±С‰РµРЅРёРµ
+	// Шаг 1-2: Проверяем, подходит ли сообщение
 	if !IsValidForStreak(text) {
-		return nil // РЎРѕРѕР±С‰РµРЅРёРµ РЅРµ РїРѕРґС…РѕРґРёС‚ вЂ” РёРіРЅРѕСЂРёСЂСѓРµРј
+		return nil // Сообщение не подходит — игнорируем
 	}
 
-	// РЁР°Рі 3: РџРѕР»СѓС‡Р°РµРј С‚РµРєСѓС‰РёР№ СЃС‚СЂРёРє
+	// Шаг 3: Получаем текущий стрик
 	streak, err := s.repo.GetByUserID(ctx, userID)
 	if err != nil {
-		// Р•СЃР»Рё СЃС‚СЂРёРє РЅРµ РЅР°Р№РґРµРЅ вЂ” СЃРѕР·РґР°С‘Рј (РїРµСЂРІРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ РїРѕСЃР»Рµ СЂРµРіРёСЃС‚СЂР°С†РёРё)
+		// Если стрик не найден — создаём (первое сообщение после регистрации)
 		if err := s.repo.Create(ctx, userID); err != nil {
 			return err
 		}
@@ -57,18 +57,18 @@ func (s *Service) CountMessage(ctx context.Context, userID int64, text string) e
 		}
 	}
 
-	// Р•СЃР»Рё РЅРѕСЂРјР° СѓР¶Рµ РІС‹РїРѕР»РЅРµРЅР° вЂ” РЅРµ СЃС‡РёС‚Р°РµРј РґР°Р»СЊС€Рµ
+	// Если норма уже выполнена — не считаем дальше
 	if streak.QuotaCompletedToday {
 		return nil
 	}
 
-	// РЁР°Рі 4: РЈРІРµР»РёС‡РёРІР°РµРј СЃС‡С‘С‚С‡РёРє
+	// Шаг 4: Увеличиваем счётчик
 	updated, err := s.repo.IncrementMessages(ctx, userID)
 	if err != nil {
 		return err
 	}
 
-	// РЁР°Рі 5: РџСЂРѕРІРµСЂСЏРµРј, РґРѕСЃС‚РёРіРЅСѓС‚Р° Р»Рё РЅРѕСЂРјР°
+	// Шаг 5: Проверяем, достигнута ли норма
 	if updated.MessagesToday >= s.cfg.StreakMessagesNeed {
 		return s.completeQuota(ctx, userID, updated)
 	}
@@ -76,10 +76,10 @@ func (s *Service) CountMessage(ctx context.Context, userID int64, text string) e
 	return nil
 }
 
-// completeQuota РІС‹РїРѕР»РЅСЏРµС‚ РЅРѕСЂРјСѓ РґРЅСЏ: СѓРІРµР»РёС‡РёРІР°РµС‚ СЃС‚СЂРёРє, РЅР°С‡РёСЃР»СЏРµС‚ Р±РѕРЅСѓСЃ.
-// Р‘РѕРЅСѓСЃ РЅР°С‡РёСЃР»СЏРµС‚СЃСЏ РњРћР›Р§Рђ вЂ” РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РїРѕР»СѓС‡Р°РµС‚ СѓРІРµРґРѕРјР»РµРЅРёРµ.
+// completeQuota выполняет норму дня: увеличивает стрик, начисляет бонус.
+// Бонус начисляется МОЛЧА — пользователь не получает уведомление.
 func (s *Service) completeQuota(ctx context.Context, userID int64, streak *Streak) error {
-	// Р Р°СЃСЃС‡РёС‚С‹РІР°РµРј Р±РѕРЅСѓСЃ РЅР° РѕСЃРЅРѕРІРµ С‚РµРєСѓС‰РµРіРѕ СЃС‚СЂРёРєР°
+	// Рассчитываем бонус на основе текущего стрика
 	bonus := CalculateReward(streak.CurrentStreak)
 	newStreak := streak.CurrentStreak + 1
 	longestStreak := streak.LongestStreak
@@ -89,15 +89,15 @@ func (s *Service) completeQuota(ctx context.Context, userID int64, streak *Strea
 	totalCompleted := streak.TotalQuotasCompleted + 1
 	quotaDate := common.GetMoscowDate()
 
-	// РћР±РЅРѕРІР»СЏРµРј СЃС‚СЂРёРє РІ Р‘Р”
+	// Обновляем стрик в БД
 	if err := s.repo.CompleteQuota(ctx, userID, newStreak, longestStreak, totalCompleted, quotaDate); err != nil {
-		return fmt.Errorf("РѕС€РёР±РєР° Р·Р°РІРµСЂС€РµРЅРёСЏ РЅРѕСЂРјС‹: %w", err)
+		return fmt.Errorf("ошибка завершения нормы: %w", err)
 	}
 
-	// РќР°С‡РёСЃР»СЏРµРј Р±РѕРЅСѓСЃ РњРћР›Р§Рђ (Р±РµР· СѓРІРµРґРѕРјР»РµРЅРёСЏ)
+	// Начисляем бонус МОЛЧА (без уведомления)
 	description := fmt.Sprintf("Streak bonus - Day %d", newStreak)
 	if err := s.economyService.AddBalance(ctx, userID, bonus, "streak_bonus", description); err != nil {
-		log.WithError(err).WithField("user_id", userID).Error("РћС€РёР±РєР° РЅР°С‡РёСЃР»РµРЅРёСЏ СЃС‚СЂРёРє-Р±РѕРЅСѓСЃР°")
+		log.WithError(err).WithField("user_id", userID).Error("Ошибка начисления стрик-бонуса")
 		return err
 	}
 
@@ -105,85 +105,85 @@ func (s *Service) completeQuota(ctx context.Context, userID int64, streak *Strea
 		"user_id": userID,
 		"day":     newStreak,
 		"bonus":   bonus,
-	}).Debug("РЎС‚СЂРёРє-Р±РѕРЅСѓСЃ РЅР°С‡РёСЃР»РµРЅ (РјРѕР»С‡Р°)")
+	}).Debug("Стрик-бонус начислен (молча)")
 
 	return nil
 }
 
-// GetStreak РІРѕР·РІСЂР°С‰Р°РµС‚ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ СЃС‚СЂРёРєРµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ.
+// GetStreak возвращает информацию о стрике пользователя.
 func (s *Service) GetStreak(ctx context.Context, userID int64) (*Streak, error) {
 	return s.repo.GetByUserID(ctx, userID)
 }
 
-// CreateStreak СЃРѕР·РґР°С‘С‚ РЅР°С‡Р°Р»СЊРЅСѓСЋ Р·Р°РїРёСЃСЊ СЃС‚СЂРёРєР°.
+// CreateStreak создаёт начальную запись стрика.
 func (s *Service) CreateStreak(ctx context.Context, userID int64) error {
 	return s.repo.Create(ctx, userID)
 }
 
-// DailyReset СЃР±СЂР°СЃС‹РІР°РµС‚ РґРЅРµРІРЅС‹Рµ СЃС‡С‘С‚С‡РёРєРё Рё Р»РѕРјР°РµС‚ СЃС‚СЂРёРєРё С‚РµС…, РєС‚Рѕ РЅРµ РІС‹РїРѕР»РЅРёР» РЅРѕСЂРјСѓ.
-// Р—Р°РїСѓСЃРєР°РµС‚СЃСЏ РєСЂРѕРЅРѕРј РІ 00:00 РїРѕ РњРѕСЃРєРІРµ.
+// DailyReset сбрасывает дневные счётчики и ломает стрики тех, кто не выполнил норму.
+// Запускается кроном в 00:00 по Москве.
 func (s *Service) DailyReset(ctx context.Context) error {
-	log.Info("Р—Р°РїСѓСЃРє РµР¶РµРґРЅРµРІРЅРѕРіРѕ СЃР±СЂРѕСЃР° СЃС‚СЂРёРєРѕРІ")
+	log.Info("Запуск ежедневного сброса стриков")
 
-	// РџРѕР»СѓС‡Р°РµРј РІСЃРµ СЃС‚СЂРёРєРё
+	// Получаем все стрики
 	streaks, err := s.repo.GetAll(ctx)
 	if err != nil {
-		return fmt.Errorf("РѕС€РёР±РєР° РїРѕР»СѓС‡РµРЅРёСЏ СЃС‚СЂРёРєРѕРІ: %w", err)
+		return fmt.Errorf("ошибка получения стриков: %w", err)
 	}
 
 	brokenCount := 0
 	for _, streak := range streaks {
-		// Р•СЃР»Рё РЅРѕСЂРјР° РќР• Р±С‹Р»Р° РІС‹РїРѕР»РЅРµРЅР° РІС‡РµСЂР° Рё СЃС‚СЂРёРє > 0 вЂ” Р»РѕРјР°РµРј
+		// Если норма НЕ была выполнена вчера и стрик > 0 — ломаем
 		if !streak.QuotaCompletedToday && streak.CurrentStreak > 0 {
 			if err := s.repo.BreakStreak(ctx, streak.UserID); err != nil {
-				log.WithError(err).WithField("user_id", streak.UserID).Error("РћС€РёР±РєР° СЃР±СЂРѕСЃР° СЃС‚СЂРёРєР°")
+				log.WithError(err).WithField("user_id", streak.UserID).Error("Ошибка сброса стрика")
 			}
 			brokenCount++
 		}
 	}
 
-	// РЎР±СЂР°СЃС‹РІР°РµРј РґРЅРµРІРЅС‹Рµ СЃС‡С‘С‚С‡РёРєРё Сѓ РІСЃРµС…
+	// Сбрасываем дневные счётчики у всех
 	if err := s.repo.ResetDaily(ctx); err != nil {
-		return fmt.Errorf("РѕС€РёР±РєР° СЃР±СЂРѕСЃР° РґРЅРµРІРЅС‹С… СЃС‡С‘С‚С‡РёРєРѕРІ: %w", err)
+		return fmt.Errorf("ошибка сброса дневных счётчиков: %w", err)
 	}
 
 	log.WithFields(log.Fields{
 		"total":  len(streaks),
 		"broken": brokenCount,
-	}).Info("Р•Р¶РµРґРЅРµРІРЅС‹Р№ СЃР±СЂРѕСЃ Р·Р°РІРµСЂС€С‘РЅ")
+	}).Info("Ежедневный сброс завершён")
 
 	return nil
 }
 
-// SendReminders РѕС‚РїСЂР°РІР»СЏРµС‚ РЅР°РїРѕРјРёРЅР°РЅРёСЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏРј СЃ РґР»РёРЅРЅС‹РјРё СЃС‚СЂРёРєР°РјРё.
-// Р—Р°РїСѓСЃРєР°РµС‚СЃСЏ РєСЂРѕРЅРѕРј РєР°Р¶РґС‹Р№ С‡Р°СЃ.
+// SendReminders отправляет напоминания пользователям с длинными стриками.
+// Запускается кроном каждый час.
 func (s *Service) SendReminders(ctx context.Context, sendFunc func(userID int64, text string)) error {
-	// РќР°С…РѕРґРёРј РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№ СЃРѕ СЃС‚СЂРёРєРѕРј >= РїРѕСЂРѕРіР° (РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ 7)
+	// Находим пользователей со стриком >= порога (по умолчанию 7)
 	longStreaks, err := s.repo.GetByMinStreak(ctx, s.cfg.StreakReminderThreshold)
 	if err != nil {
 		return err
 	}
 
 	for _, streak := range longStreaks {
-		// РџСЂРѕРїСѓСЃРєР°РµРј РµСЃР»Рё РЅРѕСЂРјР° СѓР¶Рµ РІС‹РїРѕР»РЅРµРЅР° РёР»Рё РЅР°РїРѕРјРёРЅР°РЅРёРµ СѓР¶Рµ РѕС‚РїСЂР°РІР»РµРЅРѕ
+		// Пропускаем если норма уже выполнена или напоминание уже отправлено
 		if streak.QuotaCompletedToday || streak.ReminderSentToday {
 			continue
 		}
 
-		// РџСЂРѕРІРµСЂСЏРµРј РЅРµР°РєС‚РёРІРЅРѕСЃС‚СЊ (10+ С‡Р°СЃРѕРІ Р±РµР· СЃРѕРѕР±С‰РµРЅРёР№)
+		// Проверяем неактивность (10+ часов без сообщений)
 		if streak.LastMessageAt != nil {
 			inactiveHours := common.GetMoscowTime().Sub(*streak.LastMessageAt).Hours()
 			if inactiveHours < float64(s.cfg.StreakInactiveHours) {
-				continue // Р•С‰С‘ РЅРµ РїСЂРѕС€Р»Рѕ РґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РІСЂРµРјРµРЅРё
+				continue // Ещё не прошло достаточно времени
 			}
 		}
 
-		// РћС‚РїСЂР°РІР»СЏРµРј РЅР°РїРѕРјРёРЅР°РЅРёРµ
+		// Отправляем напоминание
 		msg := fmt.Sprintf("⚠️ У тебя огонек %d %s! Не забудь написать сообщения, чтобы не потерять прогресс!",
 			streak.CurrentStreak, common.PluralizeDays(streak.CurrentStreak))
 		sendFunc(streak.UserID, msg)
 
-		// РџРѕРјРµС‡Р°РµРј, С‡С‚Рѕ РЅР°РїРѕРјРёРЅР°РЅРёРµ РѕС‚РїСЂР°РІР»РµРЅРѕ
+		// Помечаем, что напоминание отправлено
 		s.repo.MarkReminderSent(ctx, streak.UserID)
 	}
 

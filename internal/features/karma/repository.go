@@ -1,4 +1,4 @@
-﻿// Package karma вЂ” repository.go РІС‹РїРѕР»РЅСЏРµС‚ РѕРїРµСЂР°С†РёРё СЃ С‚Р°Р±Р»РёС†Р°РјРё karma Рё karma_logs.
+// Package karma — repository.go выполняет операции с таблицами karma и karma_logs.
 package karma
 
 import (
@@ -10,17 +10,17 @@ import (
 	"serotonyl.ru/telegram-bot/internal/common"
 )
 
-// Repository СЂР°Р±РѕС‚Р°РµС‚ СЃ С‚Р°Р±Р»РёС†Р°РјРё karma Рё karma_logs.
+// Repository работает с таблицами karma и karma_logs.
 type Repository struct {
 	db *pgxpool.Pool
 }
 
-// NewRepository СЃРѕР·РґР°С‘С‚ СЂРµРїРѕР·РёС‚РѕСЂРёР№ РєР°СЂРјС‹.
+// NewRepository создаёт репозиторий кармы.
 func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
-// Create СЃРѕР·РґР°С‘С‚ Р·Р°РїРёСЃСЊ РєР°СЂРјС‹ РґР»СЏ РЅРѕРІРѕРіРѕ СѓС‡Р°СЃС‚РЅРёРєР°.
+// Create создаёт запись кармы для нового участника.
 func (r *Repository) Create(ctx context.Context, userID int64) error {
 	query := `
 		INSERT INTO karma (user_id, karma_points, positive_received)
@@ -31,7 +31,7 @@ func (r *Repository) Create(ctx context.Context, userID int64) error {
 	return err
 }
 
-// GetByUserID РІРѕР·РІСЂР°С‰Р°РµС‚ РєР°СЂРјСѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ.
+// GetByUserID возвращает карму пользователя.
 func (r *Repository) GetByUserID(ctx context.Context, userID int64) (*Karma, error) {
 	query := `
 		SELECT id, user_id, karma_points, positive_received, created_at, updated_at
@@ -43,12 +43,12 @@ func (r *Repository) GetByUserID(ctx context.Context, userID int64) (*Karma, err
 		&k.CreatedAt, &k.UpdatedAt,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("РєР°СЂРјР° РЅРµ РЅР°Р№РґРµРЅР°: %w", err)
+		return nil, fmt.Errorf("карма не найдена: %w", err)
 	}
 	return &k, nil
 }
 
-// IncrementKarma СѓРІРµР»РёС‡РёРІР°РµС‚ РєР°СЂРјСѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РЅР° 1.
+// IncrementKarma увеличивает карму пользователя на 1.
 func (r *Repository) IncrementKarma(ctx context.Context, toUserID int64) error {
 	query := `
 		UPDATE karma
@@ -60,14 +60,14 @@ func (r *Repository) IncrementKarma(ctx context.Context, toUserID int64) error {
 	return err
 }
 
-// LogKarma Р·Р°РїРёСЃС‹РІР°РµС‚ РґРµР№СЃС‚РІРёРµ РІС‹РґР°С‡Рё РєР°СЂРјС‹.
+// LogKarma записывает действие выдачи кармы.
 func (r *Repository) LogKarma(ctx context.Context, fromUserID, toUserID int64, points int) error {
 	query := `INSERT INTO karma_logs (from_user_id, to_user_id, points) VALUES ($1, $2, $3)`
 	_, err := r.db.Exec(ctx, query, fromUserID, toUserID, points)
 	return err
 }
 
-// GetTodayCount РІРѕР·РІСЂР°С‰Р°РµС‚, СЃРєРѕР»СЊРєРѕ СЂР°Р· РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РґР°РІР°Р» РєР°СЂРјСѓ СЃРµРіРѕРґРЅСЏ.
+// GetTodayCount возвращает, сколько раз пользователь давал карму сегодня.
 func (r *Repository) GetTodayCount(ctx context.Context, fromUserID int64) (int, error) {
 	today := common.GetMoscowDate()
 	query := `SELECT COUNT(*) FROM karma_logs WHERE from_user_id = $1 AND created_at >= $2`
@@ -76,7 +76,7 @@ func (r *Repository) GetTodayCount(ctx context.Context, fromUserID int64) (int, 
 	return count, err
 }
 
-// GaveToday РїСЂРѕРІРµСЂСЏРµС‚, РґР°РІР°Р» Р»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РєР°СЂРјСѓ РєРѕРЅРєСЂРµС‚РЅРѕРјСѓ С‡РµР»РѕРІРµРєСѓ СЃРµРіРѕРґРЅСЏ.
+// GaveToday проверяет, давал ли пользователь карму конкретному человеку сегодня.
 func (r *Repository) GaveToday(ctx context.Context, fromUserID, toUserID int64) (bool, error) {
 	today := common.GetMoscowDate()
 	query := `

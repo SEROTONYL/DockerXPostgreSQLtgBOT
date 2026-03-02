@@ -1,4 +1,4 @@
-// Package casino вЂ” handlers.go РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РєРѕРјР°РЅРґС‹ !СЃР»РѕС‚С‹ Рё !СЃС‚Р°С‚СЃР»РѕС‚С‹.
+// Package casino — handlers.go обрабатывает команды !слоты и !статслоты.
 package casino
 
 import (
@@ -12,53 +12,53 @@ import (
 	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
-// Handler РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РєРѕРјР°РЅРґС‹ РєР°Р·РёРЅРѕ.
+// Handler обрабатывает команды казино.
 type Handler struct {
 	service *Service
 	bot     telegram.Client
 }
 
-// NewHandler СЃРѕР·РґР°С‘С‚ РѕР±СЂР°Р±РѕС‚С‡РёРє РєР°Р·РёРЅРѕ.
+// NewHandler создаёт обработчик казино.
 func NewHandler(service *Service, bot telegram.Client) *Handler {
 	return &Handler{service: service, bot: bot}
 }
 
-// HandleSlots РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РєРѕРјР°РЅРґСѓ !СЃР»РѕС‚С‹ вЂ” СЃРїРёРЅ СЃР»РѕС‚-РјР°С€РёРЅС‹.
+// HandleSlots обрабатывает команду !слоты — спин слот-машины.
 //
-// Р¤РѕСЂРјР°С‚ РѕС‚РІРµС‚Р°:
+// Формат ответа:
 //
 //	🎰 СЛОТЫ 🎰
 //
-//	рџЌ’ рџЌ‹ рџ’Ћ рџЌЉ рџЌ‡
-//	рџЌ‹ рџЌ’ в­ђ рџЌ‹ рџЌ‰
-//	рџЌЉ рџ’Ћ рџЌ’ рџЌ’ рџЌ’  в†ђ Р’Р«РР“Р Р«РЁ! 3x рџЌ’
+//	🍒 🍋 💎 🍊 🍇
+//	🍋 🍒 ⭐ 🍋 🍉
+//	🍊 💎 🍒 🍒 🍒  ← ВЫИГРЫШ! 3x 🍒
 //	...
 //
-//	рџ’° Р’С‹РїР»Р°С‚Р°: 100 РїР»РµРЅРѕРє (2x)
-//	рџ“Љ Р‘Р°Р»Р°РЅСЃ: 150 РїР»РµРЅРѕРє
+//	💰 Выплата: 100 пленок (2x)
+//	📊 Баланс: 150 пленок
 func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
-	// Р’С‹РїРѕР»РЅСЏРµРј СЃРїРёРЅ
+	// Выполняем спин
 	result, err := h.service.PlaySlots(ctx, userID)
 	if err != nil {
-		// РџСЂРѕРІРµСЂСЏРµРј С‚РёРї РѕС€РёР±РєРё РґР»СЏ РїРѕРЅСЏС‚РЅРѕРіРѕ СЃРѕРѕР±С‰РµРЅРёСЏ
-		if strings.Contains(err.Error(), "РЅРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ") {
+		// Проверяем тип ошибки для понятного сообщения
+		if strings.Contains(err.Error(), "недостаточно") {
 			h.sendMessage(chatID, fmt.Sprintf("❌ Недостаточно плёнок! Ставка: %s",
 				common.FormatBalance(h.service.cfg.CasinoSlotsBet)))
 		} else {
-			log.WithError(err).Error("РћС€РёР±РєР° СЃРїРёРЅР° СЃР»РѕС‚РѕРІ")
+			log.WithError(err).Error("Ошибка спина слотов")
 			h.sendMessage(chatID, "❌ Ошибка при игре в слоты")
 		}
 		return
 	}
 
-	// Р¤РѕСЂРјРёСЂСѓРµРј РѕС‚РІРµС‚
+	// Формируем ответ
 	var sb strings.Builder
 	sb.WriteString("🎰 СЛОТЫ 🎰\n\n")
 
-	// РЎРµС‚РєР°
+	// Сетка
 	sb.WriteString(FormatGrid(result.Grid))
 
-	// Р’С‹РёРіСЂС‹С€РЅС‹Рµ Р»РёРЅРёРё
+	// Выигрышные линии
 	if result.IsWin {
 		sb.WriteString("\n")
 		for _, win := range result.WinLines {
@@ -68,7 +68,7 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 		}
 	}
 
-	// РЎРєР°С‚С‚РµСЂ-Р±РѕРЅСѓСЃ
+	// Скаттер-бонус
 	if result.ScatterCount >= 3 {
 		sb.WriteString(fmt.Sprintf("\n🎰 Скаттер бонус! %d скаттеров → +%s",
 			result.ScatterCount, common.FormatBalance(result.ScatterWin)))
@@ -78,7 +78,7 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 		sb.WriteString("\n")
 	}
 
-	// РС‚РѕРі
+	// Итог
 	sb.WriteString("\n")
 	if result.IsWin {
 		sb.WriteString(fmt.Sprintf("💰 Выплата: %s\n", common.FormatBalance(result.TotalPayout)))
@@ -86,24 +86,24 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 		sb.WriteString("💸 Нет выигрыша\n")
 	}
 
-	// РўРµРєСѓС‰РёР№ Р±Р°Р»Р°РЅСЃ
+	// Текущий баланс
 	balance, _ := h.service.economyService.GetBalance(ctx, userID)
 	sb.WriteString(fmt.Sprintf("📊 Баланс: %s", common.FormatBalance(balance)))
 
 	h.sendMessage(chatID, sb.String())
 }
 
-// HandleSlotStats РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РєРѕРјР°РЅРґСѓ !СЃС‚Р°С‚СЃР»РѕС‚С‹ вЂ” СЃС‚Р°С‚РёСЃС‚РёРєР°.
+// HandleSlotStats обрабатывает команду !статслоты — статистика.
 //
-// Р¤РѕСЂРјР°С‚ РѕС‚РІРµС‚Р°:
+// Формат ответа:
 //
 //	📊 СТАТИСТИКА СЛОТОВ
-//	Р’СЃРµРіРѕ СЃРїРёРЅРѕРІ: 47
-//	РџРѕСЃС‚Р°РІР»РµРЅРѕ: 2 350 РїР»РµРЅРѕРє
-//	Р’С‹РёРіСЂР°РЅРѕ: 2 120 РїР»РµРЅРѕРє
-//	Р§РёСЃС‚Р°СЏ РїСЂРёР±С‹Р»СЊ: -230 РїР»РµРЅРѕРє
-//	рџ’Ћ Р›СѓС‡С€РёР№ РІС‹РёРіСЂС‹С€: 1 500 РїР»РµРЅРѕРє
-//	рџ“€ РўРІРѕР№ RTP: 90.21%
+//	Всего спинов: 47
+//	Поставлено: 2 350 пленок
+//	Выиграно: 2 120 пленок
+//	Чистая прибыль: -230 пленок
+//	💎 Лучший выигрыш: 1 500 пленок
+//	📈 Твой RTP: 90.21%
 func (h *Handler) HandleSlotStats(ctx context.Context, chatID int64, userID int64) {
 	stats, err := h.service.GetStats(ctx, userID)
 	if err != nil {
@@ -138,6 +138,6 @@ func (h *Handler) HandleSlotStats(ctx context.Context, chatID int64, userID int6
 
 func (h *Handler) sendMessage(chatID int64, text string) {
 	if _, err := h.bot.SendMessage(chatID, text, nil); err != nil {
-		log.WithError(err).Error("РћС€РёР±РєР° РѕС‚РїСЂР°РІРєРё СЃРѕРѕР±С‰РµРЅРёСЏ")
+		log.WithError(err).Error("Ошибка отправки сообщения")
 	}
 }
