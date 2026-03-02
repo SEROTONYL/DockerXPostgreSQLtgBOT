@@ -9,7 +9,7 @@ DB_NAME=${DB_NAME:-telegram_bot}
 
 echo "=== Миграции БД ==="
 
-for f in migrations/*.up.sql; do
+for f in $(ls migrations/*.sql | sort); do
     echo "Применяю: $f"
     PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME -f "$f"
 done
