@@ -59,12 +59,44 @@ type RoleInputData struct {
 	Picker       *UserPickerData
 }
 
+type BalanceAdjustMode string
+
+const (
+	BalanceAdjustModeAdd    BalanceAdjustMode = "add"
+	BalanceAdjustModeDeduct BalanceAdjustMode = "deduct"
+)
+
+type BalanceAdjustOperation struct {
+	UserID int64
+	Mode   BalanceAdjustMode
+	Amount int64
+}
+
+type BalanceAdjustData struct {
+	Mode            BalanceAdjustMode
+	UsersSnapshot   []*members.Member
+	SelectedUserIDs map[int64]bool
+	PageIndex       int
+	PageSize        int
+	Amount          int64
+	AmountSource    string
+	AwaitingManual  bool
+	LastOperation   []BalanceAdjustOperation
+	LastOperationID string
+	LastOperationAt time.Time
+	Undone          bool
+}
+
 // Возможные состояния админ-диалога
 const (
-	StateNone             = ""                   // Нет активного состояния
-	StateAwaitingPassword = "awaiting_password"  // Ждём пароль
-	StateAssignRoleSelect = "assign_role_select" // Ждём выбор пользователя (без роли)
-	StateAssignRoleText   = "assign_role_text"   // Ждём текст новой роли
-	StateChangeRoleSelect = "change_role_select" // Ждём выбор пользователя (с ролью)
-	StateChangeRoleText   = "change_role_text"   // Ждём новую роль
+	StateNone                 = ""                   // Нет активного состояния
+	StateAwaitingPassword     = "awaiting_password"  // Ждём пароль
+	StateAssignRoleSelect     = "assign_role_select" // Ждём выбор пользователя (без роли)
+	StateAssignRoleText       = "assign_role_text"   // Ждём текст новой роли
+	StateChangeRoleSelect     = "change_role_select" // Ждём выбор пользователя (с ролью)
+	StateChangeRoleText       = "change_role_text"   // Ждём новую роль
+	StateBalanceAdjustMode    = "admin:balance_adjust_mode"
+	StateBalanceAdjustPicker  = "admin:balance_adjust_picker"
+	StateBalanceAdjustAmount  = "admin:balance_adjust_amount"
+	StateBalanceAdjustConfirm = "admin:balance_adjust_confirm"
 )

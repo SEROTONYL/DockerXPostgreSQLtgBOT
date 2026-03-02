@@ -83,7 +83,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	streakHandler := streak.NewHandler(streakService, tg, cfg)
 	karmaHandler := karma.NewHandler(karmaService, tg)
 	casinoHandler := casino.NewHandler(casinoService, tg)
-	adminHandler := admin.NewHandler(adminService, memberService, tg)
+	adminHandler := admin.NewHandler(adminService, memberService, economyService, tg)
 
 	// === 6. Фильтры ===
 	chatFilter := filters.NewChatFilter(cfg.FloodChatID, memberService, tg)
