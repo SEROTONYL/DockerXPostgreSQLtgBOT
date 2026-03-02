@@ -385,7 +385,7 @@ func TestFormatMemberForRolePicker(t *testing.T) {
 	}
 }
 
-func TestChangeRole_SubmitRole_ShowsSuccess_AndPanel(t *testing.T) {
+func TestChangeRole_SubmitRole_ShowsSingleSuccessScreenWithActions(t *testing.T) {
 	tg := &fakeTG{}
 	role := "old_role"
 	repo := &fakeMemberRepoHandlers{
@@ -401,32 +401,25 @@ func TestChangeRole_SubmitRole_ShowsSuccess_AndPanel(t *testing.T) {
 		t.Fatalf("expected handled=true")
 	}
 
-	foundSuccess := false
-	foundUndo := false
-	foundPanel := false
+	success := tg.last("edit")
+	if success == nil || !strings.Contains(success.text, "✅ Роль изменена") {
+		t.Fatalf("expected success edit screen, got %#v", success)
+	}
+	if !hasButton(success.markup, "↩️ Отменить изменение", cbAdminUndoLast) {
+		t.Fatalf("expected undo button in success screen")
+	}
+	if !hasButton(success.markup, "✅ Вернуться в админ-панель", cbAdminReturnPanel) {
+		t.Fatalf("expected return-to-panel button in success screen")
+	}
+
 	for _, c := range tg.calls {
-		if c.kind == "send" && strings.Contains(c.text, "✅ Роль изменена") {
-			foundSuccess = true
-			if hasButton(c.markup, "↩️ Отменить изменение", cbAdminUndoLast) {
-				foundUndo = true
-			}
-		}
 		if c.kind == "send" && strings.Contains(c.text, "Админ-панель") {
-			foundPanel = true
+			t.Fatalf("did not expect second panel message after success")
 		}
-	}
-	if !foundSuccess {
-		t.Fatalf("expected success message send")
-	}
-	if !foundUndo {
-		t.Fatalf("expected undo button in success message")
-	}
-	if !foundPanel {
-		t.Fatalf("expected panel to be shown after success")
 	}
 }
 
-func TestChangeRole_UndoLast_RestoresRole_AndShowsPanel(t *testing.T) {
+func TestChangeRole_UndoLast_RestoresRole_AndKeepsSuccessActionsScreen(t *testing.T) {
 	tg := &fakeTG{}
 	adminAID := int64(77)
 	oldRole := "old_role"
@@ -448,21 +441,41 @@ func TestChangeRole_UndoLast_RestoresRole_AndShowsPanel(t *testing.T) {
 		t.Fatalf("expected old role restored, got %#v", repo.members[1001])
 	}
 
-	foundUndoSuccess := false
-	foundPanel := false
-	for _, c := range tg.calls {
-		if c.kind == "send" && strings.Contains(c.text, "↩️ Откат выполнен") {
-			foundUndoSuccess = true
-		}
-		if c.kind == "edit" && strings.Contains(c.text, "Админ-панель") {
-			foundPanel = true
-		}
+	undoScreen := tg.last("edit")
+	if undoScreen == nil || !strings.Contains(undoScreen.text, "↩️ Откат выполнен") {
+		t.Fatalf("expected undo success screen by edit, got %#v", undoScreen)
 	}
-	if !foundUndoSuccess {
-		t.Fatalf("expected undo success message")
+	if !hasButton(undoScreen.markup, "↩️ Отменить изменение", cbAdminUndoLast) {
+		t.Fatalf("expected undo button to remain after rollback")
 	}
-	if !foundPanel {
-		t.Fatalf("expected panel render after undo")
+	if !hasButton(undoScreen.markup, "✅ Вернуться в админ-панель", cbAdminReturnPanel) {
+		t.Fatalf("expected return-to-panel button to remain after rollback")
+	}
+}
+
+func TestReturnPanelCallback_EditsMessageToPanel_AndClearsState(t *testing.T) {
+	tg := &fakeTG{}
+	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}}
+	h := newAdminHandlerForFlow(t, repo, tg)
+	h.service.SetState(77, StateChangeRoleText, &RoleInputData{})
+
+	ok := h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminReturnPanel))
+	if !ok {
+		t.Fatalf("expected callback handled")
+	}
+	if tg.count("ack") == 0 {
+		t.Fatalf("expected callback ack")
+	}
+
+	e := tg.last("edit")
+	if e == nil || !strings.Contains(e.text, "✅ Админ-панель открыта") {
+		t.Fatalf("expected panel edit, got %#v", e)
+	}
+	if !hasButton(e.markup, "Назначить роль", cbAdminAssignRole) || !hasButton(e.markup, "Сменить роль", cbAdminChangeRole) {
+		t.Fatalf("expected panel keyboard after return")
+	}
+	if st := h.service.GetState(77); st != nil {
+		t.Fatalf("expected state cleared after return panel callback, got %q", st.State)
 	}
 }
 
