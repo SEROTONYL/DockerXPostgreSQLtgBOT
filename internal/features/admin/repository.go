@@ -84,3 +84,37 @@ func (r *Repository) GetRecentAttempts(ctx context.Context, userID int64, period
 	err := r.db.QueryRow(ctx, query, userID, since).Scan(&count)
 	return count, err
 }
+
+func (r *Repository) ListBalanceDeltas(ctx context.Context, chatID int64) ([]*BalanceDelta, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, chat_id, name, amount, created_by, created_at
+		FROM admin_balance_deltas
+		WHERE chat_id = $1
+		ORDER BY created_at ASC, id ASC
+	`, chatID)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения дельт: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]*BalanceDelta, 0)
+	for rows.Next() {
+		var d BalanceDelta
+		if err := rows.Scan(&d.ID, &d.ChatID, &d.Name, &d.Amount, &d.CreatedBy, &d.CreatedAt); err != nil {
+			return nil, fmt.Errorf("ошибка чтения дельты: %w", err)
+		}
+		result = append(result, &d)
+	}
+	return result, nil
+}
+
+func (r *Repository) CreateBalanceDelta(ctx context.Context, chatID int64, name string, amount int64, createdBy int64) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO admin_balance_deltas (chat_id, name, amount, created_by)
+		VALUES ($1, $2, $3, $4)
+	`, chatID, name, amount, createdBy)
+	if err != nil {
+		return fmt.Errorf("ошибка создания дельты: %w", err)
+	}
+	return nil
+}

@@ -72,8 +72,8 @@ func (s *Service) Transfer(ctx context.Context, fromUserID, toUserID, amount int
 	}
 
 	log.WithFields(log.Fields{
-		"from": fromUserID,
-		"to":   toUserID,
+		"from":   fromUserID,
+		"to":     toUserID,
 		"amount": amount,
 	}).Info("Перевод выполнен")
 
