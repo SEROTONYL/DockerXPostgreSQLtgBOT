@@ -25,11 +25,7 @@ func NewAdapter(bot *botapi.Bot) *Adapter {
 }
 
 func (a *Adapter) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
-	msg, err := a.bot.SendMessage(context.Background(), &botapi.SendMessageParams{
-		ChatID:      chatID,
-		Text:        text,
-		ReplyMarkup: markup,
-	})
+	msg, err := a.bot.SendMessage(context.Background(), buildSendMessageParams(chatID, text, markup))
 	if err != nil {
 		return 0, err
 	}
@@ -40,13 +36,31 @@ func (a *Adapter) SendMessage(chatID int64, text string, markup *models.InlineKe
 }
 
 func (a *Adapter) EditMessage(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
-	_, err := a.bot.EditMessageText(context.Background(), &botapi.EditMessageTextParams{
-		ChatID:      chatID,
-		MessageID:   messageID,
-		Text:        text,
-		ReplyMarkup: markup,
-	})
+	_, err := a.bot.EditMessageText(context.Background(), buildEditMessageTextParams(chatID, messageID, text, markup))
 	return err
+}
+
+func buildSendMessageParams(chatID int64, text string, markup *models.InlineKeyboardMarkup) *botapi.SendMessageParams {
+	params := &botapi.SendMessageParams{
+		ChatID: chatID,
+		Text:   text,
+	}
+	if markup != nil {
+		params.ReplyMarkup = markup
+	}
+	return params
+}
+
+func buildEditMessageTextParams(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) *botapi.EditMessageTextParams {
+	params := &botapi.EditMessageTextParams{
+		ChatID:    chatID,
+		MessageID: messageID,
+		Text:      text,
+	}
+	if markup != nil {
+		params.ReplyMarkup = markup
+	}
+	return params
 }
 
 func (a *Adapter) AnswerCallback(callbackID string) error {

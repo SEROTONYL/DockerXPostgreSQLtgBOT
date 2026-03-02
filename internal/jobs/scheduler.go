@@ -1,6 +1,4 @@
-﻿// Package jobs СѓРїСЂР°РІР»СЏРµС‚ С„РѕРЅРѕРІС‹РјРё Р·Р°РґР°С‡Р°РјРё (cron).
-// scheduler.go РЅР°СЃС‚СЂР°РёРІР°РµС‚ СЂР°СЃРїРёСЃР°РЅРёРµ: РµР¶РµРґРЅРµРІРЅС‹Р№ СЃР±СЂРѕСЃ СЃС‚СЂРёРєРѕРІ
-// Рё РµР¶РµС‡Р°СЃРЅС‹Рµ РЅР°РїРѕРјРёРЅР°РЅРёСЏ.
+// Package jobs manages background cron tasks.
 package jobs
 
 import (
@@ -13,18 +11,28 @@ import (
 	"serotonyl.ru/telegram-bot/internal/features/streak"
 )
 
-// Scheduler СѓРїСЂР°РІР»СЏРµС‚ С„РѕРЅРѕРІС‹РјРё Р·Р°РґР°С‡Р°РјРё.
+const (
+	cronWarnLoadLocation = "Failed to load Europe/Moscow, using UTC+3"
+	cronInfoDailyReset   = "[CRON] Daily streak reset"
+	cronErrorDailyReset  = "[CRON] Daily reset failed"
+	cronDebugReminders   = "[CRON] Checking reminders"
+	cronErrorReminders   = "[CRON] Reminder run failed"
+	cronInfoStarted      = "Scheduler started (Europe/Moscow)"
+	cronInfoStopped      = "Scheduler stopped"
+)
+
+// Scheduler manages background tasks.
 type Scheduler struct {
 	cron          *cron.Cron
 	streakService *streak.Service
 	sendFunc      func(userID int64, text string)
 }
 
-// NewScheduler СЃРѕР·РґР°С‘С‚ РїР»Р°РЅРёСЂРѕРІС‰РёРє Р·Р°РґР°С‡ СЃ РјРѕСЃРєРѕРІСЃРєРёРј С‡Р°СЃРѕРІС‹Рј РїРѕСЏСЃРѕРј.
+// NewScheduler creates a scheduler configured for Europe/Moscow.
 func NewScheduler(streakService *streak.Service, sendFunc func(userID int64, text string)) *Scheduler {
 	loc, err := time.LoadLocation("Europe/Moscow")
 	if err != nil {
-		log.WithError(err).Warn("РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ Europe/Moscow, РёСЃРїРѕР»СЊР·СѓРµРј UTC+3")
+		log.WithError(err).Warn(cronWarnLoadLocation)
 		loc = time.FixedZone("MSK", 3*60*60)
 	}
 
@@ -37,31 +45,29 @@ func NewScheduler(streakService *streak.Service, sendFunc func(userID int64, tex
 	}
 }
 
-// Start Р·Р°РїСѓСЃРєР°РµС‚ РІСЃРµ С„РѕРЅРѕРІС‹Рµ Р·Р°РґР°С‡Рё.
+// Start launches background tasks.
 func (s *Scheduler) Start(ctx context.Context) {
-	// Р•Р¶РµРґРЅРµРІРЅС‹Р№ СЃР±СЂРѕСЃ РІ 00:00 РїРѕ РњРѕСЃРєРІРµ
 	s.cron.AddFunc("0 0 * * *", func() {
-		log.Info("[CRON] Р•Р¶РµРґРЅРµРІРЅС‹Р№ СЃР±СЂРѕСЃ СЃС‚СЂРёРєРѕРІ")
+		log.Info(cronInfoDailyReset)
 		if err := s.streakService.DailyReset(ctx); err != nil {
-			log.WithError(err).Error("[CRON] РћС€РёР±РєР° СЃР±СЂРѕСЃР°")
+			log.WithError(err).Error(cronErrorDailyReset)
 		}
 	})
 
-	// РќР°РїРѕРјРёРЅР°РЅРёСЏ РєР°Р¶РґС‹Р№ С‡Р°СЃ
 	s.cron.AddFunc("0 * * * *", func() {
-		log.Debug("[CRON] РџСЂРѕРІРµСЂРєР° РЅР°РїРѕРјРёРЅР°РЅРёР№")
+		log.Debug(cronDebugReminders)
 		if err := s.streakService.SendReminders(ctx, s.sendFunc); err != nil {
-			log.WithError(err).Error("[CRON] РћС€РёР±РєР° РЅР°РїРѕРјРёРЅР°РЅРёР№")
+			log.WithError(err).Error(cronErrorReminders)
 		}
 	})
 
 	s.cron.Start()
-	log.Info("РџР»Р°РЅРёСЂРѕРІС‰РёРє Р·Р°РґР°С‡ Р·Р°РїСѓС‰РµРЅ (Europe/Moscow)")
+	log.Info(cronInfoStarted)
 }
 
-// Stop РѕСЃС‚Р°РЅР°РІР»РёРІР°РµС‚ РїР»Р°РЅРёСЂРѕРІС‰РёРє.
+// Stop gracefully stops scheduler.
 func (s *Scheduler) Stop() {
 	ctx := s.cron.Stop()
 	<-ctx.Done()
-	log.Info("РџР»Р°РЅРёСЂРѕРІС‰РёРє Р·Р°РґР°С‡ РѕСЃС‚Р°РЅРѕРІР»РµРЅ")
+	log.Info(cronInfoStopped)
 }
