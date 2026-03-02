@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -87,6 +88,41 @@ func (r fakeAdminRepoHandlers) GetRecentAttempts(ctx context.Context, userID int
 	return 0, nil
 }
 
+type econCall struct {
+	method string
+	userID int64
+	amount int64
+	txType string
+}
+
+type fakeEconomy struct {
+	addCalls         int
+	deductCalls      int
+	addErr           error
+	deductErr        error
+	failOnAddCall    int
+	failOnDeductCall int
+	calls            []econCall
+}
+
+func (f *fakeEconomy) AddBalance(ctx context.Context, userID int64, amount int64, txType, description string) error {
+	f.addCalls++
+	f.calls = append(f.calls, econCall{method: "add", userID: userID, amount: amount, txType: txType})
+	if f.failOnAddCall > 0 && f.addCalls == f.failOnAddCall {
+		return errors.New("forced add error")
+	}
+	return f.addErr
+}
+
+func (f *fakeEconomy) DeductBalance(ctx context.Context, userID int64, amount int64, txType, description string) error {
+	f.deductCalls++
+	f.calls = append(f.calls, econCall{method: "deduct", userID: userID, amount: amount, txType: txType})
+	if f.failOnDeductCall > 0 && f.deductCalls == f.failOnDeductCall {
+		return errors.New("forced deduct error")
+	}
+	return f.deductErr
+}
+
 type fakeMemberRepoHandlers struct {
 	members map[int64]*members.Member
 	without []*members.Member
@@ -134,7 +170,13 @@ func (r *fakeMemberRepoHandlers) UpdateAdminFlag(ctx context.Context, userID int
 func newAdminHandlerForFlow(t *testing.T, memberRepo *fakeMemberRepoHandlers, tg *fakeTG) *Handler {
 	t.Helper()
 	svc := NewService(fakeAdminRepoHandlers{hasSession: true}, memberRepo, &config.Config{AdminIDs: []int64{77}})
-	return NewHandler(svc, nil, tg)
+	return NewHandler(svc, nil, &fakeEconomy{}, tg)
+}
+
+func newAdminHandlerWithEconomy(t *testing.T, memberRepo *fakeMemberRepoHandlers, tg *fakeTG, econ *fakeEconomy) *Handler {
+	t.Helper()
+	svc := NewService(fakeAdminRepoHandlers{hasSession: true}, memberRepo, &config.Config{AdminIDs: []int64{77}})
+	return NewHandler(svc, nil, econ, tg)
 }
 
 func callback(chatID int64, msgID int, userID int64, data string) *models.CallbackQuery {
@@ -546,7 +588,7 @@ func TestUnauthorizedUser_CannotOpenAdminPanel(t *testing.T) {
 	tg := &fakeTG{}
 	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: false}}}
 	svc := NewService(fakeAdminRepoHandlers{hasSession: true}, repo, &config.Config{})
-	h := NewHandler(svc, nil, tg)
+	h := NewHandler(svc, nil, &fakeEconomy{}, tg)
 
 	handled := h.HandleAdminMessage(context.Background(), 77, 77, "/login")
 	if !handled {
@@ -611,5 +653,189 @@ func TestHandleAdminCallback_UnknownData_Acked(t *testing.T) {
 	}
 	if tg.count("ack") == 0 {
 		t.Fatalf("expected callback ack to be sent")
+	}
+}
+
+func TestAdminPanel_HasBalanceAdjustButton(t *testing.T) {
+	tg := &fakeTG{}
+	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, "Панель")
+	s := tg.last("send")
+	if s == nil || !hasButton(s.markup, "💸 Изменить баланс", cbAdminBalanceAdjust) {
+		t.Fatalf("expected balance adjust button")
+	}
+}
+
+func TestBalanceAdjust_MultiSelectPersistsAcrossPages(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	users := make([]*members.Member, 0, 10)
+	for i := 0; i < 10; i++ {
+		users = append(users, &members.Member{UserID: int64(5000 + i), Username: fmt.Sprintf("u%d", i), Role: &role})
+	}
+	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}, with: users}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, fmt.Sprintf("%s:%d", cbBalPickToggle, users[0].UserID)))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickNext))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, fmt.Sprintf("%s:%d", cbBalPickToggle, users[8].UserID)))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickPrev))
+
+	e := tg.last("edit")
+	if e == nil {
+		t.Fatalf("expected edit")
+	}
+	if !strings.Contains(e.text, "Выбрано: 2") {
+		t.Fatalf("selection should persist, text=%q", e.text)
+	}
+}
+
+func TestBalanceAdjust_ManualAmountValidation(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}, with: []*members.Member{{UserID: 1001, Username: "u", Role: &role}}}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, fmt.Sprintf("%s:%d", cbBalPickToggle, int64(1001))))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickDone))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalAmtManual))
+
+	if !h.HandleAdminMessage(context.Background(), 77, 77, "abc") {
+		t.Fatalf("manual input should be handled")
+	}
+	if s := tg.last("send"); s == nil || !strings.Contains(s.text, "Некорректная сумма") {
+		t.Fatalf("expected validation error")
+	}
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, "150")
+	if e := tg.last("edit"); e == nil || !strings.Contains(e.text, "Подтверждение") {
+		t.Fatalf("expected confirmation screen")
+	}
+}
+
+func TestBalanceAdjust_FilterOnlyUsersWithRole(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with:    []*members.Member{{UserID: 1001, Username: "withrole", Role: &role}},
+		without: []*members.Member{{UserID: 1002, Username: "norole"}},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+	e := tg.last("edit")
+	if e == nil {
+		t.Fatalf("expected picker")
+	}
+	if strings.Contains(e.text, "norole") {
+		t.Fatalf("user without role must not be present")
+	}
+}
+
+func TestBalanceAdjust_ApplyValidatesRoleOnServerSide(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{
+			77:   {UserID: 77, IsAdmin: true},
+			1001: {UserID: 1001, Username: "u1", Role: &role},
+		},
+		with: []*members.Member{{UserID: 1001, Username: "u1", Role: &role}},
+	}
+	econ := &fakeEconomy{}
+	h := newAdminHandlerWithEconomy(t, repo, tg, econ)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, fmt.Sprintf("%s:%d", cbBalPickToggle, int64(1001))))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickDone))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalAmtDeltaPrefix+"10"))
+
+	empty := ""
+	repo.members[1001].Role = &empty // role dropped after picker, before apply
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalConfirmApply))
+
+	if econ.addCalls != 0 || econ.deductCalls != 0 {
+		t.Fatalf("should not touch economy when server-side role validation fails")
+	}
+	if s := tg.last("send"); s == nil || !strings.Contains(s.text, "Нельзя применить") {
+		t.Fatalf("expected server-side validation error")
+	}
+}
+
+func TestBalanceAdjust_RollbackOnMiddleFailure(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{
+			77:   {UserID: 77, IsAdmin: true},
+			1001: {UserID: 1001, Username: "u1", Role: &role},
+			1002: {UserID: 1002, Username: "u2", Role: &role},
+			1003: {UserID: 1003, Username: "u3", Role: &role},
+		},
+		with: []*members.Member{
+			{UserID: 1001, Username: "u1", Role: &role},
+			{UserID: 1002, Username: "u2", Role: &role},
+			{UserID: 1003, Username: "u3", Role: &role},
+		},
+	}
+	econ := &fakeEconomy{failOnAddCall: 2}
+	h := newAdminHandlerWithEconomy(t, repo, tg, econ)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+	for _, id := range []int64{1001, 1002, 1003} {
+		_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, fmt.Sprintf("%s:%d", cbBalPickToggle, id)))
+	}
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickDone))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalAmtDeltaPrefix+"10"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalConfirmApply))
+
+	if econ.addCalls != 2 {
+		t.Fatalf("expected 2 add calls before failure, got %d", econ.addCalls)
+	}
+	if econ.deductCalls != 1 {
+		t.Fatalf("expected 1 rollback deduct call, got %d", econ.deductCalls)
+	}
+	if s := tg.last("send"); s == nil || !strings.Contains(s.text, "Ошибка применения") {
+		t.Fatalf("expected apply error message")
+	}
+}
+
+func TestBalanceAdjust_UndoTwice(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{
+			77:   {UserID: 77, IsAdmin: true},
+			1001: {UserID: 1001, Username: "u1", Role: &role},
+		},
+		with: []*members.Member{{UserID: 1001, Username: "u1", Role: &role}},
+	}
+	econ := &fakeEconomy{}
+	h := newAdminHandlerWithEconomy(t, repo, tg, econ)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, fmt.Sprintf("%s:%d", cbBalPickToggle, int64(1001))))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickDone))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalAmtDeltaPrefix+"10"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalConfirmApply))
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalUndo))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalUndo))
+
+	if econ.deductCalls == 0 {
+		t.Fatalf("expected undo deduct call")
+	}
+	if s := tg.last("send"); s == nil || !strings.Contains(s.text, "Нечего откатывать") {
+		t.Fatalf("expected second undo to be rejected")
 	}
 }

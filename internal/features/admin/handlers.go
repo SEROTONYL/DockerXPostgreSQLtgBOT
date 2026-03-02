@@ -24,18 +24,19 @@ const (
 	userPickerBackButton = "⬅️ Назад"
 	userPickerPageSize   = 8
 
-	cbAdminAssignRole   = "admin:assign_role"
-	cbAdminChangeRole   = "admin:change_role"
-	cbAdminStub         = "admin:stub"
-	cbPickerPrefix      = "admin:picker:"
-	cbPickerSelect      = "select"
-	cbPickerPrev        = "prev"
-	cbPickerNext        = "next"
-	cbPickerBack        = "back"
-	cbRoleInputBack     = "admin:role_input_back"
-	cbAdminCancelAction = "admin:cancel_action"
-	cbAdminUndoLast     = "admin:undo_last"
-	cbAdminReturnPanel  = "admin:return_panel"
+	cbAdminAssignRole    = "admin:assign_role"
+	cbAdminChangeRole    = "admin:change_role"
+	cbAdminStub          = "admin:stub"
+	cbAdminBalanceAdjust = "admin:balance_adjust"
+	cbPickerPrefix       = "admin:picker:"
+	cbPickerSelect       = "select"
+	cbPickerPrev         = "prev"
+	cbPickerNext         = "next"
+	cbPickerBack         = "back"
+	cbRoleInputBack      = "admin:role_input_back"
+	cbAdminCancelAction  = "admin:cancel_action"
+	cbAdminUndoLast      = "admin:undo_last"
+	cbAdminReturnPanel   = "admin:return_panel"
 )
 
 var userPickerIDPattern = regexp.MustCompile(`(?i)(?:id:|#)(\d+)`)
@@ -47,14 +48,20 @@ var editNeedlesCantBeEdited = []string{"message can't be edited", "message can\u
 var editNeedlesForbidden = []string{"bot was blocked by the user", "chat not found", "forbidden", "not enough rights"}
 
 // Handler обрабатывает админ-команды.
+type economyService interface {
+	AddBalance(ctx context.Context, userID int64, amount int64, txType, description string) error
+	DeductBalance(ctx context.Context, userID int64, amount int64, txType, description string) error
+}
+
 type Handler struct {
-	service       *Service
-	memberService *members.Service
-	bot           telegram.Client
-	sendFn        func(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error)
-	editFn        func(chatID int64, messageID int, text string, keyboard models.InlineKeyboardMarkup) error
-	undoMu        sync.Mutex
-	lastRoleUndo  map[int64]*roleUndoData
+	service        *Service
+	memberService  *members.Service
+	economyService economyService
+	bot            telegram.Client
+	sendFn         func(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error)
+	editFn         func(chatID int64, messageID int, text string, keyboard models.InlineKeyboardMarkup) error
+	undoMu         sync.Mutex
+	lastRoleUndo   map[int64]*roleUndoData
 }
 
 type roleUndoData struct {
@@ -76,14 +83,15 @@ const (
 )
 
 // NewHandler создаёт обработчик админ-панели.
-func NewHandler(service *Service, memberService *members.Service, bot telegram.Client) *Handler {
+func NewHandler(service *Service, memberService *members.Service, economyService economyService, bot telegram.Client) *Handler {
 	return &Handler{
-		service:       service,
-		memberService: memberService,
-		bot:           bot,
-		sendFn:        bot.SendMessage,
-		editFn:        nil,
-		lastRoleUndo:  make(map[int64]*roleUndoData),
+		service:        service,
+		memberService:  memberService,
+		economyService: economyService,
+		bot:            bot,
+		sendFn:         bot.SendMessage,
+		editFn:         nil,
+		lastRoleUndo:   make(map[int64]*roleUndoData),
 	}
 }
 
@@ -153,6 +161,10 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 		case StateChangeRoleText:
 			h.handleChangeRoleText(ctx, chatID, userID, text)
 			return true
+		case StateBalanceAdjustAmount:
+			if h.handleBalanceAdjustManualAmount(ctx, chatID, userID, strings.TrimSpace(text)) {
+				return true
+			}
 		}
 	}
 
@@ -164,7 +176,10 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 	case "Сменить роль":
 		h.startChangeRole(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return true
-	case "Выдать плёнки", "Отнять плёнки", "Выдать кредит",
+	case "Изменить баланс":
+		h.startBalanceAdjustMode(chatID, userID, h.panelMessageIDFromState(userID))
+		return true
+	case "Выдать кредит",
 		"Аннулировать кредит", "Создать сокращение", "Удалить сокращение":
 		h.sendMessage(chatID, "🔧 Функция в разработке")
 		return true
@@ -219,6 +234,9 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 	case cbAdminChangeRole:
 		h.startChangeRole(ctx, chatID, userID, panelMsgID)
 		return true
+	case cbAdminBalanceAdjust:
+		h.startBalanceAdjustMode(chatID, userID, panelMsgID)
+		return true
 	case cbAdminStub:
 		h.answerCallback(q.ID, "")
 		return true
@@ -235,6 +253,11 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 	case cbAdminReturnPanel:
 		h.service.ClearState(userID)
 		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		return true
+	}
+
+	if strings.HasPrefix(data, "admin:balmode:") || strings.HasPrefix(data, "admin:balpick:") || strings.HasPrefix(data, "admin:balamt:") || strings.HasPrefix(data, "admin:balconfirm:") || data == cbBalUndo {
+		h.handleBalanceAdjustCallback(ctx, chatID, userID, panelMsgID, data)
 		return true
 	}
 
@@ -273,11 +296,10 @@ func (h *Handler) showKeyboard(chatID int64, userID int64, panelMsgID int) error
 			newInlineKeyboardButtonData("Сменить роль", cbAdminChangeRole),
 		),
 		newInlineKeyboardRow(
-			newInlineKeyboardButtonData("Выдать плёнки", cbAdminStub),
-			newInlineKeyboardButtonData("Отнять плёнки", cbAdminStub),
+			newInlineKeyboardButtonData("💸 Изменить баланс", cbAdminBalanceAdjust),
+			newInlineKeyboardButtonData("Выдать кредит", cbAdminStub),
 		),
 		newInlineKeyboardRow(
-			newInlineKeyboardButtonData("Выдать кредит", cbAdminStub),
 			newInlineKeyboardButtonData("Аннулировать кредит", cbAdminStub),
 		),
 		newInlineKeyboardRow(
