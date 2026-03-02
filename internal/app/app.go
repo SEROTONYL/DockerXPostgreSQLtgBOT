@@ -1,6 +1,6 @@
-// Package app РёРЅРёС†РёР°Р»РёР·РёСЂСѓРµС‚ РІСЃРµ РєРѕРјРїРѕРЅРµРЅС‚С‹ РїСЂРёР»РѕР¶РµРЅРёСЏ.
-// app.go вЂ” С‚РѕС‡РєР° СЃР±РѕСЂРєРё: СЃРѕР·РґР°С‘С‚ Р‘Р”-РїСѓР», СЂРµРїРѕР·РёС‚РѕСЂРёРё, СЃРµСЂРІРёСЃС‹, РѕР±СЂР°Р±РѕС‚С‡РёРєРё,
-// С„РёР»СЊС‚СЂС‹ Рё СЃРѕР±РёСЂР°РµС‚ РІСЃС‘ РІ РѕРґРёРЅ РѕР±СЉРµРєС‚ Bot.
+// Package app инициализирует все компоненты приложения.
+// app.go — точка сборки: создаёт БД-пул, репозитории, сервисы, обработчики,
+// фильтры и собирает всё в один объект Bot.
 package app
 
 import (
@@ -25,7 +25,7 @@ import (
 	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
-// App СЃРѕРґРµСЂР¶РёС‚ РІСЃРµ РєРѕРјРїРѕРЅРµРЅС‚С‹ РїСЂРёР»РѕР¶РµРЅРёСЏ.
+// App содержит все компоненты приложения.
 type App struct {
 	Bot       *bot.Bot
 	Scheduler *jobs.Scheduler
@@ -33,32 +33,32 @@ type App struct {
 	BotAPI    *botapi.Bot
 }
 
-// New СЃРѕР·РґР°С‘С‚ Рё РёРЅРёС†РёР°Р»РёР·РёСЂСѓРµС‚ РїСЂРёР»РѕР¶РµРЅРёРµ.
-// РџРѕСЂСЏРґРѕРє РёРЅРёС†РёР°Р»РёР·Р°С†РёРё РІР°Р¶РµРЅ вЂ” РєРѕРјРїРѕРЅРµРЅС‚С‹ Р·Р°РІРёСЃСЏС‚ РґСЂСѓРі РѕС‚ РґСЂСѓРіР°.
+// New создаёт и инициализирует приложение.
+// Порядок инициализации важен — компоненты зависят друг от друга.
 func New(ctx context.Context, cfg *config.Config) (*App, error) {
-	// === 1. Р‘Р°Р·Р° РґР°РЅРЅС‹С… ===
+	// === 1. База данных ===
 	pool, err := postgres.NewPool(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("РѕС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє Р‘Р”: %w", err)
+		return nil, fmt.Errorf("ошибка подключения к БД: %w", err)
 	}
 
-	// Р—Р°РїСѓСЃРєР°РµРј РјРёРіСЂР°С†РёРё
+	// Запускаем миграции
 	if err := runMigrations(ctx, pool); err != nil {
-		return nil, fmt.Errorf("РѕС€РёР±РєР° РјРёРіСЂР°С†РёР№: %w", err)
+		return nil, fmt.Errorf("ошибка миграций: %w", err)
 	}
 
 	// === 2. Telegram Bot API ===
 	botAPI, err := botapi.New(cfg.TelegramBotToken)
 	if err != nil {
-		return nil, fmt.Errorf("РѕС€РёР±РєР° СЃРѕР·РґР°РЅРёСЏ Telegram API: %w", err)
+		return nil, fmt.Errorf("ошибка создания Telegram API: %w", err)
 	}
 	me, err := botAPI.GetMe(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("РѕС€РёР±РєР° getMe Telegram API: %w", err)
+		return nil, fmt.Errorf("ошибка getMe Telegram API: %w", err)
 	}
-	log.Infof("РђРІС‚РѕСЂРёР·РѕРІР°РЅ РєР°Рє @%s", me.Username)
+	log.Infof("Авторизован как @%s", me.Username)
 
-	// === 3. Р РµРїРѕР·РёС‚РѕСЂРёРё ===
+	// === 3. Репозитории ===
 	memberRepo := members.NewRepository(pool)
 	economyRepo := economy.NewRepository(pool)
 	streakRepo := streak.NewRepository(pool)
@@ -66,7 +66,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	casinoRepo := casino.NewRepository(pool)
 	adminRepo := admin.NewRepository(pool)
 
-	// === 4. РЎРµСЂРІРёСЃС‹ ===
+	// === 4. Сервисы ===
 	memberService := members.NewService(memberRepo)
 	economyService := economy.NewService(economyRepo)
 	streakService := streak.NewService(streakRepo, economyService, cfg)
@@ -77,7 +77,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	// === 5. Telegram adapter ===
 	tg := telegram.NewAdapter(botAPI)
 
-	// === 6. РћР±СЂР°Р±РѕС‚С‡РёРєРё ===
+	// === 6. Обработчики ===
 	memberHandler := members.NewHandler(memberService)
 	economyHandler := economy.NewHandler(economyService, memberService, tg)
 	streakHandler := streak.NewHandler(streakService, tg, cfg)
@@ -85,10 +85,10 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	casinoHandler := casino.NewHandler(casinoService, tg)
 	adminHandler := admin.NewHandler(adminService, memberService, tg)
 
-	// === 6. Р¤РёР»СЊС‚СЂС‹ ===
+	// === 6. Фильтры ===
 	chatFilter := filters.NewChatFilter(cfg.FloodChatID, memberService, tg)
 
-	// === 7. РЎРѕР±РёСЂР°РµРј Р±РѕС‚Р° ===
+	// === 7. Собираем бота ===
 	b := bot.New(
 		botAPI, tg, cfg,
 		memberService, memberHandler,
@@ -100,7 +100,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		chatFilter,
 	)
 
-	// === 8. РџР»Р°РЅРёСЂРѕРІС‰РёРє Р·Р°РґР°С‡ ===
+	// === 8. Планировщик задач ===
 	scheduler := jobs.NewScheduler(streakService, b.SendMessageToUser)
 
 	return &App{
@@ -111,14 +111,14 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	}, nil
 }
 
-// runMigrations РІС‹РїРѕР»РЅСЏРµС‚ РІСЃРµ SQL-РјРёРіСЂР°С†РёРё.
+// runMigrations выполняет все SQL-миграции.
 func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
-	// РРЅРёС†РёР°Р»РёР·РёСЂСѓРµРј СЃРёСЃС‚РµРјСѓ РјРёРіСЂР°С†РёР№
+	// Инициализируем систему миграций
 	if err := postgres.RunMigrations(ctx, pool, "migrations"); err != nil {
 		return err
 	}
 
-	// Р’С‹РїРѕР»РЅСЏРµРј РјРёРіСЂР°С†РёРё РїРѕ РїРѕСЂСЏРґРєСѓ
+	// Выполняем миграции по порядку
 	migrations := []struct {
 		version int
 		sql     string
@@ -133,16 +133,16 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 
 	for _, m := range migrations {
 		if err := postgres.ExecMigrationSQL(ctx, pool, m.version, m.sql); err != nil {
-			return fmt.Errorf("РјРёРіСЂР°С†РёСЏ %d: %w", m.version, err)
+			return fmt.Errorf("миграция %d: %w", m.version, err)
 		}
-		log.Infof("РњРёРіСЂР°С†РёСЏ %d РїСЂРёРјРµРЅРµРЅР°", m.version)
+		log.Infof("Миграция %d применена", m.version)
 	}
 
 	return nil
 }
 
-// SQL-РјРёРіСЂР°С†РёРё РІСЃС‚СЂРѕРµРЅС‹ РІ РєРѕРґ РґР»СЏ СѓРїСЂРѕС‰РµРЅРёСЏ РґРµРїР»РѕСЏ.
-// РўР°РєР¶Рµ РґРѕСЃС‚СѓРїРЅС‹ РєР°Рє .sql С„Р°Р№Р»С‹ РІ РїР°РїРєРµ migrations/.
+// SQL-миграции встроены в код для упрощения деплоя.
+// Также доступны как .sql файлы в папке migrations/.
 
 var migration001Members = `
 CREATE TABLE IF NOT EXISTS members (

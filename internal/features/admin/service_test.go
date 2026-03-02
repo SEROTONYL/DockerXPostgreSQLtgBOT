@@ -108,7 +108,7 @@ func TestVerifyPassword_NoMojibakeInErrors(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error")
 	}
-	for _, bad := range []string{"РќРµ", "РѕР»", "РµСЂ", "Р°Рґ"} {
+	for _, bad := range []string{"Не", "ол", "ер", "ад"} {
 		if strings.Contains(err.Error(), bad) {
 			t.Fatalf("error contains mojibake marker %q: %q", bad, err.Error())
 		}

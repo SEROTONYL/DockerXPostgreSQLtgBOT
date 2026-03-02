@@ -1,5 +1,5 @@
-// Package streak вЂ” handlers.go РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РєРѕРјР°РЅРґСѓ !РѕРіРѕРЅРµРє.
-// РџРѕРєР°Р·С‹РІР°РµС‚ РїСЂРѕРіСЂРµСЃСЃ СЃС‚СЂРёРєР°: С‚РµРєСѓС‰СѓСЋ СЃРµСЂРёСЋ, СЂРµРєРѕСЂРґ Рё РїСЂРѕРіСЂРµСЃСЃ Р·Р° СЃРµРіРѕРґРЅСЏ.
+// Package streak — handlers.go обрабатывает команду !огонек.
+// Показывает прогресс стрика: текущую серию, рекорд и прогресс за сегодня.
 package streak
 
 import (
@@ -13,47 +13,47 @@ import (
 	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
-// Handler РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РєРѕРјР°РЅРґС‹ СЃС‚СЂРёРє-СЃРёСЃС‚РµРјС‹.
+// Handler обрабатывает команды стрик-системы.
 type Handler struct {
 	service *Service
 	bot     telegram.Client
 	cfg     *config.Config
 }
 
-// NewHandler СЃРѕР·РґР°С‘С‚ РЅРѕРІС‹Р№ РѕР±СЂР°Р±РѕС‚С‡РёРє СЃС‚СЂРёРє-РєРѕРјР°РЅРґ.
+// NewHandler создаёт новый обработчик стрик-команд.
 func NewHandler(service *Service, bot telegram.Client, cfg *config.Config) *Handler {
 	return &Handler{service: service, bot: bot, cfg: cfg}
 }
 
-// HandleOgonek РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РєРѕРјР°РЅРґСѓ !РѕРіРѕРЅРµРє вЂ” РїРѕРєР°Р·С‹РІР°РµС‚ РїСЂРѕРіСЂРµСЃСЃ СЃС‚СЂРёРєР°.
+// HandleOgonek обрабатывает команду !огонек — показывает прогресс стрика.
 //
-// Р¤РѕСЂРјР°С‚ РѕС‚РІРµС‚Р° (РЅРѕСЂРјР° РЅРµ РІС‹РїРѕР»РЅРµРЅР°):
+// Формат ответа (норма не выполнена):
 //
-//	рџ”Ґ РўРІРѕР№ РѕРіРѕРЅРµРє
-//	РўРµРєСѓС‰Р°СЏ СЃРµСЂРёСЏ: 8 РґРЅРµР№
-//	Р›СѓС‡С€Р°СЏ СЃРµСЂРёСЏ: 12 РґРЅРµР№
-//	рџ“Љ РЎРµРіРѕРґРЅСЏ: 35/50 СЃРѕРѕР±С‰РµРЅРёР№
-//	РЎС‚Р°С‚СѓСЃ: Р’ РїСЂРѕС†РµСЃСЃРµ (РѕСЃС‚Р°Р»РѕСЃСЊ 15)
-//	РќР°РіСЂР°РґР°: 70 РїР»РµРЅРѕРє
+//	🔥 Твой огонек
+//	Текущая серия: 8 дней
+//	Лучшая серия: 12 дней
+//	📊 Сегодня: 35/50 сообщений
+//	Статус: В процессе (осталось 15)
+//	Награда: 70 пленок
 //
-// Р¤РѕСЂРјР°С‚ РѕС‚РІРµС‚Р° (РЅРѕСЂРјР° РІС‹РїРѕР»РЅРµРЅР°):
+// Формат ответа (норма выполнена):
 //
-//	рџ”Ґ РўРІРѕР№ РѕРіРѕРЅРµРє
-//	РўРµРєСѓС‰Р°СЏ СЃРµСЂРёСЏ: 8 РґРЅРµР№
-//	Р›СѓС‡С€Р°СЏ СЃРµСЂРёСЏ: 12 РґРЅРµР№
-//	вњ… РќРѕСЂРјР° РІС‹РїРѕР»РЅРµРЅР°! +70 РїР»РµРЅРѕРє
+//	🔥 Твой огонек
+//	Текущая серия: 8 дней
+//	Лучшая серия: 12 дней
+//	✅ Норма выполнена! +70 пленок
 func (h *Handler) HandleOgonek(ctx context.Context, chatID int64, userID int64) {
 	streak, err := h.service.GetStreak(ctx, userID)
 	if err != nil {
-		log.WithError(err).Error("РћС€РёР±РєР° РїРѕР»СѓС‡РµРЅРёСЏ СЃС‚СЂРёРєР°")
+		log.WithError(err).Error("Ошибка получения стрика")
 		h.sendMessage(chatID, "❌ Ошибка получения данных стрика")
 		return
 	}
 
 	var text string
 	if streak.QuotaCompletedToday {
-		// РќРѕСЂРјР° СѓР¶Рµ РІС‹РїРѕР»РЅРµРЅР° СЃРµРіРѕРґРЅСЏ
-		bonus := CalculateReward(streak.CurrentStreak - 1) // -1 С‚.Рє. СѓР¶Рµ СѓРІРµР»РёС‡РµРЅ
+		// Норма уже выполнена сегодня
+		bonus := CalculateReward(streak.CurrentStreak - 1) // -1 т.к. уже увеличен
 		text = fmt.Sprintf(
 			"🔥 Твой огонек\n\n"+
 				"Текущая серия: %d %s\n"+
@@ -64,7 +64,7 @@ func (h *Handler) HandleOgonek(ctx context.Context, chatID int64, userID int64) 
 			common.FormatBalance(bonus),
 		)
 	} else {
-		// РќРѕСЂРјР° РµС‰С‘ РЅРµ РІС‹РїРѕР»РЅРµРЅР°
+		// Норма ещё не выполнена
 		remaining := h.cfg.StreakMessagesNeed - streak.MessagesToday
 		if remaining < 0 {
 			remaining = 0
@@ -90,9 +90,9 @@ func (h *Handler) HandleOgonek(ctx context.Context, chatID int64, userID int64) 
 	h.sendMessage(chatID, text)
 }
 
-// sendMessage вЂ” РІСЃРїРѕРјРѕРіР°С‚РµР»СЊРЅС‹Р№ РјРµС‚РѕРґ РґР»СЏ РѕС‚РїСЂР°РІРєРё С‚РµРєСЃС‚РѕРІС‹С… СЃРѕРѕР±С‰РµРЅРёР№.
+// sendMessage — вспомогательный метод для отправки текстовых сообщений.
 func (h *Handler) sendMessage(chatID int64, text string) {
 	if _, err := h.bot.SendMessage(chatID, text, nil); err != nil {
-		log.WithError(err).Error("РћС€РёР±РєР° РѕС‚РїСЂР°РІРєРё СЃРѕРѕР±С‰РµРЅРёСЏ")
+		log.WithError(err).Error("Ошибка отправки сообщения")
 	}
 }

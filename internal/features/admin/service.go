@@ -1,5 +1,5 @@
-// Package admin вЂ” service.go СЃРѕРґРµСЂР¶РёС‚ Р»РѕРіРёРєСѓ Р°СѓС‚РµРЅС‚РёС„РёРєР°С†РёРё, СѓРїСЂР°РІР»РµРЅРёСЏ СЃРµСЃСЃРёСЏРјРё
-// Рё state-РјР°С€РёРЅСѓ РґР»СЏ РїРѕС€Р°РіРѕРІС‹С… Р°РґРјРёРЅ-РґРµР№СЃС‚РІРёР№.
+// Package admin — service.go содержит логику аутентификации, управления сессиями
+// и state-машину для пошаговых админ-действий.
 package admin
 
 import (
@@ -19,12 +19,12 @@ import (
 	"serotonyl.ru/telegram-bot/internal/features/members"
 )
 
-// Service СѓРїСЂР°РІР»СЏРµС‚ Р°РґРјРёРЅ-РїР°РЅРµР»СЊСЋ.
+// Service управляет админ-панелью.
 type Service struct {
 	repo       adminRepo
 	memberRepo memberRepo
 	cfg        *config.Config
-	states     map[int64]*AdminState // РЎРѕСЃС‚РѕСЏРЅРёСЏ РґРёР°Р»РѕРіРѕРІ (in-memory)
+	states     map[int64]*AdminState // Состояния диалогов (in-memory)
 	panelMsgs  map[int64]int         // message_id panel-сообщения на администратора
 	panelMsgAt map[int64]time.Time   // последняя активность panel message_id
 	statesMu   sync.RWMutex
@@ -47,7 +47,7 @@ type memberRepo interface {
 	UpdateAdminFlag(ctx context.Context, userID int64, isAdmin bool) error
 }
 
-// NewService СЃРѕР·РґР°С‘С‚ СЃРµСЂРІРёСЃ Р°РґРјРёРЅ-РїР°РЅРµР»Рё.
+// NewService создаёт сервис админ-панели.
 func NewService(repo adminRepo, memberRepo memberRepo, cfg *config.Config) *Service {
 	return &Service{
 		repo:       repo,
@@ -86,10 +86,10 @@ func (s *Service) isConfiguredAdmin(userID int64) bool {
 	return false
 }
 
-// VerifyPassword РїСЂРѕРІРµСЂСЏРµС‚ РїР°СЂРѕР»СЊ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР° СЃ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРµРј Argon2id.
-// Р’РєР»СЋС‡Р°РµС‚ Р·Р°С‰РёС‚Сѓ РѕС‚ brute-force: 3 РЅРµСѓРґР°С‡РЅС‹Рµ РїРѕРїС‹С‚РєРё = Р±Р»РѕРєРёСЂРѕРІРєР° РЅР° 1 С‡Р°СЃ.
+// VerifyPassword проверяет пароль администратора с использованием Argon2id.
+// Включает защиту от brute-force: 3 неудачные попытки = блокировка на 1 час.
 func (s *Service) VerifyPassword(ctx context.Context, userID int64, password string) error {
-	// РџСЂРѕРІРµСЂСЏРµРј Р»РёРјРёС‚ РїРѕРїС‹С‚РѕРє
+	// Проверяем лимит попыток
 	attempts, err := s.repo.GetRecentAttempts(ctx, userID, 1*time.Hour)
 	if err != nil {
 		return err
@@ -98,17 +98,17 @@ func (s *Service) VerifyPassword(ctx context.Context, userID int64, password str
 		return fmt.Errorf("слишком много попыток, подождите 1 час")
 	}
 
-	// РџСЂРѕРІРµСЂСЏРµРј РїР°СЂРѕР»СЊ
+	// Проверяем пароль
 	match := verifyArgon2id(password, s.cfg.AdminPasswordHash)
 
-	// Р›РѕРіРёСЂСѓРµРј РїРѕРїС‹С‚РєСѓ
+	// Логируем попытку
 	s.repo.LogAttempt(ctx, userID, match)
 
 	if !match {
 		return fmt.Errorf("неверный пароль")
 	}
 
-	// РЎРѕР·РґР°С‘Рј СЃРµСЃСЃРёСЋ (24 С‡Р°СЃР°)
+	// Создаём сессию (24 часа)
 	token := generateSecureToken()
 	session := &AdminSession{
 		UserID:       userID,
@@ -119,13 +119,13 @@ func (s *Service) VerifyPassword(ctx context.Context, userID int64, password str
 	return s.repo.CreateSession(ctx, session)
 }
 
-// HasActiveSession РїСЂРѕРІРµСЂСЏРµС‚, РµСЃС‚СЊ Р»Рё Сѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ Р°РєС‚РёРІРЅР°СЏ СЃРµСЃСЃРёСЏ.
+// HasActiveSession проверяет, есть ли у пользователя активная сессия.
 func (s *Service) HasActiveSession(ctx context.Context, userID int64) bool {
 	session, err := s.repo.GetActiveSession(ctx, userID)
 	return err == nil && session != nil
 }
 
-// GetState РІРѕР·РІСЂР°С‰Р°РµС‚ С‚РµРєСѓС‰РµРµ СЃРѕСЃС‚РѕСЏРЅРёРµ РґРёР°Р»РѕРіР°.
+// GetState возвращает текущее состояние диалога.
 func (s *Service) GetState(userID int64) *AdminState {
 	s.statesMu.RLock()
 	state, ok := s.states[userID]
@@ -140,7 +140,7 @@ func (s *Service) GetState(userID int64) *AdminState {
 	return state
 }
 
-// SetState СѓСЃС‚Р°РЅР°РІР»РёРІР°РµС‚ СЃРѕСЃС‚РѕСЏРЅРёРµ РґРёР°Р»РѕРіР° СЃ 5-РјРёРЅСѓС‚РЅС‹Рј С‚Р°Р№РјР°СѓС‚РѕРј.
+// SetState устанавливает состояние диалога с 5-минутным таймаутом.
 func (s *Service) SetState(userID int64, stateName string, data interface{}) {
 	s.statesMu.Lock()
 	defer s.statesMu.Unlock()
@@ -152,7 +152,7 @@ func (s *Service) SetState(userID int64, stateName string, data interface{}) {
 	}
 }
 
-// ClearState СЃР±СЂР°СЃС‹РІР°РµС‚ СЃРѕСЃС‚РѕСЏРЅРёРµ РґРёР°Р»РѕРіР°.
+// ClearState сбрасывает состояние диалога.
 func (s *Service) ClearState(userID int64) {
 	s.statesMu.Lock()
 	defer s.statesMu.Unlock()
@@ -190,17 +190,17 @@ func (s *Service) cleanupPanelMessagesLocked() {
 	}
 }
 
-// GetUsersWithoutRole РІРѕР·РІСЂР°С‰Р°РµС‚ СѓС‡Р°СЃС‚РЅРёРєРѕРІ Р±РµР· СЂРѕР»Рё.
+// GetUsersWithoutRole возвращает участников без роли.
 func (s *Service) GetUsersWithoutRole(ctx context.Context) ([]*members.Member, error) {
 	return s.memberRepo.GetUsersWithoutRole(ctx)
 }
 
-// GetUsersWithRole РІРѕР·РІСЂР°С‰Р°РµС‚ СѓС‡Р°СЃС‚РЅРёРєРѕРІ СЃ СЂРѕР»СЊСЋ.
+// GetUsersWithRole возвращает участников с ролью.
 func (s *Service) GetUsersWithRole(ctx context.Context) ([]*members.Member, error) {
 	return s.memberRepo.GetUsersWithRole(ctx)
 }
 
-// AssignRole РЅР°Р·РЅР°С‡Р°РµС‚ СЂРѕР»СЊ СѓС‡Р°СЃС‚РЅРёРєСѓ.
+// AssignRole назначает роль участнику.
 func (s *Service) AssignRole(ctx context.Context, userID int64, role string) error {
 	if len([]rune(role)) > 64 {
 		return fmt.Errorf("роль слишком длинная (максимум 64 символа)")
@@ -208,50 +208,50 @@ func (s *Service) AssignRole(ctx context.Context, userID int64, role string) err
 	return s.memberRepo.UpdateRole(ctx, userID, role)
 }
 
-// --- РљСЂРёРїС‚РѕРіСЂР°С„РёС‡РµСЃРєРёРµ СѓС‚РёР»РёС‚С‹ ---
+// --- Криптографические утилиты ---
 
-// verifyArgon2id РїСЂРѕРІРµСЂСЏРµС‚ РїР°СЂРѕР»СЊ РїРѕ С…РµС€Сѓ Argon2id.
-// Р¤РѕСЂРјР°С‚ С…РµС€Р°: $argon2id$v=19$m=65536,t=3,p=2$<salt_base64>$<hash_base64>
+// verifyArgon2id проверяет пароль по хешу Argon2id.
+// Формат хеша: $argon2id$v=19$m=65536,t=3,p=2$<salt_base64>$<hash_base64>
 func verifyArgon2id(password, encodedHash string) bool {
-	// РџР°СЂСЃРёРј С…РµС€
+	// Парсим хеш
 	parts := strings.Split(encodedHash, "$")
 	if len(parts) != 6 {
-		log.Error("РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ С„РѕСЂРјР°С‚ С…РµС€Р° Argon2id")
+		log.Error("Некорректный формат хеша Argon2id")
 		return false
 	}
 
-	// РР·РІР»РµРєР°РµРј РїР°СЂР°РјРµС‚СЂС‹
+	// Извлекаем параметры
 	var memory uint32
 	var iterations uint32
 	var parallelism uint8
 	_, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism)
 	if err != nil {
-		log.WithError(err).Error("РћС€РёР±РєР° РїР°СЂСЃРёРЅРіР° РїР°СЂР°РјРµС‚СЂРѕРІ Argon2id")
+		log.WithError(err).Error("Ошибка парсинга параметров Argon2id")
 		return false
 	}
 
-	// Р”РµРєРѕРґРёСЂСѓРµРј СЃРѕР»СЊ
+	// Декодируем соль
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
-		log.WithError(err).Error("РћС€РёР±РєР° РґРµРєРѕРґРёСЂРѕРІР°РЅРёСЏ СЃРѕР»Рё")
+		log.WithError(err).Error("Ошибка декодирования соли")
 		return false
 	}
 
-	// Р”РµРєРѕРґРёСЂСѓРµРј С…РµС€
+	// Декодируем хеш
 	expectedHash, err := base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil {
-		log.WithError(err).Error("РћС€РёР±РєР° РґРµРєРѕРґРёСЂРѕРІР°РЅРёСЏ С…РµС€Р°")
+		log.WithError(err).Error("Ошибка декодирования хеша")
 		return false
 	}
 
-	// Р’С‹С‡РёСЃР»СЏРµРј С…РµС€ РІРІРµРґС‘РЅРЅРѕРіРѕ РїР°СЂРѕР»СЏ
+	// Вычисляем хеш введённого пароля
 	computedHash := argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, uint32(len(expectedHash)))
 
-	// РЎСЂР°РІРЅРёРІР°РµРј РІ РїРѕСЃС‚РѕСЏРЅРЅРѕРј РІСЂРµРјРµРЅРё (Р·Р°С‰РёС‚Р° РѕС‚ timing attack)
+	// Сравниваем в постоянном времени (защита от timing attack)
 	return subtle.ConstantTimeCompare(computedHash, expectedHash) == 1
 }
 
-// generateSecureToken РіРµРЅРµСЂРёСЂСѓРµС‚ РєСЂРёРїС‚РѕРіСЂР°С„РёС‡РµСЃРєРё Р±РµР·РѕРїР°СЃРЅС‹Р№ С‚РѕРєРµРЅ СЃРµСЃСЃРёРё.
+// generateSecureToken генерирует криптографически безопасный токен сессии.
 func generateSecureToken() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

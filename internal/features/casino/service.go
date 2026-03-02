@@ -1,4 +1,4 @@
-﻿// Package casino вЂ” service.go РєРѕРѕСЂРґРёРЅРёСЂСѓРµС‚ СЃРїРёРЅ СЃР»РѕС‚РѕРІ РѕС‚ РЅР°С‡Р°Р»Р° РґРѕ РєРѕРЅС†Р°.
+// Package casino — service.go координирует спин слотов от начала до конца.
 package casino
 
 import (
@@ -11,7 +11,7 @@ import (
 	"serotonyl.ru/telegram-bot/internal/features/economy"
 )
 
-// Service СѓРїСЂР°РІР»СЏРµС‚ РєР°Р·РёРЅРѕ.
+// Service управляет казино.
 type Service struct {
 	repo           *Repository
 	economyService *economy.Service
@@ -19,7 +19,7 @@ type Service struct {
 	cfg            *config.Config
 }
 
-// NewService СЃРѕР·РґР°С‘С‚ СЃРµСЂРІРёСЃ РєР°Р·РёРЅРѕ.
+// NewService создаёт сервис казино.
 func NewService(repo *Repository, economyService *economy.Service, cfg *config.Config) *Service {
 	return &Service{
 		repo:           repo,
@@ -29,34 +29,34 @@ func NewService(repo *Repository, economyService *economy.Service, cfg *config.C
 	}
 }
 
-// PlaySlots РІС‹РїРѕР»РЅСЏРµС‚ РїРѕР»РЅС‹Р№ С†РёРєР» СЃРїРёРЅР°.
+// PlaySlots выполняет полный цикл спина.
 func (s *Service) PlaySlots(ctx context.Context, userID int64) (*SlotResult, error) {
 	bet := s.cfg.CasinoSlotsBet
 
-	// РџСЂРѕРІРµСЂСЏРµРј Р±Р°Р»Р°РЅСЃ
+	// Проверяем баланс
 	balance, err := s.economyService.GetBalance(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("РѕС€РёР±РєР° РїРѕР»СѓС‡РµРЅРёСЏ Р±Р°Р»Р°РЅСЃР°: %w", err)
+		return nil, fmt.Errorf("ошибка получения баланса: %w", err)
 	}
 	if balance < bet {
-		return nil, fmt.Errorf("РЅРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РїР»РµРЅРѕРє: РЅСѓР¶РЅРѕ %d, Сѓ С‚РµР±СЏ %d", bet, balance)
+		return nil, fmt.Errorf("недостаточно пленок: нужно %d, у тебя %d", bet, balance)
 	}
 
-	// РЎРїРёСЃС‹РІР°РµРј СЃС‚Р°РІРєСѓ
+	// Списываем ставку
 	err = s.economyService.DeductBalance(ctx, userID, bet, "casino_bet", "Slots bet")
 	if err != nil {
-		return nil, fmt.Errorf("РѕС€РёР±РєР° СЃРїРёСЃР°РЅРёСЏ СЃС‚Р°РІРєРё: %w", err)
+		return nil, fmt.Errorf("ошибка списания ставки: %w", err)
 	}
 
-	// Р“РµРЅРµСЂРёСЂСѓРµРј СЃРµС‚РєСѓ СЃ СѓС‡С‘С‚РѕРј RTP
+	// Генерируем сетку с учётом RTP
 	symbols := s.rtpManager.GetAdjustedWeights(userID)
 	grid, err := GenerateGrid(symbols)
 	if err != nil {
 		_ = s.economyService.AddBalance(ctx, userID, bet, "casino_refund", "Bet refund")
-		return nil, fmt.Errorf("РѕС€РёР±РєР° РіРµРЅРµСЂР°С†РёРё: %w", err)
+		return nil, fmt.Errorf("ошибка генерации: %w", err)
 	}
 
-	// РџСЂРѕРІРµСЂСЏРµРј Р»РёРЅРёРё Рё СЃРєР°С‚С‚РµСЂС‹
+	// Проверяем линии и скаттеры
 	winLines := CheckPaylines(grid, bet)
 	scatterCount := CountScatters(grid)
 	scatterBonus, freeSpins := CalculateScatterBonus(scatterCount)
@@ -67,7 +67,7 @@ func (s *Service) PlaySlots(ctx context.Context, userID int64) (*SlotResult, err
 	}
 	totalPayout += scatterBonus
 
-	// Р¤СЂРёСЃРїРёРЅС‹
+	// Фриспины
 	for i := 0; i < freeSpins; i++ {
 		freeGrid, err := GenerateGrid(symbols)
 		if err != nil {
@@ -81,24 +81,24 @@ func (s *Service) PlaySlots(ctx context.Context, userID int64) (*SlotResult, err
 		totalPayout += fb
 	}
 
-	// РќР°С‡РёСЃР»СЏРµРј РІС‹РёРіСЂС‹С€
+	// Начисляем выигрыш
 	if totalPayout > 0 {
 		err = s.economyService.AddBalance(ctx, userID, totalPayout, "casino_win", "Slots win")
 		if err != nil {
-			log.WithError(err).Error("РћС€РёР±РєР° РЅР°С‡РёСЃР»РµРЅРёСЏ РІС‹РёРіСЂС‹С€Р°")
+			log.WithError(err).Error("Ошибка начисления выигрыша")
 		}
 	}
 
-	// РћР±РЅРѕРІР»СЏРµРј СЃС‚Р°С‚РёСЃС‚РёРєСѓ
+	// Обновляем статистику
 	if err := s.repo.UpdateStats(ctx, userID, bet, totalPayout); err != nil {
-		log.WithError(err).Error("РћС€РёР±РєР° РѕР±РЅРѕРІР»РµРЅРёСЏ СЃС‚Р°С‚РёСЃС‚РёРєРё РєР°Р·РёРЅРѕ")
+		log.WithError(err).Error("Ошибка обновления статистики казино")
 	}
 
-	// РљРѕСЂСЂРµРєС‚РёСЂСѓРµРј RTP
+	// Корректируем RTP
 	stats := s.repo.GetStatsOrDefault(ctx, userID)
 	s.rtpManager.AdjustRTP(userID, stats.CurrentRTP)
 
-	// РЎРѕС…СЂР°РЅСЏРµРј РёРіСЂСѓ
+	// Сохраняем игру
 	gameData := SaveGameData(grid, winLines, scatterCount)
 	game := &Game{
 		UserID:       userID,
@@ -109,7 +109,7 @@ func (s *Service) PlaySlots(ctx context.Context, userID int64) (*SlotResult, err
 		RTPPercent:   stats.CurrentRTP,
 	}
 	if err := s.repo.SaveGame(ctx, game); err != nil {
-		log.WithError(err).Error("РћС€РёР±РєР° СЃРѕС…СЂР°РЅРµРЅРёСЏ РёРіСЂС‹")
+		log.WithError(err).Error("Ошибка сохранения игры")
 	}
 
 	return &SlotResult{
@@ -123,7 +123,7 @@ func (s *Service) PlaySlots(ctx context.Context, userID int64) (*SlotResult, err
 	}, nil
 }
 
-// GetStats РІРѕР·РІСЂР°С‰Р°РµС‚ СЃС‚Р°С‚РёСЃС‚РёРєСѓ РєР°Р·РёРЅРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ.
+// GetStats возвращает статистику казино пользователя.
 func (s *Service) GetStats(ctx context.Context, userID int64) (*Stats, error) {
 	return s.repo.GetStats(ctx, userID)
 }
