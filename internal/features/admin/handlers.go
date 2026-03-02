@@ -31,6 +31,7 @@ const (
 	cbPickerNext      = "next"
 	cbPickerBack      = "back"
 	cbRoleInputBack   = "admin:role_input_back"
+	cbAdminCancelAction = "admin:cancel_action"
 )
 
 var userPickerIDPattern = regexp.MustCompile(`(?i)(?:id:|#)(\d+)`)
@@ -209,6 +210,10 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 		return true
 	case cbRoleInputBack:
 		h.handleRoleInputBack(chatID, userID, panelMsgID)
+		return true
+	case cbAdminCancelAction:
+		h.service.ClearState(userID)
+		h.showKeyboardSafe(chatID, userID, panelMsgID)
 		return true
 	}
 
@@ -465,14 +470,14 @@ func (h *Handler) renderUserPickerPage(chatID, userID int64, panelMsgID int, sta
 	}
 
 	usersOnPage := data.UsersSnapshot[start:end]
-	rows := make([][]models.InlineKeyboardButton, 0, len(usersOnPage)+2)
+	rows := make([][]models.InlineKeyboardButton, 0, len(usersOnPage)+3)
 	for i, user := range usersOnPage {
 		style := "primary"
 		if i%2 != 0 {
 			style = "success"
 		}
 		rows = append(rows, newInlineKeyboardRow(
-			newInlineKeyboardButtonDataStyled(formatUserPickerButton(user), pickerCallbackData(data.Mode, cbPickerSelect, user.UserID), style),
+			newInlineKeyboardButtonDataStyled(formatUserPickerButton(user, data.Mode), pickerCallbackData(data.Mode, cbPickerSelect, user.UserID), style),
 		))
 	}
 
@@ -485,16 +490,18 @@ func (h *Handler) renderUserPickerPage(chatID, userID int64, panelMsgID int, sta
 	rows = append(rows, newInlineKeyboardRow(
 		newInlineKeyboardButtonDataStyled(userPickerBackButton, pickerCallbackData(data.Mode, cbPickerBack, 0), "danger"),
 	))
+	rows = append(rows, newInlineKeyboardRow(
+		newInlineKeyboardButtonDataStyled("Отменить действие", cbAdminCancelAction, "danger"),
+	))
 
 	keyboard := newInlineKeyboardMarkup(rows...)
 
 	caption := "Выбери участника:"
 	if data.Mode == UserPickerAssignWithoutRole {
-		caption = "Выбери участника без роли:"
+		caption = "Выбери участника:\nФормат: @username • id, иначе Имя • id."
 	} else if data.Mode == UserPickerChangeWithRole {
-		caption = "Выбери участника с ролью:"
+		caption = "Выбери участника:\nФормат: роль • @username, иначе роль • id."
 	}
-	caption = fmt.Sprintf("%s\nФормат: [роль] @username, иначе [роль] [id].", caption)
 
 	if panelMsgID <= 0 {
 		panelMsgID = h.panelMessageIDFromState(userID)
@@ -623,21 +630,39 @@ func isUserPickerPageLabel(text string) bool {
 	return userPickerPageLabelPattern.MatchString(strings.TrimSpace(text))
 }
 
-func formatUserPickerButton(user *members.Member) string {
-	return shortenForButton(formatMemberForPicker(user), 40)
+func formatUserPickerButton(user *members.Member, mode UserPickerMode) string {
+	if mode == UserPickerAssignWithoutRole {
+		return shortenForButton(formatMemberForAssignPicker(user), 40)
+	}
+	return shortenForButton(formatMemberForRolePicker(user), 40)
 }
 
-func formatMemberForPicker(user *members.Member) string {
-	role := "БЕЗ РОЛИ"
+func formatMemberForRolePicker(user *members.Member) string {
+	role := "без роли"
 	if user.Role != nil && strings.TrimSpace(*user.Role) != "" {
 		role = strings.TrimSpace(*user.Role)
 	}
 	username := strings.TrimSpace(user.Username)
 	if username != "" {
 		username = strings.TrimPrefix(username, "@")
-		return fmt.Sprintf("[%s] @%s", role, username)
+		return fmt.Sprintf("%s • @%s", role, username)
 	}
-	return fmt.Sprintf("[%s] [%d]", role, user.UserID)
+	return fmt.Sprintf("%s • %d", role, user.UserID)
+}
+
+func formatMemberForAssignPicker(user *members.Member) string {
+	username := strings.TrimSpace(user.Username)
+	if username != "" {
+		username = strings.TrimPrefix(username, "@")
+		return fmt.Sprintf("@%s • %d", username, user.UserID)
+	}
+
+	name := strings.TrimSpace(strings.Join([]string{strings.TrimSpace(user.FirstName), strings.TrimSpace(user.LastName)}, " "))
+	if name != "" {
+		return fmt.Sprintf("%s • %d", name, user.UserID)
+	}
+
+	return fmt.Sprintf("%d", user.UserID)
 }
 
 func shortenForButton(s string, max int) string {
@@ -803,6 +828,7 @@ func (h *Handler) renderRoleInputScreen(chatID, userID int64, text string) {
 	if panelMsgID > 0 {
 		if err := h.renderAdminScreen(chatID, userID, panelMsgID, "role_input", text, newInlineKeyboardMarkup(
 			newInlineKeyboardRow(newInlineKeyboardButtonData(userPickerBackButton, cbRoleInputBack)),
+			newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("Отменить действие", cbAdminCancelAction, "danger")),
 		)); err != nil {
 			h.sendUIErrorHint(chatID, err)
 		}
@@ -810,6 +836,7 @@ func (h *Handler) renderRoleInputScreen(chatID, userID int64, text string) {
 	}
 	if err := h.renderAdminScreen(chatID, userID, 0, "role_input", text, newInlineKeyboardMarkup(
 		newInlineKeyboardRow(newInlineKeyboardButtonData(userPickerBackButton, cbRoleInputBack)),
+		newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("Отменить действие", cbAdminCancelAction, "danger")),
 	)); err != nil {
 		h.sendUIErrorHint(chatID, err)
 	}
