@@ -2,15 +2,24 @@ package telegram
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/go-telegram/bot/models"
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
 type Ops struct {
 	c   Client
-	log *log.Entry
+	log *logrus.Entry
+}
+
+type callbackClient interface {
+	AnswerCallback(callbackID string) error
+}
+
+type legacyCallbackClient interface {
+	AnswerCallbackQuery(callbackID string, text string, showAlert bool) error
 }
 
 type editErrorKind string
@@ -26,16 +35,19 @@ const (
 
 var editNeedlesNotModified = []string{"message is not modified"}
 var editNeedlesNotFound = []string{"message to edit not found", "message not found", "message_id_invalid", "message_id invalid"}
-var editNeedlesCantBeEdited = []string{"message can't be edited", "message can\u2019t be edited"}
+var editNeedlesCantBeEdited = []string{"message can't be edited", "message can’t be edited"}
 var editNeedlesForbidden = []string{"bot was blocked by the user", "chat not found", "forbidden", "not enough rights", "user is deactivated"}
 
 func NewOps(c Client) *Ops {
-	return NewOpsWithLogger(c, log.NewEntry(log.StandardLogger()))
+	return NewOpsWithLogger(c, logrus.NewEntry(logrus.StandardLogger()))
 }
 
-func NewOpsWithLogger(c Client, l *log.Entry) *Ops {
+func NewOpsWithLogger(c Client, l *logrus.Entry) *Ops {
 	if l == nil {
-		l = log.NewEntry(log.StandardLogger())
+		l = logrus.NewEntry(logrus.StandardLogger())
+	}
+	if c == nil {
+		panic("telegram.NewOpsWithLogger: nil client")
 	}
 	return &Ops{c: c, log: l.WithField("component", "telegram.ops")}
 }
@@ -49,14 +61,14 @@ func (o *Ops) Send(ctx context.Context, chatID int64, text string, markup *model
 	return msgID, nil
 }
 
-func (o *Ops) Edit(ctx context.Context, chatID int64, messageID int, text string, keyboard *models.InlineKeyboardMarkup) error {
-	err := o.c.EditMessage(chatID, messageID, text, keyboard)
+func (o *Ops) Edit(ctx context.Context, chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
+	err := o.c.EditMessage(chatID, messageID, text, markup)
 	if err == nil {
 		return nil
 	}
 
 	kind := classifyEditError(err)
-	entry := o.log.WithContext(ctx).WithError(err).WithFields(log.Fields{"chat_id": chatID, "message_id": messageID, "kind": kind})
+	entry := o.log.WithContext(ctx).WithError(err).WithFields(logrus.Fields{"chat_id": chatID, "message_id": messageID, "kind": kind})
 	switch kind {
 	case editErrNotModified:
 		entry.Debug("telegram edit skipped: message is not modified")
@@ -68,8 +80,21 @@ func (o *Ops) Edit(ctx context.Context, chatID int64, messageID int, text string
 	return err
 }
 
-func (o *Ops) AnswerCallback(ctx context.Context, callbackID, text string, showAlert bool) error {
-	err := o.c.AnswerCallbackQuery(callbackID, text, showAlert)
+func (o *Ops) AnswerCallback(ctx context.Context, callbackID string, _ ...any) error {
+	if callbackID == "" {
+		return nil
+	}
+
+	var err error
+	switch c := any(o.c).(type) {
+	case callbackClient:
+		err = c.AnswerCallback(callbackID)
+	case legacyCallbackClient:
+		err = c.AnswerCallbackQuery(callbackID, "", false)
+	default:
+		err = fmt.Errorf("client does not support answer callback")
+	}
+
 	if err != nil {
 		o.log.WithContext(ctx).WithError(err).WithField("callback_id", callbackID).Debug("telegram answer callback failed")
 		return err
@@ -91,8 +116,7 @@ func (o *Ops) EditOrSend(ctx context.Context, chatID int64, messageID int, text 
 		return messageID, true, nil
 	}
 
-	kind := classifyEditError(err)
-	switch kind {
+	switch classifyEditError(err) {
 	case editErrNotModified:
 		return messageID, true, nil
 	case editErrNotFound, editErrCantBeEdited:
