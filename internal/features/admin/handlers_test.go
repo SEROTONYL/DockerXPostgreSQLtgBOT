@@ -12,6 +12,7 @@ import (
 
 	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/features/members"
+	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 type tgCall struct {
@@ -38,7 +39,7 @@ func (f *fakeTG) EditMessage(chatID int64, messageID int, text string, markup *m
 	return f.editErr
 }
 
-func (f *fakeTG) AnswerCallback(callbackID string) error {
+func (f *fakeTG) AnswerCallbackQuery(callbackID string, text string, showAlert bool) error {
 	f.calls = append(f.calls, tgCall{kind: "ack", callbackID: callbackID})
 	return nil
 }
@@ -192,13 +193,13 @@ func (r *fakeMemberRepoHandlers) UpdateAdminFlag(ctx context.Context, userID int
 func newAdminHandlerForFlow(t *testing.T, memberRepo *fakeMemberRepoHandlers, tg *fakeTG) *Handler {
 	t.Helper()
 	svc := NewService(fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
-	return NewHandler(svc, nil, &fakeEconomy{}, tg)
+	return NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg))
 }
 
 func newAdminHandlerWithEconomy(t *testing.T, memberRepo *fakeMemberRepoHandlers, tg *fakeTG, econ *fakeEconomy) *Handler {
 	t.Helper()
 	svc := NewService(fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
-	return NewHandler(svc, nil, econ, tg)
+	return NewHandler(svc, nil, econ, telegram.NewOps(tg))
 }
 
 func callback(chatID int64, msgID int, userID int64, data string) *models.CallbackQuery {
@@ -619,7 +620,7 @@ func TestUnauthorizedUser_CannotOpenAdminPanel(t *testing.T) {
 	tg := &fakeTG{}
 	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: false}}}
 	svc := NewService(fakeAdminRepoHandlers{hasSession: true}, repo, &config.Config{})
-	h := NewHandler(svc, nil, &fakeEconomy{}, tg)
+	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg))
 
 	handled := h.HandleAdminMessage(context.Background(), 77, 77, "/login")
 	if !handled {
@@ -629,47 +630,6 @@ func TestUnauthorizedUser_CannotOpenAdminPanel(t *testing.T) {
 	s := tg.last("send")
 	if s == nil || !strings.Contains(s.text, "Доступ запрещён") {
 		t.Fatalf("expected deny message, got %#v", s)
-	}
-}
-
-func TestClassifyEditError_ByMessage(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want editErrorKind
-	}{
-		{name: "not modified", err: errors.New("Bad Request: message is not modified"), want: editErrNotModified},
-		{name: "not found", err: errors.New("Bad Request: message to edit not found"), want: editErrNotFound},
-		{name: "cant be edited", err: errors.New("Bad Request: message can't be edited"), want: editErrCantBeEdited},
-		{name: "forbidden", err: errors.New("Forbidden: bot was blocked by the user"), want: editErrForbidden},
-		{name: "other", err: errors.New("some other error"), want: editErrOther},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, _, _ := classifyEditError(tt.err)
-			if got != tt.want {
-				t.Fatalf("classifyEditError(%v) = %q, want %q", tt.err, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestShouldFallbackToSend(t *testing.T) {
-	tests := []struct {
-		kind editErrorKind
-		want bool
-	}{
-		{kind: editErrNotFound, want: true},
-		{kind: editErrCantBeEdited, want: true},
-		{kind: editErrNotModified, want: false},
-		{kind: editErrForbidden, want: false},
-	}
-
-	for _, tt := range tests {
-		if got := shouldFallbackToSend(tt.kind); got != tt.want {
-			t.Fatalf("shouldFallbackToSend(%q) = %v, want %v", tt.kind, got, tt.want)
-		}
 	}
 }
 

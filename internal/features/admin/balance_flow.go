@@ -67,12 +67,14 @@ func (h *Handler) renderWizard(chatID, userID int64, data *BalanceAdjustData, sc
 	ui := uiwizard.Output{Text: text, Markup: &markup}
 	err := uiwizard.Render(h, w, ui,
 		func(err error) bool {
-			kind, _, _ := classifyEditError(err)
-			return shouldFallbackToSend(kind)
+			d := strings.ToLower(err.Error())
+			return strings.Contains(d, "message to edit not found") ||
+				strings.Contains(d, "message not found") ||
+				strings.Contains(d, "message can't be edited") ||
+				strings.Contains(d, "message can’t be edited")
 		},
 		func(err error) bool {
-			kind, _, _ := classifyEditError(err)
-			return kind == editErrNotModified
+			return strings.Contains(strings.ToLower(err.Error()), "message is not modified")
 		},
 	)
 	if err != nil {
@@ -592,15 +594,11 @@ func (h *Handler) balanceWizardState(data *BalanceAdjustData) *uiwizard.WizardSt
 }
 
 func (h *Handler) EditMessageText(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
-	if markup == nil {
-		empty := models.InlineKeyboardMarkup{}
-		return h.editAdminScreen(chatID, messageID, text, empty)
-	}
-	return h.editAdminScreen(chatID, messageID, text, *markup)
+	return h.ops.Edit(context.Background(), chatID, messageID, text, markup)
 }
 
 func (h *Handler) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
-	return h.sendFn(chatID, text, markup)
+	return h.ops.Send(context.Background(), chatID, text, markup)
 }
 
 func validateBalanceAmount(amount int64) error {

@@ -14,6 +14,7 @@ import (
 	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/jobs"
+	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 type fakeTGStatus struct {
@@ -27,7 +28,9 @@ func (f *fakeTGStatus) SendMessage(chatID int64, text string, markup *models.Inl
 func (f *fakeTGStatus) EditMessage(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
 	return nil
 }
-func (f *fakeTGStatus) AnswerCallback(callbackID string) error { return nil }
+func (f *fakeTGStatus) AnswerCallbackQuery(callbackID string, text string, showAlert bool) error {
+	return nil
+}
 func (f *fakeTGStatus) GetChatMember(chatID int64, userID int64) (member models.ChatMember, err error) {
 	return models.ChatMember{}, nil
 }
@@ -89,7 +92,7 @@ func (f fakePurgeMetricsProvider) GetPurgeMetrics() jobs.PurgeMetrics { return f
 func TestMembersStatusCommand_IgnoredOutsideAdminChat(t *testing.T) {
 	tg := &fakeTGStatus{}
 	repo := &fakeMembersRepoStatus{active: 10, left: 3, pending: 1}
-	b := &Bot{tg: tg, memberService: members.NewService(repo), cfg: &config.Config{}, cmdRouter: commands.NewRouter()}
+	b := &Bot{tgOps: telegram.NewOps(tg), memberService: members.NewService(repo), cfg: &config.Config{}, cmdRouter: commands.NewRouter()}
 	b.registerCommands()
 
 	b.routeCommand(context.Background(), UpdateContext{ChatID: 111, UserID: 42, IsAdminChat: false, Now: time.Now().UTC()}, "members_status", nil)
@@ -103,7 +106,7 @@ func TestMembersStatusCommand_ReturnsDataInAdminChat(t *testing.T) {
 	tg := &fakeTGStatus{}
 	repo := &fakeMembersRepoStatus{active: 10, left: 3, pending: 2}
 	now := time.Now().UTC().Truncate(time.Second)
-	b := &Bot{tg: tg, memberService: members.NewService(repo), cfg: &config.Config{}, cmdRouter: commands.NewRouter(), purgeMetricsProvider: fakePurgeMetricsProvider{m: jobs.PurgeMetrics{TotalDeleted: 99, LastRunAt: now, LastRunDeleted: 5, LastError: "boom"}}}
+	b := &Bot{tgOps: telegram.NewOps(tg), memberService: members.NewService(repo), cfg: &config.Config{}, cmdRouter: commands.NewRouter(), purgeMetricsProvider: fakePurgeMetricsProvider{m: jobs.PurgeMetrics{TotalDeleted: 99, LastRunAt: now, LastRunDeleted: 5, LastError: "boom"}}}
 	b.registerCommands()
 
 	b.routeCommand(context.Background(), UpdateContext{ChatID: 777, UserID: 77, IsAdminChat: true, Now: now}, "members_status", nil)
@@ -135,9 +138,9 @@ func TestHandleUpdate_AdminChatIgnoresNonAdminCommands(t *testing.T) {
 	memberSvc := members.NewService(repo)
 	b := &Bot{
 		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
-		tg:            tg,
+		tgOps:         telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg),
+		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg, telegram.NewOps(tg)),
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -161,9 +164,9 @@ func TestHandleUpdate_AdminChatIgnoresPlainMessages(t *testing.T) {
 	memberSvc := members.NewService(repo)
 	b := &Bot{
 		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
-		tg:            tg,
+		tgOps:         telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg),
+		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg, telegram.NewOps(tg)),
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -204,9 +207,9 @@ func TestHandleUpdate_DeniedByChatFilter_DoesNotWriteMemberSeen(t *testing.T) {
 	memberSvc := members.NewService(repo)
 	b := &Bot{
 		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
-		tg:            tg,
+		tgOps:         telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg),
+		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg, telegram.NewOps(tg)),
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -228,9 +231,9 @@ func TestHandleUpdate_MembershipUpdateHandledOnce(t *testing.T) {
 	memberSvc := members.NewService(repo)
 	b := &Bot{
 		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
-		tg:            tg,
+		tgOps:         telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg),
+		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg, telegram.NewOps(tg)),
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),

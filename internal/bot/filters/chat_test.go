@@ -8,6 +8,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"serotonyl.ru/telegram-bot/internal/features/members"
+	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 type fakeMemberRepo struct{}
@@ -54,14 +55,16 @@ func (f *fakeTG) SendMessage(chatID int64, text string, markup *models.InlineKey
 func (f *fakeTG) EditMessage(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
 	return nil
 }
-func (f *fakeTG) AnswerCallback(callbackID string) error { return nil }
+func (f *fakeTG) AnswerCallbackQuery(callbackID string, text string, showAlert bool) error {
+	return nil
+}
 func (f *fakeTG) GetChatMember(chatID int64, userID int64) (member models.ChatMember, err error) {
 	return models.ChatMember{Type: models.ChatMemberTypeLeft}, nil
 }
 
 func TestCheckAccess_AdminChatAlwaysAllowed(t *testing.T) {
 	memberSvc := members.NewService(&fakeMemberRepo{})
-	f := NewChatFilter(-1001, -2002, memberSvc, &fakeTG{})
+	f := NewChatFilter(-1001, -2002, memberSvc, &fakeTG{}, telegram.NewOps(&fakeTG{}))
 	msg := &models.Message{Chat: models.Chat{ID: -2002, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 42}}
 
 	if ok := f.CheckAccess(context.Background(), msg); !ok {

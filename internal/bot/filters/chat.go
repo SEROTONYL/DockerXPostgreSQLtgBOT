@@ -14,15 +14,17 @@ type ChatFilter struct {
 	floodChatID   int64
 	adminChatID   int64
 	memberService *members.Service
-	bot           telegram.Client
+	tgClient      telegram.Client
+	tgOps         *telegram.Ops
 }
 
-func NewChatFilter(floodChatID int64, adminChatID int64, memberService *members.Service, bot telegram.Client) *ChatFilter {
+func NewChatFilter(floodChatID int64, adminChatID int64, memberService *members.Service, client telegram.Client, ops *telegram.Ops) *ChatFilter {
 	return &ChatFilter{
 		floodChatID:   floodChatID,
 		adminChatID:   adminChatID,
 		memberService: memberService,
-		bot:           bot,
+		tgClient:      client,
+		tgOps:         ops,
 	}
 }
 
@@ -56,8 +58,12 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 		log.WithField("component", "ChatFilter").Error("memberService is nil")
 		return false
 	}
-	if f.bot == nil {
-		log.WithField("component", "ChatFilter").Error("bot is nil")
+	if f.tgClient == nil {
+		log.WithField("component", "ChatFilter").Error("tgClient is nil")
+		return false
+	}
+	if f.tgOps == nil {
+		log.WithField("component", "ChatFilter").Error("tgOps is nil")
 		return false
 	}
 	if f.floodChatID == 0 {
@@ -95,7 +101,7 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 		}
 
 		// 2.1) БД не знает пользователя: проверяем членство через Telegram API
-		cm, err := f.bot.GetChatMember(f.floodChatID, userID)
+		cm, err := f.tgClient.GetChatMember(f.floodChatID, userID)
 		if err != nil {
 			logger.WithError(err).Error("member check failed (telegram GetChatMember)")
 			return false
@@ -116,7 +122,7 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 
 		default:
 			logger.WithField("tg_status", cm.Type).Info("deny: private (not a chat member)")
-			if _, sendErr := f.bot.SendMessage(chatID, "❌ Бот работает только для участников основного чата", nil); sendErr != nil {
+			if _, sendErr := f.tgOps.Send(ctx, chatID, "❌ Бот работает только для участников основного чата", nil); sendErr != nil {
 				logger.WithError(sendErr).Warn("failed to send deny message")
 			}
 			return false

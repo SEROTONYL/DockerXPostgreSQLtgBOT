@@ -42,11 +42,6 @@ const (
 var userPickerIDPattern = regexp.MustCompile(`(?i)(?:id:|#)(\d+)`)
 var userPickerPageLabelPattern = regexp.MustCompile(`(?i)^\s*стр\s*\d+\s*/\s*\d+\s*$`)
 
-var editNeedlesNotModified = []string{"message is not modified"}
-var editNeedlesNotFound = []string{"message to edit not found", "message not found"}
-var editNeedlesCantBeEdited = []string{"message can't be edited", "message can\u2019t be edited"}
-var editNeedlesForbidden = []string{"bot was blocked by the user", "chat not found", "forbidden", "not enough rights"}
-
 // Handler обрабатывает админ-команды.
 type economyService interface {
 	AddBalance(ctx context.Context, userID int64, amount int64, txType, description string) error
@@ -57,9 +52,7 @@ type Handler struct {
 	service        *Service
 	memberService  *members.Service
 	economyService economyService
-	bot            telegram.Client
-	sendFn         func(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error)
-	editFn         func(chatID int64, messageID int, text string, keyboard models.InlineKeyboardMarkup) error
+	ops            *telegram.Ops
 	undoMu         sync.Mutex
 	lastRoleUndo   map[int64]*roleUndoData
 }
@@ -71,26 +64,13 @@ type roleUndoData struct {
 	ts           time.Time
 }
 
-type editErrorKind string
-
-const (
-	editErrNone         editErrorKind = "none"
-	editErrNotModified  editErrorKind = "not_modified"
-	editErrNotFound     editErrorKind = "not_found"
-	editErrCantBeEdited editErrorKind = "cant_be_edited"
-	editErrForbidden    editErrorKind = "forbidden"
-	editErrOther        editErrorKind = "other"
-)
-
 // NewHandler создаёт обработчик админ-панели.
-func NewHandler(service *Service, memberService *members.Service, economyService economyService, bot telegram.Client) *Handler {
+func NewHandler(service *Service, memberService *members.Service, economyService economyService, ops *telegram.Ops) *Handler {
 	return &Handler{
 		service:        service,
 		memberService:  memberService,
 		economyService: economyService,
-		bot:            bot,
-		sendFn:         bot.SendMessage,
-		editFn:         nil,
+		ops:            ops,
 		lastRoleUndo:   make(map[int64]*roleUndoData),
 	}
 }
@@ -288,7 +268,6 @@ func (h *Handler) handlePasswordInput(ctx context.Context, chatID int64, userID 
 
 // showKeyboard отображает клавиатуру админ-панели.
 func (h *Handler) showKeyboard(chatID int64, userID int64, panelMsgID int) error {
-	h.ensureSender()
 
 	keyboard := newInlineKeyboardMarkup(
 		newInlineKeyboardRow(
@@ -745,75 +724,19 @@ func pickerCallbackData(mode UserPickerMode, action string, userID int64) string
 	return fmt.Sprintf("%s%s:%s", cbPickerPrefix, mode, action)
 }
 
-func (h *Handler) answerCallback(callbackID, _ string) {
+func (h *Handler) answerCallback(callbackID, text string) {
 	if callbackID == "" {
 		return
 	}
-	if err := h.bot.AnswerCallback(callbackID); err != nil {
+	if err := h.ops.AnswerCallback(context.Background(), callbackID, text, false); err != nil {
 		log.WithError(err).Debug("ошибка ответа на callback")
 	}
 }
 
 func (h *Handler) sendMessage(chatID int64, text string) {
-	h.ensureSender()
-
-	if _, err := h.sendFn(chatID, text, nil); err != nil {
+	if _, err := h.ops.Send(context.Background(), chatID, text, nil); err != nil {
 		log.WithError(err).Error("ошибка отправки сообщения")
 	}
-}
-
-func (h *Handler) ensureSender() {
-	if h.sendFn != nil {
-		return
-	}
-	if h.bot != nil {
-		h.sendFn = h.bot.SendMessage
-		return
-	}
-
-	h.sendFn = func(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
-		return 0, fmt.Errorf("send function is nil")
-	}
-}
-
-func (h *Handler) editAdminScreen(chatID int64, messageID int, text string, keyboard models.InlineKeyboardMarkup) error {
-	if h.editFn != nil {
-		return h.editFn(chatID, messageID, text, keyboard)
-	}
-	if h.bot == nil || messageID <= 0 {
-		return fmt.Errorf("bot or message id is not available")
-	}
-
-	return h.bot.EditMessage(chatID, messageID, text, &keyboard)
-}
-
-func classifyEditError(err error) (editErrorKind, int, string) {
-	if err == nil {
-		return editErrNone, 0, ""
-	}
-
-	d := strings.ToLower(err.Error())
-	switch {
-	case containsAny(d, editNeedlesNotModified):
-		return editErrNotModified, 0, err.Error()
-	case containsAny(d, editNeedlesNotFound):
-		return editErrNotFound, 0, err.Error()
-	case containsAny(d, editNeedlesCantBeEdited):
-		return editErrCantBeEdited, 0, err.Error()
-	case containsAny(d, editNeedlesForbidden):
-		return editErrForbidden, 0, err.Error()
-	default:
-		return editErrOther, 0, err.Error()
-	}
-}
-
-func containsAny(s string, needles []string) bool {
-	for _, needle := range needles {
-		if strings.Contains(s, needle) {
-			return true
-		}
-	}
-	return false
 }
 
 func (h *Handler) logAdminUIError(adminID, chatID int64, panelMessageID int, screenName, action string, tgCode int, tgText string, err error) {
@@ -835,15 +758,18 @@ func (h *Handler) showKeyboardSafe(chatID, userID int64, panelMsgID int) {
 }
 
 func (h *Handler) sendUIErrorHint(chatID int64, err error) {
-	kind, _, _ := classifyEditError(err)
-	switch kind {
-	case editErrForbidden:
+	if err == nil {
 		return
-	case editErrNotFound:
-		h.sendMessage(chatID, "⚠️ Панель устарела, попробуйте открыть снова.")
-	default:
-		h.sendMessage(chatID, "⚠️ Не удалось обновить панель. Попробуйте ещё раз.")
 	}
+	d := strings.ToLower(err.Error())
+	if strings.Contains(d, "forbidden") || strings.Contains(d, "blocked by the user") {
+		return
+	}
+	if strings.Contains(d, "message to edit not found") || strings.Contains(d, "message not found") {
+		h.sendMessage(chatID, "⚠️ Панель устарела, попробуйте открыть снова.")
+		return
+	}
+	h.sendMessage(chatID, "⚠️ Не удалось обновить панель. Попробуйте ещё раз.")
 }
 
 func (h *Handler) renderAssignRoleInput(chatID, userID int64, selected *members.Member) {
@@ -935,32 +861,12 @@ func (h *Handler) handleUndoLastRole(ctx context.Context, chatID, userID int64, 
 }
 
 func (h *Handler) renderAdminScreen(chatID, userID int64, panelMsgID int, screenName, text string, keyboard models.InlineKeyboardMarkup) error {
-	h.ensureSender()
-
-	if panelMsgID > 0 {
-		err := h.editAdminScreen(chatID, panelMsgID, text, keyboard)
-		kind, tgCode, tgText := classifyEditError(err)
-		if kind == editErrNone || kind == editErrNotModified {
-			h.attachPanelMessageID(userID, panelMsgID)
-			return nil
-		}
-
-		switch kind {
-		case editErrNotFound, editErrCantBeEdited:
-			h.logAdminUIError(userID, chatID, panelMsgID, screenName, "edit", tgCode, tgText, err)
-		case editErrForbidden, editErrOther:
-			h.logAdminUIError(userID, chatID, panelMsgID, screenName, "edit", tgCode, tgText, err)
-			return err
-		}
-	}
-
-	sent, err := h.sendFn(chatID, text, &keyboard)
+	msgID, usedEdit, err := h.ops.EditOrSend(context.Background(), chatID, panelMsgID, text, keyboard)
 	if err != nil {
-		_, tgCode, tgText := classifyEditError(err)
-		h.logAdminUIError(userID, chatID, panelMsgID, screenName, "send", tgCode, tgText, err)
+		h.logAdminUIError(userID, chatID, panelMsgID, screenName, map[bool]string{true: "edit", false: "send"}[usedEdit], 0, err.Error(), err)
 		return err
 	}
-	h.attachPanelMessageID(userID, sent)
+	h.attachPanelMessageID(userID, msgID)
 	return nil
 }
 
@@ -1011,10 +917,6 @@ func callbackMessage(q *models.CallbackQuery) *models.Message {
 		return nil
 	}
 	return q.Message.Message
-}
-
-func shouldFallbackToSend(kind editErrorKind) bool {
-	return kind == editErrNotFound || kind == editErrCantBeEdited
 }
 
 func newInlineKeyboardMarkup(rows ...[]models.InlineKeyboardButton) models.InlineKeyboardMarkup {

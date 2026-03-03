@@ -75,23 +75,24 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	casinoService := casino.NewService(casinoRepo, economyService, cfg)
 	adminService := admin.NewService(adminRepo, memberRepo, cfg)
 
-	// === 5. Telegram adapter ===
-	tg := telegram.NewAdapter(botAPI)
+	// === 5. Telegram adapter/ops ===
+	tgClient := telegram.NewAdapter(botAPI)
+	tgOps := telegram.NewOpsWithLogger(tgClient, log.NewEntry(log.StandardLogger()))
 
 	// === 6. Обработчики ===
 	memberHandler := members.NewHandler(memberService)
-	economyHandler := economy.NewHandler(economyService, memberService, tg)
-	streakHandler := streak.NewHandler(streakService, tg, cfg)
-	karmaHandler := karma.NewHandler(karmaService, tg)
-	casinoHandler := casino.NewHandler(casinoService, tg)
-	adminHandler := admin.NewHandler(adminService, memberService, economyService, tg)
+	economyHandler := economy.NewHandler(economyService, memberService, tgOps)
+	streakHandler := streak.NewHandler(streakService, tgOps, cfg)
+	karmaHandler := karma.NewHandler(karmaService, tgOps)
+	casinoHandler := casino.NewHandler(casinoService, tgOps)
+	adminHandler := admin.NewHandler(adminService, memberService, economyService, tgOps)
 
 	// === 6. Фильтры ===
-	chatFilter := filters.NewChatFilter(cfg.FloodChatID, cfg.AdminChatID, memberService, tg)
+	chatFilter := filters.NewChatFilter(cfg.FloodChatID, cfg.AdminChatID, memberService, tgClient, tgOps)
 
 	// === 7. Собираем бота ===
 	b := bot.New(
-		botAPI, tg, cfg,
+		botAPI, tgOps, cfg,
 		memberService, memberHandler,
 		economyService, economyHandler,
 		streakService, streakHandler,

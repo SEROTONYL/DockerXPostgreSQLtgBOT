@@ -19,15 +19,15 @@ import (
 type Handler struct {
 	service       *Service         // Сервис экономики
 	memberService *members.Service // Сервис участников (для поиска получателя)
-	bot           telegram.Client  // API Telegram для отправки ответов
+	tgOps         *telegram.Ops    // Единый слой Telegram операций
 }
 
 // NewHandler создаёт новый обработчик экономических команд.
-func NewHandler(service *Service, memberService *members.Service, bot telegram.Client) *Handler {
+func NewHandler(service *Service, memberService *members.Service, tgOps *telegram.Ops) *Handler {
 	return &Handler{
 		service:       service,
 		memberService: memberService,
-		bot:           bot,
+		tgOps:         tgOps,
 	}
 }
 
@@ -126,7 +126,7 @@ func (h *Handler) HandleTransactions(ctx context.Context, chatID int64, userID i
 
 // sendMessage — вспомогательный метод для отправки текстовых сообщений.
 func (h *Handler) sendMessage(chatID int64, text string) {
-	if _, err := h.bot.SendMessage(chatID, text, nil); err != nil {
+	if _, err := h.tgOps.Send(context.Background(), chatID, text, nil); err != nil {
 		log.WithError(err).Error("Ошибка отправки сообщения")
 	}
 }
