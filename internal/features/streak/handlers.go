@@ -46,7 +46,7 @@ func (h *Handler) HandleOgonek(ctx context.Context, chatID int64, userID int64) 
 	streak, err := h.service.GetStreak(ctx, userID)
 	if err != nil {
 		log.WithError(err).Error("Ошибка получения стрика")
-		h.sendMessage(chatID, "❌ Ошибка получения данных стрика")
+		h.sendMessage(ctx, chatID, "❌ Ошибка получения данных стрика")
 		return
 	}
 
@@ -87,12 +87,10 @@ func (h *Handler) HandleOgonek(ctx context.Context, chatID int64, userID int64) 
 		)
 	}
 
-	h.sendMessage(chatID, text)
+	h.sendMessage(ctx, chatID, text)
 }
 
 // sendMessage — вспомогательный метод для отправки текстовых сообщений.
-func (h *Handler) sendMessage(chatID int64, text string) {
-	if _, err := h.tgOps.Send(context.Background(), chatID, text, nil); err != nil {
-		log.WithError(err).Error("Ошибка отправки сообщения")
-	}
+func (h *Handler) sendMessage(ctx context.Context, chatID int64, text string) {
+	_, _ = h.tgOps.Send(ctx, chatID, text, nil)
 }

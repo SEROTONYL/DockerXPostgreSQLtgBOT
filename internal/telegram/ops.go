@@ -18,8 +18,16 @@ type callbackClient interface {
 	AnswerCallback(callbackID string) error
 }
 
+type callbackClientCtx interface {
+	AnswerCallbackCtx(ctx context.Context, callbackID string) error
+}
+
 type legacyCallbackClient interface {
 	AnswerCallbackQuery(callbackID string, text string, showAlert bool) error
+}
+
+type legacyCallbackClientCtx interface {
+	AnswerCallbackQueryCtx(ctx context.Context, callbackID string, text string, showAlert bool) error
 }
 
 type editErrorKind string
@@ -80,19 +88,51 @@ func (o *Ops) Edit(ctx context.Context, chatID int64, messageID int, text string
 	return err
 }
 
-func (o *Ops) AnswerCallback(ctx context.Context, callbackID string, _ ...any) error {
+func (o *Ops) AnswerCallback(ctx context.Context, callbackID string, args ...any) error {
 	if callbackID == "" {
 		return nil
 	}
 
+	text := ""
+	showAlert := false
+	if len(args) > 0 {
+		if v, ok := args[0].(string); ok {
+			text = v
+		}
+	}
+	if len(args) > 1 {
+		if v, ok := args[1].(bool); ok {
+			showAlert = v
+		}
+	}
+
 	var err error
-	switch c := any(o.c).(type) {
-	case callbackClient:
-		err = c.AnswerCallback(callbackID)
-	case legacyCallbackClient:
-		err = c.AnswerCallbackQuery(callbackID, "", false)
-	default:
-		err = fmt.Errorf("client does not support answer callback")
+	if text != "" || showAlert {
+		switch c := any(o.c).(type) {
+		case legacyCallbackClientCtx:
+			err = c.AnswerCallbackQueryCtx(ctx, callbackID, text, showAlert)
+		case legacyCallbackClient:
+			err = c.AnswerCallbackQuery(callbackID, text, showAlert)
+		case callbackClientCtx:
+			err = c.AnswerCallbackCtx(ctx, callbackID)
+		case callbackClient:
+			err = c.AnswerCallback(callbackID)
+		default:
+			err = fmt.Errorf("client does not support answer callback")
+		}
+	} else {
+		switch c := any(o.c).(type) {
+		case callbackClientCtx:
+			err = c.AnswerCallbackCtx(ctx, callbackID)
+		case callbackClient:
+			err = c.AnswerCallback(callbackID)
+		case legacyCallbackClientCtx:
+			err = c.AnswerCallbackQueryCtx(ctx, callbackID, "", false)
+		case legacyCallbackClient:
+			err = c.AnswerCallbackQuery(callbackID, "", false)
+		default:
+			err = fmt.Errorf("client does not support answer callback")
+		}
 	}
 
 	if err != nil {

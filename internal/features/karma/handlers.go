@@ -26,10 +26,10 @@ func (h *Handler) HandleKarma(ctx context.Context, chatID int64, userID int64) {
 	karma, err := h.service.GetKarma(ctx, userID)
 	if err != nil {
 		log.WithError(err).Error("Ошибка получения кармы")
-		h.sendMessage(chatID, "❌ Ошибка получения кармы")
+		h.sendMessage(ctx, chatID, "❌ Ошибка получения кармы")
 		return
 	}
-	h.sendMessage(chatID, fmt.Sprintf("⭐ Твоя карма: %d", karma))
+	h.sendMessage(ctx, chatID, fmt.Sprintf("⭐ Твоя карма: %d", karma))
 }
 
 // HandleThankYou обрабатывает «спасибо» в ответе на сообщение.
@@ -39,11 +39,9 @@ func (h *Handler) HandleThankYou(ctx context.Context, chatID int64, fromUserID, 
 		log.WithError(err).Debug("Карма не дана")
 		return
 	}
-	h.sendMessage(chatID, "⭐ +1 к карме!")
+	h.sendMessage(ctx, chatID, "⭐ +1 к карме!")
 }
 
-func (h *Handler) sendMessage(chatID int64, text string) {
-	if _, err := h.tgOps.Send(context.Background(), chatID, text, nil); err != nil {
-		log.WithError(err).Error("Ошибка отправки сообщения")
-	}
+func (h *Handler) sendMessage(ctx context.Context, chatID int64, text string) {
+	_, _ = h.tgOps.Send(ctx, chatID, text, nil)
 }
