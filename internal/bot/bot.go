@@ -91,13 +91,20 @@ func New(
 
 // Start запускает polling обновлений от Telegram.
 func (b *Bot) Start(ctx context.Context) {
+	pool := newUpdatePool(b.cfg.BotWorkers, b.cfg.BotUpdateQueue, b.handleUpdate)
+	pool.Start()
+	defer pool.Stop()
+
 	log.WithFields(log.Fields{
 		"max_inflight": b.cfg.BotMaxInflight,
+		"workers":      b.cfg.BotWorkers,
+		"queue_size":   b.cfg.BotUpdateQueue,
 		"timeout_sec":  b.cfg.BotUpdateTimeoutSeconds,
 	}).Info("Бот запущен и ожидает сообщения...")
+	log.Infof("update pool: workers=%d queue=%d", b.cfg.BotWorkers, b.cfg.BotUpdateQueue)
 
 	b.api.RegisterHandlerMatchFunc(func(update *models.Update) bool { return true }, func(handlerCtx context.Context, _ *botapi.Bot, update *models.Update) {
-		b.handleUpdate(handlerCtx, *update)
+		pool.Enqueue(handlerCtx, *update)
 	})
 
 	b.api.Start(ctx)

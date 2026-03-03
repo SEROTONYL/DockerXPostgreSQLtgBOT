@@ -4,17 +4,27 @@ package config
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
-    "strconv"
-    "strings"
+
 	"github.com/kelseyhightower/envconfig"
+)
+
+const (
+	minBotWorkers = 1
+	maxBotWorkers = 64
+
+	minBotUpdateQueue = 10
+	maxBotUpdateQueue = 5000
 )
 
 // Config содержит ВСЕ настройки приложения.
 type Config struct {
 	// --- Telegram ---
-    AdminIDsRaw string `envconfig:"ADMIN_IDS" required:"true"`
-    AdminIDs    []int64 `envconfig:"-"` // заполним вручную
+	AdminIDsRaw string  `envconfig:"ADMIN_IDS" required:"true"`
+	AdminIDs    []int64 `envconfig:"-"` // заполним вручную
+
 	TelegramBotToken string `envconfig:"TELEGRAM_BOT_TOKEN" required:"true"`
 	// ID чата, в котором бот работает (единственный разрешённый групповой чат)
 	FloodChatID int64 `envconfig:"FLOOD_CHAT_ID" required:"true"`
@@ -37,10 +47,14 @@ type Config struct {
 	AppTimezone string `envconfig:"APP_TIMEZONE" default:"Europe/Moscow"`
 
 	// --- Bot runtime ---
-	// Сколько апдейтов обрабатываем параллельно. Иначе "go на каждый апдейт" = утечка памяти при флуде.
+	// Legacy setting: оставлен для обратной совместимости и логирования.
 	BotMaxInflight int `envconfig:"BOT_MAX_INFLIGHT" default:"64"`
 	// Таймаут long polling (секунды)
 	BotUpdateTimeoutSeconds int `envconfig:"BOT_UPDATE_TIMEOUT_SECONDS" default:"60"`
+	// Размер пула воркеров для обработки апдейтов.
+	BotWorkers int `envconfig:"BOT_WORKERS" default:"4"`
+	// Размер очереди апдейтов между Telegram callback и воркерами.
+	BotUpdateQueue int `envconfig:"BOT_UPDATE_QUEUE" default:"100"`
 
 	// --- Admin ---
 	AdminPasswordHash string `envconfig:"ADMIN_PASSWORD_HASH" required:"true"`
@@ -69,9 +83,9 @@ type Config struct {
 	RateLimitWindow   time.Duration `envconfig:"RATE_LIMIT_WINDOW" default:"1m"`
 
 	// --- Feature Flags ---
-	FeatureCasinoEnabled   bool `envconfig:"FEATURE_CASINO_ENABLED" default:"true"`
-	FeatureKarmaEnabled    bool `envconfig:"FEATURE_KARMA_ENABLED" default:"true"`
-	FeatureStreaksEnabled  bool `envconfig:"FEATURE_STREAKS_ENABLED" default:"true"`
+	FeatureCasinoEnabled  bool `envconfig:"FEATURE_CASINO_ENABLED" default:"true"`
+	FeatureKarmaEnabled   bool `envconfig:"FEATURE_KARMA_ENABLED" default:"true"`
+	FeatureStreaksEnabled bool `envconfig:"FEATURE_STREAKS_ENABLED" default:"true"`
 }
 
 // DatabaseDSN возвращает строку подключения к PostgreSQL в формате DSN.
@@ -92,6 +106,12 @@ func (c *Config) Validate() error {
 	if c.BotUpdateTimeoutSeconds <= 0 {
 		return fmt.Errorf("BOT_UPDATE_TIMEOUT_SECONDS должен быть > 0")
 	}
+	if c.BotWorkers < minBotWorkers || c.BotWorkers > maxBotWorkers {
+		return fmt.Errorf("BOT_WORKERS должен быть в диапазоне [%d..%d]", minBotWorkers, maxBotWorkers)
+	}
+	if c.BotUpdateQueue < minBotUpdateQueue || c.BotUpdateQueue > maxBotUpdateQueue {
+		return fmt.Errorf("BOT_UPDATE_QUEUE должен быть в диапазоне [%d..%d]", minBotUpdateQueue, maxBotUpdateQueue)
+	}
 	if c.DBMaxConns <= 0 || c.DBMinConns < 0 || c.DBMinConns > c.DBMaxConns {
 		return fmt.Errorf("некорректные DB_MIN_CONNS/DB_MAX_CONNS")
 	}
@@ -100,36 +120,37 @@ func (c *Config) Validate() error {
 
 // Load читает переменные окружения и заполняет структуру Config.
 func Load() (*Config, error) {
-    var cfg Config
-    if err := envconfig.Process("", &cfg); err != nil {
-        return nil, fmt.Errorf("не удалось загрузить конфигурацию: %w", err)
-    }
+	var cfg Config
+	if err := envconfig.Process("", &cfg); err != nil {
+		return nil, fmt.Errorf("не удалось загрузить конфигурацию: %w", err)
+	}
 
-    ids, err := parseInt64CSV(cfg.AdminIDsRaw)
-    if err != nil {
-        return nil, fmt.Errorf("ADMIN_IDS parse: %w", err)
-    }
-    cfg.AdminIDs = ids
+	ids, err := parseInt64CSV(cfg.AdminIDsRaw)
+	if err != nil {
+		return nil, fmt.Errorf("ADMIN_IDS parse: %w", err)
+	}
+	cfg.AdminIDs = ids
 
-    if err := cfg.Validate(); err != nil {
-        return nil, err
-    }
-    return &cfg, nil
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
 }
+
 func parseInt64CSV(s string) ([]int64, error) {
-    s = strings.TrimSpace(s)
-    if s == "" {
-        return nil, nil
-    }
-    parts := strings.Split(s, ",")
-    out := make([]int64, 0, len(parts))
-    for _, p := range parts {
-        p = strings.TrimSpace(p)
-        v, err := strconv.ParseInt(p, 10, 64)
-        if err != nil {
-            return nil, fmt.Errorf("bad int64 %q: %w", p, err)
-        }
-        out = append(out, v)
-    }
-    return out, nil
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]int64, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		v, err := strconv.ParseInt(p, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("bad int64 %q: %w", p, err)
+		}
+		out = append(out, v)
+	}
+	return out, nil
 }
