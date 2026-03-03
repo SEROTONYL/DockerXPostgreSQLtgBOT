@@ -141,6 +141,9 @@ func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 	}
 
 	if uc.Callback != nil {
+		if uc.IsAdminChat {
+			return
+		}
 		if b.adminHandler.HandleAdminCallback(ctx, uc.Callback) {
 			return
 		}
@@ -164,6 +167,14 @@ func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 
 	chatID := message.Chat.ID
 	userID := message.From.ID
+
+	if uc.IsAdminChat {
+		cmd, args, isCommand := b.parser.ParseCommand(message.Text)
+		if isCommand && isAdminChatAllowedCommand(cmd) {
+			b.routeCommand(ctx, uc, cmd, args)
+		}
+		return
+	}
 
 	if err := b.memberService.EnsureMember(ctx, userID,
 		message.From.Username, message.From.FirstName, message.From.LastName,
@@ -247,6 +258,15 @@ func (b *Bot) handleMembershipUpdate(ctx context.Context, uc UpdateContext) bool
 }
 
 // routeCommand маршрутизирует команду к нужному обработчику.
+func isAdminChatAllowedCommand(cmd string) bool {
+	switch cmd {
+	case "members_status", "members_stats":
+		return true
+	default:
+		return false
+	}
+}
+
 func (b *Bot) routeCommand(ctx context.Context, uc UpdateContext, cmd string, args []string) {
 	chatID := uc.ChatID
 	userID := uc.UserID

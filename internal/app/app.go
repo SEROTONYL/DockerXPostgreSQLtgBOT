@@ -87,7 +87,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	adminHandler := admin.NewHandler(adminService, memberService, economyService, tg)
 
 	// === 6. Фильтры ===
-	chatFilter := filters.NewChatFilter(cfg.FloodChatID, memberService, tg)
+	chatFilter := filters.NewChatFilter(cfg.FloodChatID, cfg.AdminChatID, memberService, tg)
 
 	// === 7. Собираем бота ===
 	b := bot.New(

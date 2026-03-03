@@ -8,6 +8,9 @@ import (
 
 	"github.com/go-telegram/bot/models"
 
+	"serotonyl.ru/telegram-bot/internal/bot/filters"
+	"serotonyl.ru/telegram-bot/internal/bot/middleware"
+	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/jobs"
 )
@@ -97,5 +100,35 @@ func TestMembersStatusCommand_ReturnsDataInAdminChat(t *testing.T) {
 		if !strings.Contains(msg, c) {
 			t.Fatalf("expected %q in message: %s", c, msg)
 		}
+	}
+}
+
+func TestIsAdminChatAllowedCommand(t *testing.T) {
+	if !isAdminChatAllowedCommand("members_status") || !isAdminChatAllowedCommand("members_stats") {
+		t.Fatal("expected admin status commands to be allowed")
+	}
+	if isAdminChatAllowedCommand("пленки") {
+		t.Fatal("expected non-admin command to be blocked")
+	}
+}
+
+func TestHandleUpdate_AdminChatIgnoresNonAdminCommands(t *testing.T) {
+	tg := &fakeTGStatus{}
+	repo := &fakeMembersRepoStatus{}
+	memberSvc := members.NewService(repo)
+	b := &Bot{
+		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		tg:            tg,
+		memberService: memberSvc,
+		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg),
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+	}
+
+	upd := models.Update{Message: &models.Message{Chat: models.Chat{ID: -2002, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 42, Username: "u"}, Text: "/пленки"}}
+	b.handleUpdate(context.Background(), upd)
+
+	if len(tg.sent) != 0 {
+		t.Fatalf("expected no outgoing messages for non-admin command in admin chat, got %d", len(tg.sent))
 	}
 }
