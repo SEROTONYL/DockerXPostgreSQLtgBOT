@@ -40,12 +40,12 @@ func (h *Handler) HandleBalance(ctx context.Context, chatID int64, userID int64)
 	balance, err := h.service.GetBalance(ctx, userID)
 	if err != nil {
 		log.WithError(err).Error("Ошибка получения баланса")
-		h.sendMessage(chatID, "❌ Ошибка получения баланса")
+		h.sendMessage(ctx, chatID, "❌ Ошибка получения баланса")
 		return
 	}
 
 	text := fmt.Sprintf("💰 Баланс: %s", common.FormatBalance(balance))
-	h.sendMessage(chatID, text)
+	h.sendMessage(ctx, chatID, text)
 }
 
 // HandleTransfer обрабатывает команду !отсыпать @username 100.
@@ -61,28 +61,28 @@ func (h *Handler) HandleBalance(ctx context.Context, chatID int64, userID int64)
 func (h *Handler) HandleTransfer(ctx context.Context, chatID int64, fromUserID int64, args []string) {
 	// Проверяем аргументы: нужен @username и сумма
 	if len(args) < 2 {
-		h.sendMessage(chatID, "❌ Формат: !отсыпать @username сумма")
+		h.sendMessage(ctx, chatID, "❌ Формат: !отсыпать @username сумма")
 		return
 	}
 
 	// Парсим username (убираем @ если есть)
 	username := strings.TrimPrefix(args[0], "@")
 	if username == "" {
-		h.sendMessage(chatID, "❌ Укажите @username получателя")
+		h.sendMessage(ctx, chatID, "❌ Укажите @username получателя")
 		return
 	}
 
 	// Парсим сумму
 	amount, err := strconv.ParseInt(args[1], 10, 64)
 	if err != nil || amount <= 0 {
-		h.sendMessage(chatID, "❌ Сумма должна быть положительным числом")
+		h.sendMessage(ctx, chatID, "❌ Сумма должна быть положительным числом")
 		return
 	}
 
 	// Находим получателя по username
 	recipient, err := h.memberService.GetByUsername(ctx, username)
 	if err != nil {
-		h.sendMessage(chatID, "❌ Пользователь не найден")
+		h.sendMessage(ctx, chatID, "❌ Пользователь не найден")
 		return
 	}
 
@@ -91,14 +91,14 @@ func (h *Handler) HandleTransfer(ctx context.Context, chatID int64, fromUserID i
 	if err != nil {
 		switch err {
 		case common.ErrSelfTransfer:
-			h.sendMessage(chatID, "❌ Нельзя переводить плёнки самому себе")
+			h.sendMessage(ctx, chatID, "❌ Нельзя переводить плёнки самому себе")
 		case common.ErrInsufficientBalance:
-			h.sendMessage(chatID, "❌ Недостаточно плёнок на счёте")
+			h.sendMessage(ctx, chatID, "❌ Недостаточно плёнок на счёте")
 		case common.ErrInvalidAmount:
-			h.sendMessage(chatID, "❌ Сумма должна быть положительной")
+			h.sendMessage(ctx, chatID, "❌ Сумма должна быть положительной")
 		default:
 			log.WithError(err).Error("Ошибка перевода")
-			h.sendMessage(chatID, "❌ Ошибка выполнения перевода")
+			h.sendMessage(ctx, chatID, "❌ Ошибка выполнения перевода")
 		}
 		return
 	}
@@ -108,7 +108,7 @@ func (h *Handler) HandleTransfer(ctx context.Context, chatID int64, fromUserID i
 
 	text := fmt.Sprintf("✅ Переведено %s @%s\nТвой баланс: %s",
 		common.FormatBalance(amount), username, common.FormatBalance(newBalance))
-	h.sendMessage(chatID, text)
+	h.sendMessage(ctx, chatID, text)
 }
 
 // HandleTransactions обрабатывает команду !транзакции — показывает историю.
@@ -116,17 +116,15 @@ func (h *Handler) HandleTransactions(ctx context.Context, chatID int64, userID i
 	history, err := h.service.GetTransactionHistory(ctx, userID)
 	if err != nil {
 		log.WithError(err).Error("Ошибка получения транзакций")
-		h.sendMessage(chatID, "❌ Ошибка получения истории транзакций")
+		h.sendMessage(ctx, chatID, "❌ Ошибка получения истории транзакций")
 		return
 	}
 
 	// Отправляем с MarkdownV2 для поддержки спойлеров
-	h.sendMessage(chatID, history)
+	h.sendMessage(ctx, chatID, history)
 }
 
 // sendMessage — вспомогательный метод для отправки текстовых сообщений.
-func (h *Handler) sendMessage(chatID int64, text string) {
-	if _, err := h.tgOps.Send(context.Background(), chatID, text, nil); err != nil {
-		log.WithError(err).Error("Ошибка отправки сообщения")
-	}
+func (h *Handler) sendMessage(ctx context.Context, chatID int64, text string) {
+	_, _ = h.tgOps.Send(ctx, chatID, text, nil)
 }

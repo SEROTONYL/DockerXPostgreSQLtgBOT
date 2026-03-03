@@ -42,11 +42,11 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 	if err != nil {
 		// Проверяем тип ошибки для понятного сообщения
 		if strings.Contains(err.Error(), "недостаточно") {
-			h.sendMessage(chatID, fmt.Sprintf("❌ Недостаточно плёнок! Ставка: %s",
+			h.sendMessage(ctx, chatID, fmt.Sprintf("❌ Недостаточно плёнок! Ставка: %s",
 				common.FormatBalance(h.service.cfg.CasinoSlotsBet)))
 		} else {
 			log.WithError(err).Error("Ошибка спина слотов")
-			h.sendMessage(chatID, "❌ Ошибка при игре в слоты")
+			h.sendMessage(ctx, chatID, "❌ Ошибка при игре в слоты")
 		}
 		return
 	}
@@ -90,7 +90,7 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 	balance, _ := h.service.economyService.GetBalance(ctx, userID)
 	sb.WriteString(fmt.Sprintf("📊 Баланс: %s", common.FormatBalance(balance)))
 
-	h.sendMessage(chatID, sb.String())
+	h.sendMessage(ctx, chatID, sb.String())
 }
 
 // HandleSlotStats обрабатывает команду !статслоты — статистика.
@@ -107,7 +107,7 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 func (h *Handler) HandleSlotStats(ctx context.Context, chatID int64, userID int64) {
 	stats, err := h.service.GetStats(ctx, userID)
 	if err != nil {
-		h.sendMessage(chatID, "📊 У тебя пока нет статистики слотов. Сыграй первый спин!")
+		h.sendMessage(ctx, chatID, "📊 У тебя пока нет статистики слотов. Сыграй первый спин!")
 		return
 	}
 
@@ -133,11 +133,9 @@ func (h *Handler) HandleSlotStats(ctx context.Context, chatID int64, userID int6
 		stats.CurrentRTP,
 	)
 
-	h.sendMessage(chatID, text)
+	h.sendMessage(ctx, chatID, text)
 }
 
-func (h *Handler) sendMessage(chatID int64, text string) {
-	if _, err := h.tgOps.Send(context.Background(), chatID, text, nil); err != nil {
-		log.WithError(err).Error("Ошибка отправки сообщения")
-	}
+func (h *Handler) sendMessage(ctx context.Context, chatID int64, text string) {
+	_, _ = h.tgOps.Send(ctx, chatID, text, nil)
 }

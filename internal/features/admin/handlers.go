@@ -735,9 +735,7 @@ func (h *Handler) answerCallback(ctx context.Context, callbackID, text string) {
 }
 
 func (h *Handler) sendMessage(ctx context.Context, chatID int64, text string) {
-	if _, err := h.ops.Send(ctx, chatID, text, nil); err != nil {
-		log.WithError(err).Error("ошибка отправки сообщения")
-	}
+	_, _ = h.ops.Send(ctx, chatID, text, nil)
 }
 
 func (h *Handler) logAdminUIError(adminID, chatID int64, panelMessageID int, screenName, action string, tgCode int, tgText string, err error) {

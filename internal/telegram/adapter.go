@@ -63,19 +63,27 @@ func buildEditMessageTextParams(chatID int64, messageID int, text string, markup
 }
 
 func (a *Adapter) AnswerCallback(callbackID string) error {
+	return a.AnswerCallbackCtx(context.Background(), callbackID)
+}
+
+func (a *Adapter) AnswerCallbackCtx(ctx context.Context, callbackID string) error {
 	if callbackID == "" {
 		return nil
 	}
-	_, err := a.bot.AnswerCallbackQuery(context.Background(), &botapi.AnswerCallbackQueryParams{CallbackQueryID: callbackID})
+	_, err := a.bot.AnswerCallbackQuery(ctx, &botapi.AnswerCallbackQueryParams{CallbackQueryID: callbackID})
 	return err
 }
 
 // AnswerCallbackQuery оставлен для обратной совместимости с существующими вызовами.
 func (a *Adapter) AnswerCallbackQuery(callbackID string, text string, showAlert bool) error {
+	return a.AnswerCallbackQueryCtx(context.Background(), callbackID, text, showAlert)
+}
+
+func (a *Adapter) AnswerCallbackQueryCtx(ctx context.Context, callbackID string, text string, showAlert bool) error {
 	if callbackID == "" {
 		return nil
 	}
-	_, err := a.bot.AnswerCallbackQuery(context.Background(), &botapi.AnswerCallbackQueryParams{
+	_, err := a.bot.AnswerCallbackQuery(ctx, &botapi.AnswerCallbackQueryParams{
 		CallbackQueryID: callbackID,
 		Text:            text,
 		ShowAlert:       showAlert,
