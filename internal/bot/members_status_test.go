@@ -166,3 +166,21 @@ func TestHandleUpdate_AdminChatIgnoresPlainMessages(t *testing.T) {
 		t.Fatalf("expected no member writes in admin chat, got ensureSeen=%d ensureActive=%d", repo.ensureSeenCalls, repo.ensureActiveCalls)
 	}
 }
+
+func TestShouldTouchLastSeen_UsesUpdateTypeAndChatOnly(t *testing.T) {
+	b := &Bot{cfg: &config.Config{MainGroupID: -1001, AdminChatID: -2002}}
+	ctx := context.Background()
+
+	if !b.shouldTouchLastSeen(ctx, UpdateContext{ChatID: -1001, UserID: 10, Message: &models.Message{}}) {
+		t.Fatal("expected main-group message to touch last seen")
+	}
+	if !b.shouldTouchLastSeen(ctx, UpdateContext{ChatID: -1001, UserID: 10, Callback: &models.CallbackQuery{}}) {
+		t.Fatal("expected main-group callback to touch last seen")
+	}
+	if b.shouldTouchLastSeen(ctx, UpdateContext{ChatID: 10, UserID: 10, IsPrivate: true, Message: &models.Message{}}) {
+		t.Fatal("expected private chat to not touch last seen in strict mode")
+	}
+	if b.shouldTouchLastSeen(ctx, UpdateContext{ChatID: -2002, UserID: 10, IsAdminChat: true, Message: &models.Message{}}) {
+		t.Fatal("expected admin chat to not touch last seen")
+	}
+}

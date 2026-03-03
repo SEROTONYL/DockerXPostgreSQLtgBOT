@@ -124,6 +124,17 @@ func (b *Bot) Start(ctx context.Context) {
 	b.api.Start(ctx)
 }
 
+func (b *Bot) shouldTouchLastSeen(ctx context.Context, uc UpdateContext) bool {
+	_ = ctx // явный контракт: используем родительский context, без context.Background().
+	if uc.IsAdminChat || uc.UserID == 0 || uc.ChatMember != nil {
+		return false
+	}
+	if uc.ChatID == b.cfg.MainGroupID && (uc.Message != nil || uc.Callback != nil) {
+		return true
+	}
+	return false
+}
+
 // handleUpdate обрабатывает одно обновление от Telegram.
 func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 	defer middleware.RecoverFromPanic()
@@ -138,13 +149,9 @@ func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 		if uc.IsAdminChat {
 			return
 		}
-		if uc.ChatID == b.cfg.MainGroupID {
+		if b.shouldTouchLastSeen(ctx, uc) {
 			if err := b.memberService.EnsureActiveMemberSeen(ctx, uc.UserID, uc.Username, uc.FullName, uc.Now); err != nil {
 				log.WithError(err).WithField("user_id", uc.UserID).Debug("EnsureActiveMemberSeen failed")
-			}
-		} else {
-			if err := b.memberService.EnsureMemberSeen(ctx, uc.UserID, uc.Username, uc.FullName, uc.Now); err != nil {
-				log.WithError(err).WithField("user_id", uc.UserID).Debug("EnsureMemberSeen failed")
 			}
 		}
 		if b.adminHandler.HandleAdminCallback(ctx, uc.Callback) {
@@ -179,13 +186,9 @@ func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 		return
 	}
 
-	if chatID == b.cfg.MainGroupID {
+	if b.shouldTouchLastSeen(ctx, uc) {
 		if err := b.memberService.EnsureActiveMemberSeen(ctx, userID, message.From.Username, buildDisplayName(message.From.FirstName, message.From.LastName), uc.Now); err != nil {
 			log.WithError(err).WithField("user_id", userID).Debug("EnsureActiveMemberSeen failed")
-		}
-	} else {
-		if err := b.memberService.EnsureMemberSeen(ctx, userID, message.From.Username, buildDisplayName(message.From.FirstName, message.From.LastName), uc.Now); err != nil {
-			log.WithError(err).WithField("user_id", userID).Debug("EnsureMemberSeen failed")
 		}
 	}
 
