@@ -116,20 +116,27 @@ func (o *Ops) EditOrSend(ctx context.Context, chatID int64, messageID int, text 
 		return messageID, true, nil
 	}
 
-	switch classifyEditError(err) {
-	case editErrNotModified:
+	switch {
+	case IsEditNotModified(err):
 		return messageID, true, nil
-	case editErrNotFound, editErrCantBeEdited:
+	case ShouldFallbackToSendOnEdit(err):
 		msgID, sendErr := o.Send(ctx, chatID, text, &keyboard)
 		if sendErr != nil {
 			return 0, false, sendErr
 		}
 		return msgID, false, nil
-	case editErrForbidden:
-		return 0, false, err
 	default:
 		return 0, false, err
 	}
+}
+
+func ShouldFallbackToSendOnEdit(err error) bool {
+	kind := classifyEditError(err)
+	return kind == editErrNotFound || kind == editErrCantBeEdited
+}
+
+func IsEditNotModified(err error) bool {
+	return classifyEditError(err) == editErrNotModified
 }
 
 func classifyEditError(err error) editErrorKind {

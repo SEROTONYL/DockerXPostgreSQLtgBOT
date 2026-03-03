@@ -55,6 +55,7 @@ type Handler struct {
 	ops            *telegram.Ops
 	undoMu         sync.Mutex
 	lastRoleUndo   map[int64]*roleUndoData
+	wizardCtx      context.Context
 }
 
 type roleUndoData struct {
@@ -84,7 +85,7 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 	// Единый gate: DB is_admin ИЛИ ADMIN_IDS
 	if !h.service.CanEnterAdmin(ctx, userID) {
 		if isLoginCommand {
-			h.sendMessage(chatID, "❌ Доступ запрещён")
+			h.sendMessage(ctx, chatID, "❌ Доступ запрещён")
 			return true
 		}
 		return false
@@ -96,8 +97,8 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 
 	if hasActiveSession {
 		if isLoginCommand {
-			if err := h.showKeyboard(chatID, userID, h.panelMessageIDFromState(userID)); err != nil {
-				h.sendUIErrorHint(chatID, err)
+			if err := h.showKeyboard(ctx, chatID, userID, h.panelMessageIDFromState(userID)); err != nil {
+				h.sendUIErrorHint(ctx, chatID, err)
 			}
 			return true
 		}
@@ -121,7 +122,7 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 		}
 
 		// Нет сессии — запрашиваем пароль
-		h.sendMessage(chatID, "🔐 Введите пароль для доступа к админ-панели:")
+		h.sendMessage(ctx, chatID, "🔐 Введите пароль для доступа к админ-панели:")
 		h.service.SetState(userID, StateAwaitingPassword, nil)
 		return true
 	}
@@ -157,15 +158,15 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 		h.startChangeRole(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return true
 	case "Изменить баланс":
-		h.startBalanceAdjustMode(chatID, userID, h.panelMessageIDFromState(userID))
+		h.startBalanceAdjustMode(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return true
 	case "Выдать кредит",
 		"Аннулировать кредит", "Создать сокращение", "Удалить сокращение":
-		h.sendMessage(chatID, "🔧 Функция в разработке")
+		h.sendMessage(ctx, chatID, "🔧 Функция в разработке")
 		return true
 	case "Админ", "Панель", "админ", "панель":
-		if err := h.showKeyboard(chatID, userID, h.panelMessageIDFromState(userID)); err != nil {
-			h.sendUIErrorHint(chatID, err)
+		if err := h.showKeyboard(ctx, chatID, userID, h.panelMessageIDFromState(userID)); err != nil {
+			h.sendUIErrorHint(ctx, chatID, err)
 		}
 		return true
 	}
@@ -178,7 +179,7 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 	if q == nil {
 		return false
 	}
-	h.answerCallback(q.ID, "")
+	h.answerCallback(ctx, q.ID, "")
 
 	msg := callbackMessage(q)
 	if msg == nil {
@@ -192,13 +193,13 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 	h.attachPanelMessageID(userID, panelMsgID)
 
 	if !h.service.CanEnterAdmin(ctx, userID) {
-		h.answerCallback(q.ID, "")
+		h.answerCallback(ctx, q.ID, "")
 		return true
 	}
 
 	if !h.service.HasActiveSession(ctx, userID) {
-		h.answerCallback(q.ID, "")
-		h.sendMessage(chatID, "🔐 Введите пароль для доступа к админ-панели:")
+		h.answerCallback(ctx, q.ID, "")
+		h.sendMessage(ctx, chatID, "🔐 Введите пароль для доступа к админ-панели:")
 		h.service.SetState(userID, StateAwaitingPassword, nil)
 		return true
 	}
@@ -215,24 +216,24 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 		h.startChangeRole(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAdminBalanceAdjust:
-		h.startBalanceAdjustMode(chatID, userID, panelMsgID)
+		h.startBalanceAdjustMode(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAdminStub:
-		h.answerCallback(q.ID, "")
+		h.answerCallback(ctx, q.ID, "")
 		return true
 	case cbRoleInputBack:
-		h.handleRoleInputBack(chatID, userID, panelMsgID)
+		h.handleRoleInputBack(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAdminCancelAction:
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAdminUndoLast:
 		h.handleUndoLastRole(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAdminReturnPanel:
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 		return true
 	}
 
@@ -242,11 +243,11 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 	}
 
 	if strings.HasPrefix(data, cbPickerPrefix) {
-		h.handleUserPickerCallback(chatID, userID, panelMsgID, data)
+		h.handleUserPickerCallback(ctx, chatID, userID, panelMsgID, data)
 		return true
 	}
 
-	h.answerCallback(q.ID, "")
+	h.answerCallback(ctx, q.ID, "")
 	return true
 }
 
@@ -254,20 +255,20 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 func (h *Handler) handlePasswordInput(ctx context.Context, chatID int64, userID int64, password string) {
 	err := h.service.VerifyPassword(ctx, userID, password)
 	if err != nil {
-		h.sendMessage(chatID, fmt.Sprintf("❌ %s", err.Error()))
+		h.sendMessage(ctx, chatID, fmt.Sprintf("❌ %s", err.Error()))
 		h.service.ClearState(userID)
 		return
 	}
 
 	h.service.ClearState(userID)
-	h.sendMessage(chatID, "✅ Аутентификация успешна!")
-	if err := h.showKeyboard(chatID, userID, 0); err != nil {
-		h.sendUIErrorHint(chatID, err)
+	h.sendMessage(ctx, chatID, "✅ Аутентификация успешна!")
+	if err := h.showKeyboard(ctx, chatID, userID, 0); err != nil {
+		h.sendUIErrorHint(ctx, chatID, err)
 	}
 }
 
 // showKeyboard отображает клавиатуру админ-панели.
-func (h *Handler) showKeyboard(chatID int64, userID int64, panelMsgID int) error {
+func (h *Handler) showKeyboard(ctx context.Context, chatID int64, userID int64, panelMsgID int) error {
 
 	keyboard := newInlineKeyboardMarkup(
 		newInlineKeyboardRow(
@@ -287,7 +288,7 @@ func (h *Handler) showKeyboard(chatID int64, userID int64, panelMsgID int) error
 		),
 	)
 
-	return h.renderAdminScreen(chatID, userID, panelMsgID, "panel", "✅ Админ-панель открыта", keyboard)
+	return h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "panel", "✅ Админ-панель открыта", keyboard)
 }
 
 // --- Назначить роль (3 шага) ---
@@ -296,42 +297,42 @@ func (h *Handler) showKeyboard(chatID int64, userID int64, panelMsgID int) error
 func (h *Handler) startAssignRole(ctx context.Context, chatID int64, userID int64, panelMsgID int) {
 	users, err := h.service.GetUsersWithoutRole(ctx)
 	if err != nil {
-		h.sendMessage(chatID, fmt.Sprintf("❌ Ошибка получения списка пользователей: %s", err.Error()))
+		h.sendMessage(ctx, chatID, fmt.Sprintf("❌ Ошибка получения списка пользователей: %s", err.Error()))
 		return
 	}
 	if len(users) == 0 {
-		h.sendMessage(chatID, "Все пользователи уже имеют роли")
+		h.sendMessage(ctx, chatID, "Все пользователи уже имеют роли")
 		return
 	}
 
-	h.startUserPicker(chatID, userID, panelMsgID, StateAssignRoleSelect, UserPickerAssignWithoutRole, users)
+	h.startUserPicker(ctx, chatID, userID, panelMsgID, StateAssignRoleSelect, UserPickerAssignWithoutRole, users)
 }
 
 // handleAssignRoleSelect — Шаг 2: пользователь выбрал кнопку.
 func (h *Handler) handleAssignRoleSelect(ctx context.Context, chatID int64, userID int64, text string) {
-	selected, ok := h.handleUserPickerInput(chatID, userID, h.panelMessageIDFromState(userID), StateAssignRoleSelect, text)
+	selected, ok := h.handleUserPickerInput(ctx, chatID, userID, h.panelMessageIDFromState(userID), StateAssignRoleSelect, text)
 	if !ok {
 		return
 	}
 
-	h.renderAssignRoleInput(chatID, userID, selected)
+	h.renderAssignRoleInput(ctx, chatID, userID, selected)
 }
 
 // handleAssignRoleText — Шаг 3: ввод текста роли.
 func (h *Handler) handleAssignRoleText(ctx context.Context, chatID int64, userID int64, text string) {
 	state := h.service.GetState(userID)
 	if state == nil {
-		h.sendMessage(chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
+		h.sendMessage(ctx, chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, h.panelMessageIDFromState(userID))
+		h.showKeyboardSafe(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return
 	}
 
 	roleInput, ok := state.Data.(*RoleInputData)
 	if !ok || roleInput == nil || roleInput.SelectedUser == nil {
-		h.sendMessage(chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
+		h.sendMessage(ctx, chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, h.panelMessageIDFromState(userID))
+		h.showKeyboardSafe(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return
 	}
 
@@ -340,30 +341,30 @@ func (h *Handler) handleAssignRoleText(ctx context.Context, chatID int64, userID
 	if strings.EqualFold(strings.TrimSpace(text), userPickerBackButton) {
 		if roleInput.Picker != nil {
 			h.service.SetState(userID, StateAssignRoleSelect, roleInput.Picker)
-			h.renderUserPickerPage(chatID, userID, h.panelMessageIDFromState(userID), StateAssignRoleSelect)
+			h.renderUserPickerPage(ctx, chatID, userID, h.panelMessageIDFromState(userID), StateAssignRoleSelect)
 			return
 		}
-		h.sendMessage(chatID, "⚠️ Невозможно вернуться назад. Вернитесь в админ-меню.")
+		h.sendMessage(ctx, chatID, "⚠️ Невозможно вернуться назад. Вернитесь в админ-меню.")
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, h.panelMessageIDFromState(userID))
+		h.showKeyboardSafe(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return
 	}
 
 	role := strings.TrimSpace(text)
 	if len([]rune(role)) > 64 {
-		h.sendMessage(chatID, "❌ Роль слишком длинная (максимум 64 символа)")
+		h.sendMessage(ctx, chatID, "❌ Роль слишком длинная (максимум 64 символа)")
 		return
 	}
 
 	if err := h.service.AssignRole(ctx, selected.UserID, role); err != nil {
-		h.sendMessage(chatID, fmt.Sprintf("❌ Ошибка: %s", err.Error()))
+		h.sendMessage(ctx, chatID, fmt.Sprintf("❌ Ошибка: %s", err.Error()))
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, h.panelMessageIDFromState(userID))
+		h.showKeyboardSafe(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return
 	}
 
 	h.setUndoRoleChange(userID, selected.UserID, "", role)
-	h.sendRoleChangeSuccess(chatID, userID, h.panelMessageIDFromState(userID), fmt.Sprintf("✅ Роль назначена: %s → %s", selected.DisplayName(), role))
+	h.sendRoleChangeSuccess(ctx, chatID, userID, h.panelMessageIDFromState(userID), fmt.Sprintf("✅ Роль назначена: %s → %s", selected.DisplayName(), role))
 	h.service.ClearState(userID)
 }
 
@@ -372,40 +373,40 @@ func (h *Handler) handleAssignRoleText(ctx context.Context, chatID int64, userID
 func (h *Handler) startChangeRole(ctx context.Context, chatID int64, userID int64, panelMsgID int) {
 	users, err := h.service.GetUsersWithRole(ctx)
 	if err != nil {
-		h.sendMessage(chatID, fmt.Sprintf("❌ Ошибка получения списка пользователей: %s", err.Error()))
+		h.sendMessage(ctx, chatID, fmt.Sprintf("❌ Ошибка получения списка пользователей: %s", err.Error()))
 		return
 	}
 	if len(users) == 0 {
-		h.sendMessage(chatID, "Нет пользователей с назначенными ролями")
+		h.sendMessage(ctx, chatID, "Нет пользователей с назначенными ролями")
 		return
 	}
 
-	h.startUserPicker(chatID, userID, panelMsgID, StateChangeRoleSelect, UserPickerChangeWithRole, users)
+	h.startUserPicker(ctx, chatID, userID, panelMsgID, StateChangeRoleSelect, UserPickerChangeWithRole, users)
 }
 
 func (h *Handler) handleChangeRoleSelect(ctx context.Context, chatID int64, userID int64, text string) {
-	selected, ok := h.handleUserPickerInput(chatID, userID, h.panelMessageIDFromState(userID), StateChangeRoleSelect, text)
+	selected, ok := h.handleUserPickerInput(ctx, chatID, userID, h.panelMessageIDFromState(userID), StateChangeRoleSelect, text)
 	if !ok {
 		return
 	}
 
-	h.renderChangeRoleInput(chatID, userID, selected)
+	h.renderChangeRoleInput(ctx, chatID, userID, selected)
 }
 
 func (h *Handler) handleChangeRoleText(ctx context.Context, chatID int64, userID int64, text string) {
 	state := h.service.GetState(userID)
 	if state == nil {
-		h.sendMessage(chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
+		h.sendMessage(ctx, chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, h.panelMessageIDFromState(userID))
+		h.showKeyboardSafe(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return
 	}
 
 	roleInput, ok := state.Data.(*RoleInputData)
 	if !ok || roleInput == nil || roleInput.SelectedUser == nil {
-		h.sendMessage(chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
+		h.sendMessage(ctx, chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, h.panelMessageIDFromState(userID))
+		h.showKeyboardSafe(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return
 	}
 
@@ -414,18 +415,18 @@ func (h *Handler) handleChangeRoleText(ctx context.Context, chatID int64, userID
 	if strings.EqualFold(strings.TrimSpace(text), userPickerBackButton) {
 		if roleInput.Picker != nil {
 			h.service.SetState(userID, StateChangeRoleSelect, roleInput.Picker)
-			h.renderUserPickerPage(chatID, userID, h.panelMessageIDFromState(userID), StateChangeRoleSelect)
+			h.renderUserPickerPage(ctx, chatID, userID, h.panelMessageIDFromState(userID), StateChangeRoleSelect)
 			return
 		}
-		h.sendMessage(chatID, "⚠️ Невозможно вернуться назад. Вернитесь в админ-меню.")
+		h.sendMessage(ctx, chatID, "⚠️ Невозможно вернуться назад. Вернитесь в админ-меню.")
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, h.panelMessageIDFromState(userID))
+		h.showKeyboardSafe(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return
 	}
 
 	role := strings.TrimSpace(text)
 	if len([]rune(role)) > 64 {
-		h.sendMessage(chatID, "❌ Роль слишком длинная (максимум 64 символа)")
+		h.sendMessage(ctx, chatID, "❌ Роль слишком длинная (максимум 64 символа)")
 		return
 	}
 
@@ -435,18 +436,18 @@ func (h *Handler) handleChangeRoleText(ctx context.Context, chatID int64, userID
 	}
 
 	if err := h.service.AssignRole(ctx, selected.UserID, role); err != nil {
-		h.sendMessage(chatID, fmt.Sprintf("❌ Ошибка: %s", err.Error()))
+		h.sendMessage(ctx, chatID, fmt.Sprintf("❌ Ошибка: %s", err.Error()))
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, h.panelMessageIDFromState(userID))
+		h.showKeyboardSafe(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return
 	}
 
 	h.setUndoRoleChange(userID, selected.UserID, oldRole, role)
-	h.sendRoleChangeSuccess(chatID, userID, h.panelMessageIDFromState(userID), fmt.Sprintf("✅ Роль изменена: %s → %s", selected.DisplayName(), role))
+	h.sendRoleChangeSuccess(ctx, chatID, userID, h.panelMessageIDFromState(userID), fmt.Sprintf("✅ Роль изменена: %s → %s", selected.DisplayName(), role))
 	h.service.ClearState(userID)
 }
 
-func (h *Handler) startUserPicker(chatID, userID int64, panelMsgID int, stateName string, mode UserPickerMode, users []*members.Member) {
+func (h *Handler) startUserPicker(ctx context.Context, chatID, userID int64, panelMsgID int, stateName string, mode UserPickerMode, users []*members.Member) {
 	data := &UserPickerData{
 		Mode:          mode,
 		UsersSnapshot: users,
@@ -455,23 +456,23 @@ func (h *Handler) startUserPicker(chatID, userID int64, panelMsgID int, stateNam
 	}
 	h.service.SetState(userID, stateName, data)
 	h.attachPanelMessageID(userID, panelMsgID)
-	h.renderUserPickerPage(chatID, userID, panelMsgID, stateName)
+	h.renderUserPickerPage(ctx, chatID, userID, panelMsgID, stateName)
 }
 
-func (h *Handler) renderUserPickerPage(chatID, userID int64, panelMsgID int, stateName string) {
+func (h *Handler) renderUserPickerPage(ctx context.Context, chatID, userID int64, panelMsgID int, stateName string) {
 	state := h.service.GetState(userID)
 	if state == nil || state.State != stateName {
-		h.sendMessage(chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
+		h.sendMessage(ctx, chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 		return
 	}
 
 	data, ok := state.Data.(*UserPickerData)
 	if !ok || data == nil || len(data.UsersSnapshot) == 0 {
-		h.sendMessage(chatID, "⚠️ Список пользователей недоступен. Вернитесь в админ-меню.")
+		h.sendMessage(ctx, chatID, "⚠️ Список пользователей недоступен. Вернитесь в админ-меню.")
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 		return
 	}
 
@@ -531,17 +532,17 @@ func (h *Handler) renderUserPickerPage(chatID, userID int64, panelMsgID int, sta
 		panelMsgID = h.panelMessageIDFromState(userID)
 	}
 	if panelMsgID > 0 {
-		if err := h.renderAdminScreen(chatID, userID, panelMsgID, "picker", caption, keyboard); err != nil {
-			h.sendUIErrorHint(chatID, err)
+		if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "picker", caption, keyboard); err != nil {
+			h.sendUIErrorHint(ctx, chatID, err)
 		}
 		return
 	}
-	if err := h.renderAdminScreen(chatID, userID, 0, "picker", caption, keyboard); err != nil {
-		h.sendUIErrorHint(chatID, err)
+	if err := h.renderAdminScreen(ctx, chatID, userID, 0, "picker", caption, keyboard); err != nil {
+		h.sendUIErrorHint(ctx, chatID, err)
 	}
 }
 
-func (h *Handler) handleUserPickerCallback(chatID, userID int64, panelMsgID int, data string) {
+func (h *Handler) handleUserPickerCallback(ctx context.Context, chatID, userID int64, panelMsgID int, data string) {
 	parts := strings.Split(data, ":")
 	if len(parts) < 4 {
 		return
@@ -557,13 +558,13 @@ func (h *Handler) handleUserPickerCallback(chatID, userID int64, panelMsgID int,
 	switch action {
 	case cbPickerBack:
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 		return
 	case cbPickerPrev:
-		h.handleUserPickerInput(chatID, userID, panelMsgID, stateName, userPickerPrevButton)
+		h.handleUserPickerInput(ctx, chatID, userID, panelMsgID, stateName, userPickerPrevButton)
 		return
 	case cbPickerNext:
-		h.handleUserPickerInput(chatID, userID, panelMsgID, stateName, userPickerNextButton)
+		h.handleUserPickerInput(ctx, chatID, userID, panelMsgID, stateName, userPickerNextButton)
 		return
 	case "page":
 		return
@@ -572,45 +573,45 @@ func (h *Handler) handleUserPickerCallback(chatID, userID int64, panelMsgID int,
 			return
 		}
 		text := "id:" + parts[4]
-		selected, ok := h.handleUserPickerInput(chatID, userID, panelMsgID, stateName, text)
+		selected, ok := h.handleUserPickerInput(ctx, chatID, userID, panelMsgID, stateName, text)
 		if !ok || selected == nil {
 			return
 		}
 		if stateName == StateAssignRoleSelect {
-			h.renderAssignRoleInput(chatID, userID, selected)
+			h.renderAssignRoleInput(ctx, chatID, userID, selected)
 			return
 		}
-		h.renderChangeRoleInput(chatID, userID, selected)
+		h.renderChangeRoleInput(ctx, chatID, userID, selected)
 	}
 }
 
-func (h *Handler) handleUserPickerInput(chatID, userID int64, panelMsgID int, stateName, text string) (*members.Member, bool) {
+func (h *Handler) handleUserPickerInput(ctx context.Context, chatID, userID int64, panelMsgID int, stateName, text string) (*members.Member, bool) {
 	state := h.service.GetState(userID)
 	if state == nil || state.State != stateName {
-		h.sendMessage(chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
+		h.sendMessage(ctx, chatID, "⚠️ Состояние сброшено. Вернитесь в админ-меню.")
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 		return nil, false
 	}
 
 	data, ok := state.Data.(*UserPickerData)
 	if !ok || data == nil || len(data.UsersSnapshot) == 0 {
-		h.sendMessage(chatID, "⚠️ Список пользователей недоступен. Вернитесь в админ-меню.")
+		h.sendMessage(ctx, chatID, "⚠️ Список пользователей недоступен. Вернитесь в админ-меню.")
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 		return nil, false
 	}
 
 	switch text {
 	case userPickerBackButton:
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 		return nil, false
 	case userPickerPrevButton:
 		if data.PageIndex > 0 {
 			data.PageIndex--
 		}
-		h.renderUserPickerPage(chatID, userID, panelMsgID, stateName)
+		h.renderUserPickerPage(ctx, chatID, userID, panelMsgID, stateName)
 		return nil, false
 	case userPickerNextButton:
 		if data.PageSize <= 0 {
@@ -623,7 +624,7 @@ func (h *Handler) handleUserPickerInput(chatID, userID int64, panelMsgID int, st
 		if data.PageIndex < totalPages-1 {
 			data.PageIndex++
 		}
-		h.renderUserPickerPage(chatID, userID, panelMsgID, stateName)
+		h.renderUserPickerPage(ctx, chatID, userID, panelMsgID, stateName)
 		return nil, false
 	}
 
@@ -633,8 +634,8 @@ func (h *Handler) handleUserPickerInput(chatID, userID int64, panelMsgID int, st
 
 	pickedUserID, ok := parseUserIDFromButton(text)
 	if !ok {
-		h.sendMessage(chatID, "❌ Некорректный выбор. Используйте кнопки ниже.")
-		h.renderUserPickerPage(chatID, userID, panelMsgID, stateName)
+		h.sendMessage(ctx, chatID, "❌ Некорректный выбор. Используйте кнопки ниже.")
+		h.renderUserPickerPage(ctx, chatID, userID, panelMsgID, stateName)
 		return nil, false
 	}
 
@@ -645,8 +646,8 @@ func (h *Handler) handleUserPickerInput(chatID, userID int64, panelMsgID int, st
 		}
 	}
 
-	h.sendMessage(chatID, "❌ Пользователь не найден в текущем списке. Выберите снова.")
-	h.renderUserPickerPage(chatID, userID, panelMsgID, stateName)
+	h.sendMessage(ctx, chatID, "❌ Пользователь не найден в текущем списке. Выберите снова.")
+	h.renderUserPickerPage(ctx, chatID, userID, panelMsgID, stateName)
 	return nil, false
 }
 
@@ -724,17 +725,17 @@ func pickerCallbackData(mode UserPickerMode, action string, userID int64) string
 	return fmt.Sprintf("%s%s:%s", cbPickerPrefix, mode, action)
 }
 
-func (h *Handler) answerCallback(callbackID, text string) {
+func (h *Handler) answerCallback(ctx context.Context, callbackID, text string) {
 	if callbackID == "" {
 		return
 	}
-	if err := h.ops.AnswerCallback(context.Background(), callbackID, text, false); err != nil {
+	if err := h.ops.AnswerCallback(ctx, callbackID, text, false); err != nil {
 		log.WithError(err).Debug("ошибка ответа на callback")
 	}
 }
 
-func (h *Handler) sendMessage(chatID int64, text string) {
-	if _, err := h.ops.Send(context.Background(), chatID, text, nil); err != nil {
+func (h *Handler) sendMessage(ctx context.Context, chatID int64, text string) {
+	if _, err := h.ops.Send(ctx, chatID, text, nil); err != nil {
 		log.WithError(err).Error("ошибка отправки сообщения")
 	}
 }
@@ -751,13 +752,13 @@ func (h *Handler) logAdminUIError(adminID, chatID int64, panelMessageID int, scr
 	}).Warn("admin ui operation failed")
 }
 
-func (h *Handler) showKeyboardSafe(chatID, userID int64, panelMsgID int) {
-	if err := h.showKeyboard(chatID, userID, panelMsgID); err != nil {
-		h.sendUIErrorHint(chatID, err)
+func (h *Handler) showKeyboardSafe(ctx context.Context, chatID, userID int64, panelMsgID int) {
+	if err := h.showKeyboard(ctx, chatID, userID, panelMsgID); err != nil {
+		h.sendUIErrorHint(ctx, chatID, err)
 	}
 }
 
-func (h *Handler) sendUIErrorHint(chatID int64, err error) {
+func (h *Handler) sendUIErrorHint(ctx context.Context, chatID int64, err error) {
 	if err == nil {
 		return
 	}
@@ -765,23 +766,23 @@ func (h *Handler) sendUIErrorHint(chatID int64, err error) {
 	if strings.Contains(d, "forbidden") || strings.Contains(d, "blocked by the user") {
 		return
 	}
-	if strings.Contains(d, "message to edit not found") || strings.Contains(d, "message not found") {
-		h.sendMessage(chatID, "⚠️ Панель устарела, попробуйте открыть снова.")
+	if telegram.ShouldFallbackToSendOnEdit(err) {
+		h.sendMessage(ctx, chatID, "⚠️ Панель устарела, попробуйте открыть снова.")
 		return
 	}
-	h.sendMessage(chatID, "⚠️ Не удалось обновить панель. Попробуйте ещё раз.")
+	h.sendMessage(ctx, chatID, "⚠️ Не удалось обновить панель. Попробуйте ещё раз.")
 }
 
-func (h *Handler) renderAssignRoleInput(chatID, userID int64, selected *members.Member) {
+func (h *Handler) renderAssignRoleInput(ctx context.Context, chatID, userID int64, selected *members.Member) {
 	picker := h.pickerDataFromState(userID)
 	roleInput := &RoleInputData{SelectedUser: selected, Picker: picker}
 	h.service.SetState(userID, StateAssignRoleText, roleInput)
 
 	text := fmt.Sprintf("Введите роль для %s (максимум 64 символа):\n%s — назад к выбору участника.", selected.DisplayName(), userPickerBackButton)
-	h.renderRoleInputScreen(chatID, userID, text)
+	h.renderRoleInputScreen(ctx, chatID, userID, text)
 }
 
-func (h *Handler) renderChangeRoleInput(chatID, userID int64, selected *members.Member) {
+func (h *Handler) renderChangeRoleInput(ctx context.Context, chatID, userID int64, selected *members.Member) {
 	picker := h.pickerDataFromState(userID)
 	roleInput := &RoleInputData{SelectedUser: selected, Picker: picker}
 	h.service.SetState(userID, StateChangeRoleText, roleInput)
@@ -791,29 +792,29 @@ func (h *Handler) renderChangeRoleInput(chatID, userID int64, selected *members.
 		currentRole = *selected.Role
 	}
 	text := fmt.Sprintf("Текущая роль: %s\nВведите новую роль:\n%s — назад к выбору участника.", currentRole, userPickerBackButton)
-	h.renderRoleInputScreen(chatID, userID, text)
+	h.renderRoleInputScreen(ctx, chatID, userID, text)
 }
 
-func (h *Handler) renderRoleInputScreen(chatID, userID int64, text string) {
+func (h *Handler) renderRoleInputScreen(ctx context.Context, chatID, userID int64, text string) {
 	panelMsgID := h.panelMessageIDFromState(userID)
 	if panelMsgID > 0 {
-		if err := h.renderAdminScreen(chatID, userID, panelMsgID, "role_input", text, newInlineKeyboardMarkup(
+		if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "role_input", text, newInlineKeyboardMarkup(
 			newInlineKeyboardRow(newInlineKeyboardButtonData(userPickerBackButton, cbRoleInputBack)),
 		)); err != nil {
-			h.sendUIErrorHint(chatID, err)
+			h.sendUIErrorHint(ctx, chatID, err)
 		}
 		return
 	}
-	if err := h.renderAdminScreen(chatID, userID, 0, "role_input", text, newInlineKeyboardMarkup(
+	if err := h.renderAdminScreen(ctx, chatID, userID, 0, "role_input", text, newInlineKeyboardMarkup(
 		newInlineKeyboardRow(newInlineKeyboardButtonData(userPickerBackButton, cbRoleInputBack)),
 	)); err != nil {
-		h.sendUIErrorHint(chatID, err)
+		h.sendUIErrorHint(ctx, chatID, err)
 	}
 }
 
-func (h *Handler) sendRoleChangeSuccess(chatID, userID int64, panelMsgID int, text string) {
-	if err := h.renderAdminScreen(chatID, userID, panelMsgID, "role_change_success", text, h.roleChangeSuccessActionsMarkup()); err != nil {
-		h.sendUIErrorHint(chatID, err)
+func (h *Handler) sendRoleChangeSuccess(ctx context.Context, chatID, userID int64, panelMsgID int, text string) {
+	if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "role_change_success", text, h.roleChangeSuccessActionsMarkup()); err != nil {
+		h.sendUIErrorHint(ctx, chatID, err)
 	}
 }
 
@@ -843,25 +844,25 @@ func (h *Handler) popUndoRoleChange(adminUserID int64) *roleUndoData {
 func (h *Handler) handleUndoLastRole(ctx context.Context, chatID, userID int64, panelMsgID int) {
 	undo := h.popUndoRoleChange(userID)
 	if undo == nil {
-		h.sendMessage(chatID, "Нет действия для отката")
-		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		h.sendMessage(ctx, chatID, "Нет действия для отката")
+		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 		return
 	}
 
 	if err := h.service.AssignRole(ctx, undo.targetUserID, undo.oldRole); err != nil {
-		h.sendMessage(chatID, fmt.Sprintf("❌ Ошибка отката: %s", err.Error()))
+		h.sendMessage(ctx, chatID, fmt.Sprintf("❌ Ошибка отката: %s", err.Error()))
 		return
 	}
 
-	if err := h.renderAdminScreen(chatID, userID, panelMsgID, "role_change_undo", fmt.Sprintf("↩️ Откат выполнен: %d %s → %s", undo.targetUserID, undo.newRole, undo.oldRole), h.roleChangeSuccessActionsMarkup()); err != nil {
-		h.sendUIErrorHint(chatID, err)
+	if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "role_change_undo", fmt.Sprintf("↩️ Откат выполнен: %d %s → %s", undo.targetUserID, undo.newRole, undo.oldRole), h.roleChangeSuccessActionsMarkup()); err != nil {
+		h.sendUIErrorHint(ctx, chatID, err)
 		return
 	}
 	h.service.ClearState(userID)
 }
 
-func (h *Handler) renderAdminScreen(chatID, userID int64, panelMsgID int, screenName, text string, keyboard models.InlineKeyboardMarkup) error {
-	msgID, usedEdit, err := h.ops.EditOrSend(context.Background(), chatID, panelMsgID, text, keyboard)
+func (h *Handler) renderAdminScreen(ctx context.Context, chatID, userID int64, panelMsgID int, screenName, text string, keyboard models.InlineKeyboardMarkup) error {
+	msgID, usedEdit, err := h.ops.EditOrSend(ctx, chatID, panelMsgID, text, keyboard)
 	if err != nil {
 		h.logAdminUIError(userID, chatID, panelMsgID, screenName, map[bool]string{true: "edit", false: "send"}[usedEdit], 0, err.Error(), err)
 		return err
@@ -887,29 +888,40 @@ func (h *Handler) pickerDataFromState(userID int64) *UserPickerData {
 	return data
 }
 
-func (h *Handler) handleRoleInputBack(chatID, userID int64, panelMsgID int) {
+func (h *Handler) handleRoleInputBack(ctx context.Context, chatID, userID int64, panelMsgID int) {
 	state := h.service.GetState(userID)
 	if state == nil {
-		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 		return
 	}
 
 	roleInput, ok := state.Data.(*RoleInputData)
 	if !ok || roleInput == nil || roleInput.Picker == nil {
-		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 		return
 	}
 
 	switch state.State {
 	case StateAssignRoleText:
 		h.service.SetState(userID, StateAssignRoleSelect, roleInput.Picker)
-		h.renderUserPickerPage(chatID, userID, panelMsgID, StateAssignRoleSelect)
+		h.renderUserPickerPage(ctx, chatID, userID, panelMsgID, StateAssignRoleSelect)
 	case StateChangeRoleText:
 		h.service.SetState(userID, StateChangeRoleSelect, roleInput.Picker)
-		h.renderUserPickerPage(chatID, userID, panelMsgID, StateChangeRoleSelect)
+		h.renderUserPickerPage(ctx, chatID, userID, panelMsgID, StateChangeRoleSelect)
 	default:
-		h.showKeyboardSafe(chatID, userID, panelMsgID)
+		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 	}
+}
+
+func (h *Handler) setWizardCtx(ctx context.Context) {
+	h.wizardCtx = ctx
+}
+
+func (h *Handler) currentWizardCtx() context.Context {
+	if h.wizardCtx != nil {
+		return h.wizardCtx
+	}
+	return context.TODO()
 }
 
 func callbackMessage(q *models.CallbackQuery) *models.Message {
