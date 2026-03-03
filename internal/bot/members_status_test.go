@@ -32,9 +32,11 @@ func (f *fakeTGStatus) GetChatMember(chatID int64, userID int64) (member models.
 }
 
 type fakeMembersRepoStatus struct {
-	active  int
-	left    int
-	pending int
+	active            int
+	left              int
+	pending           int
+	ensureSeenCalls   int
+	ensureActiveCalls int
 }
 
 func (f *fakeMembersRepoStatus) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
@@ -56,9 +58,11 @@ func (f *fakeMembersRepoStatus) GetByUsername(ctx context.Context, username stri
 	return &members.Member{}, nil
 }
 func (f *fakeMembersRepoStatus) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	f.ensureSeenCalls++
 	return nil
 }
 func (f *fakeMembersRepoStatus) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	f.ensureActiveCalls++
 	return nil
 }
 func (f *fakeMembersRepoStatus) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {
@@ -133,5 +137,32 @@ func TestHandleUpdate_AdminChatIgnoresNonAdminCommands(t *testing.T) {
 
 	if len(tg.sent) != 0 {
 		t.Fatalf("expected no outgoing messages for non-admin command in admin chat, got %d", len(tg.sent))
+	}
+	if repo.ensureSeenCalls != 0 || repo.ensureActiveCalls != 0 {
+		t.Fatalf("expected no member writes in admin chat, got ensureSeen=%d ensureActive=%d", repo.ensureSeenCalls, repo.ensureActiveCalls)
+	}
+}
+
+func TestHandleUpdate_AdminChatIgnoresPlainMessages(t *testing.T) {
+	tg := &fakeTGStatus{}
+	repo := &fakeMembersRepoStatus{}
+	memberSvc := members.NewService(repo)
+	b := &Bot{
+		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		tg:            tg,
+		memberService: memberSvc,
+		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg),
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+	}
+
+	upd := models.Update{Message: &models.Message{Chat: models.Chat{ID: -2002, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 42, Username: "u"}, Text: "hello admin chat"}}
+	b.handleUpdate(context.Background(), upd)
+
+	if len(tg.sent) != 0 {
+		t.Fatalf("expected no outgoing messages for plain admin-chat message, got %d", len(tg.sent))
+	}
+	if repo.ensureSeenCalls != 0 || repo.ensureActiveCalls != 0 {
+		t.Fatalf("expected no member writes in admin chat, got ensureSeen=%d ensureActive=%d", repo.ensureSeenCalls, repo.ensureActiveCalls)
 	}
 }
