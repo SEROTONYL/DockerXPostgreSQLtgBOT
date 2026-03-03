@@ -34,6 +34,7 @@ type purgeMetricsProvider interface {
 // Bot — главная структура бота, объединяющая все компоненты.
 type Bot struct {
 	api   *botapi.Bot
+	ops   *telegram.Ops
 	tgOps *telegram.Ops
 	cfg   *config.Config
 
@@ -63,7 +64,7 @@ type Bot struct {
 // New создаёт новый экземпляр бота со всеми зависимостями.
 func New(
 	api *botapi.Bot,
-	tgOps *telegram.Ops,
+	ops *telegram.Ops,
 	cfg *config.Config,
 	memberService *members.Service,
 	memberHandler *members.Handler,
@@ -81,7 +82,8 @@ func New(
 ) *Bot {
 	b := &Bot{
 		api:            api,
-		tgOps:          tgOps,
+		ops:            ops,
+		tgOps:          ops,
 		cfg:            cfg,
 		chatFilter:     chatFilter,
 		rateLimiter:    middleware.NewRateLimiter(cfg.RateLimitRequests, cfg.RateLimitWindow),
@@ -392,18 +394,26 @@ func (b *Bot) handleNewMembers(ctx context.Context, newMembers []models.User) {
 
 // sendMessage — утилита для отправки сообщений.
 func (b *Bot) sendMessage(ctx context.Context, chatID int64, text string) {
-	if _, err := b.tgOps.Send(ctx, chatID, text, nil); err != nil {
-		log.WithError(err).WithField("chat_id", chatID).Error("Ошибка отправки сообщения")
+	ops := b.ops
+	if ops == nil {
+		ops = b.tgOps
 	}
+	if ops == nil {
+		return
+	}
+	_, _ = ops.Send(ctx, chatID, text, nil)
 }
 
 // SendMessageToUser отправляет сообщение пользователю (для напоминаний).
 func (b *Bot) SendMessageToUser(userID int64, text string) {
-	if _, err := b.tgOps.Send(context.Background(), userID, text, nil); err != nil {
-		log.WithError(err).WithField("user_id", userID).Debug("Не удалось отправить сообщение")
-	} else {
-		log.WithField("user_id", userID).Debug("message sent")
+	ops := b.ops
+	if ops == nil {
+		ops = b.tgOps
 	}
+	if ops == nil {
+		return
+	}
+	_, _ = ops.Send(context.Background(), userID, text, nil)
 }
 
 type membershipAction string
