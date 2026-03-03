@@ -22,6 +22,11 @@ type memberRepository interface {
 	PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error)
 	GetByUserID(ctx context.Context, userID int64) (*Member, error)
 	GetByUsername(ctx context.Context, username string) (*Member, error)
+	EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error
+	EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error
+	TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error
+	CountMembersByStatus(ctx context.Context) (active int, left int, err error)
+	CountPendingPurge(ctx context.Context, now time.Time) (int, error)
 }
 
 // Service управляет участниками чата.
@@ -60,6 +65,39 @@ func (s *Service) MarkMemberLeft(ctx context.Context, userID int64, leftAt, dele
 func (s *Service) MarkMemberLeftNow(ctx context.Context, userID int64) error {
 	leftAt := time.Now().UTC()
 	return s.MarkMemberLeft(ctx, userID, leftAt, leftAt.Add(leftGracePeriod))
+}
+
+// EnsureMemberSeen обновляет известные данные/last_seen только для уже существующего участника.
+// Строгий режим: если записи нет (например, DM "из воздуха"), создаём ничего и возвращаем nil.
+func (s *Service) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	if err := s.repo.EnsureMemberSeen(ctx, userID, username, name, seenAt.UTC()); err != nil {
+		return fmt.Errorf("ошибка ensure member seen: %w", err)
+	}
+	return nil
+}
+
+// EnsureActiveMemberSeen обновляет/создаёт участника как active (для апдейтов из основной группы).
+func (s *Service) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	if err := s.repo.EnsureActiveMemberSeen(ctx, userID, username, name, seenAt.UTC()); err != nil {
+		return fmt.Errorf("ошибка ensure active member seen: %w", err)
+	}
+	return nil
+}
+
+// TouchLastSeen обновляет только last_seen_at с SQL-троттлингом и безопасен при 0 affected rows.
+func (s *Service) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
+	if err := s.repo.TouchLastSeen(ctx, userID, seenAt.UTC()); err != nil {
+		return fmt.Errorf("ошибка touch last seen: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {
+	return s.repo.CountMembersByStatus(ctx)
+}
+
+func (s *Service) CountPendingPurge(ctx context.Context, now time.Time) (int, error) {
+	return s.repo.CountPendingPurge(ctx, now)
 }
 
 // IsActiveMember проверяет активность участника.

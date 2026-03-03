@@ -67,3 +67,55 @@ func TestRunPurgeTick_StopsAtMaxIterations(t *testing.T) {
 		t.Fatalf("calls = %d, want %d", purger.calls, purgeMaxIterations)
 	}
 }
+
+type fakeMemberPurgerErr struct {
+	err error
+}
+
+func (f *fakeMemberPurgerErr) PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error) {
+	return 0, f.err
+}
+
+func TestRunPurgeTick_UpdatesMetricsOnSuccess(t *testing.T) {
+	now := time.Now().UTC()
+	purger := &fakeMemberPurger{returns: []int{3, 2, 0}}
+	s := &Scheduler{memberService: purger}
+
+	s.runPurgeTick(context.Background(), now)
+	m := s.GetPurgeMetrics()
+
+	if !m.LastRunAt.Equal(now) {
+		t.Fatalf("LastRunAt = %v, want %v", m.LastRunAt, now)
+	}
+	if m.LastRunDeleted != 5 {
+		t.Fatalf("LastRunDeleted = %d, want 5", m.LastRunDeleted)
+	}
+	if m.TotalDeleted != 5 {
+		t.Fatalf("TotalDeleted = %d, want 5", m.TotalDeleted)
+	}
+	if m.LastError != "" {
+		t.Fatalf("LastError = %q, want empty", m.LastError)
+	}
+}
+
+func TestRunPurgeTick_StoresLastError(t *testing.T) {
+	now := time.Now().UTC()
+	purger := &fakeMemberPurgerErr{err: context.Canceled}
+	s := &Scheduler{memberService: purger}
+
+	s.runPurgeTick(context.Background(), now)
+	m := s.GetPurgeMetrics()
+
+	if !m.LastRunAt.Equal(now) {
+		t.Fatalf("LastRunAt = %v, want %v", m.LastRunAt, now)
+	}
+	if m.LastRunDeleted != 0 {
+		t.Fatalf("LastRunDeleted = %d, want 0", m.LastRunDeleted)
+	}
+	if m.TotalDeleted != 0 {
+		t.Fatalf("TotalDeleted = %d, want 0", m.TotalDeleted)
+	}
+	if m.LastError == "" {
+		t.Fatal("LastError expected non-empty")
+	}
+}

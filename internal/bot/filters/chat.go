@@ -12,13 +12,15 @@ import (
 
 type ChatFilter struct {
 	floodChatID   int64
+	adminChatID   int64
 	memberService *members.Service
 	bot           telegram.Client
 }
 
-func NewChatFilter(floodChatID int64, memberService *members.Service, bot telegram.Client) *ChatFilter {
+func NewChatFilter(floodChatID int64, adminChatID int64, memberService *members.Service, bot telegram.Client) *ChatFilter {
 	return &ChatFilter{
 		floodChatID:   floodChatID,
+		adminChatID:   adminChatID,
 		memberService: memberService,
 		bot:           bot,
 	}
@@ -61,7 +63,14 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 		"flood_chat_id": f.floodChatID,
 	})
 
-	// 1) Разрешённый чат
+	// 1) Разрешённые чаты
+
+	// 1) Отдельный админ-чат всегда разрешён (служебный контур).
+	if chatID == f.adminChatID {
+		logger.Debug("allow: admin chat")
+		return true
+	}
+
 	if chatID == f.floodChatID {
 		logger.Debug("allow: flood chat")
 		return true

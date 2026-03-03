@@ -20,6 +20,18 @@ type fakeRepo struct {
 	isActiveResult      bool
 	purgeCalled         bool
 	purgeDeleted        int
+	ensureSeenCalled    bool
+	ensureSeenUserID    int64
+	ensureSeenUsername  string
+	ensureSeenName      string
+	ensureSeenAt        time.Time
+	ensureActiveCalled  bool
+	touchCalled         bool
+	touchUserID         int64
+	touchSeenAt         time.Time
+	countActive         int
+	countLeft           int
+	pendingPurge        int
 }
 
 func (f *fakeRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
@@ -52,6 +64,34 @@ func (f *fakeRepo) PurgeExpiredLeftMembers(ctx context.Context, now time.Time, l
 func (f *fakeRepo) GetByUserID(ctx context.Context, userID int64) (*Member, error) { return nil, nil }
 func (f *fakeRepo) GetByUsername(ctx context.Context, username string) (*Member, error) {
 	return nil, nil
+}
+func (f *fakeRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	f.ensureSeenCalled = true
+	f.ensureSeenUserID = userID
+	f.ensureSeenUsername = username
+	f.ensureSeenName = name
+	f.ensureSeenAt = seenAt
+	return nil
+}
+func (f *fakeRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	f.ensureActiveCalled = true
+	f.ensureSeenUserID = userID
+	f.ensureSeenUsername = username
+	f.ensureSeenName = name
+	f.ensureSeenAt = seenAt
+	return nil
+}
+func (f *fakeRepo) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
+	f.touchCalled = true
+	f.touchUserID = userID
+	f.touchSeenAt = seenAt
+	return nil
+}
+func (f *fakeRepo) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {
+	return f.countActive, f.countLeft, nil
+}
+func (f *fakeRepo) CountPendingPurge(ctx context.Context, now time.Time) (int, error) {
+	return f.pendingPurge, nil
 }
 
 func TestServiceUpsertActiveMember(t *testing.T) {
@@ -123,5 +163,70 @@ func TestServicePurgeExpiredLeftMembers(t *testing.T) {
 	}
 	if !repo.purgeCalled {
 		t.Fatal("expected PurgeExpiredLeftMembers to be called")
+	}
+}
+
+func TestServiceEnsureMemberSeen(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := svc.EnsureMemberSeen(context.Background(), 12, "john", "John", now); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !repo.ensureSeenCalled || repo.ensureSeenUserID != 12 || repo.ensureSeenUsername != "john" || repo.ensureSeenName != "John" || !repo.ensureSeenAt.Equal(now) {
+		t.Fatalf("unexpected ensure seen args: %+v", repo)
+	}
+}
+
+func TestServiceEnsureActiveMemberSeen(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := svc.EnsureActiveMemberSeen(context.Background(), 77, "neo", "Neo", now); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !repo.ensureActiveCalled || repo.ensureSeenUserID != 77 || !repo.ensureSeenAt.Equal(now) {
+		t.Fatalf("unexpected ensure active args: %+v", repo)
+	}
+}
+
+func TestServiceCountMembersByStatus(t *testing.T) {
+	repo := &fakeRepo{countActive: 10, countLeft: 3}
+	svc := NewService(repo)
+	active, left, err := svc.CountMembersByStatus(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if active != 10 || left != 3 {
+		t.Fatalf("unexpected counts: active=%d left=%d", active, left)
+	}
+}
+
+func TestServiceCountPendingPurge(t *testing.T) {
+	repo := &fakeRepo{pendingPurge: 7}
+	svc := NewService(repo)
+	pending, err := svc.CountPendingPurge(context.Background(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pending != 7 {
+		t.Fatalf("pending=%d, want 7", pending)
+	}
+}
+
+func TestServiceTouchLastSeen(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := svc.TouchLastSeen(context.Background(), 88, now); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !repo.touchCalled || repo.touchUserID != 88 || !repo.touchSeenAt.Equal(now) {
+		t.Fatalf("unexpected touch args: %+v", repo)
 	}
 }
