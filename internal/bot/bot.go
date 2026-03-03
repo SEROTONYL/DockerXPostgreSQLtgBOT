@@ -311,7 +311,13 @@ func (b *Bot) registerCommands() {
 	economy.RegisterCommands(b.cmdRouter, b.economyHandler, b.cfg)
 	karma.RegisterCommands(b.cmdRouter, b.karmaHandler, b.cfg)
 	streak.RegisterCommands(b.cmdRouter, b.streakHandler, b.cfg)
-	casino.RegisterCommands(b.cmdRouter, b.casinoHandler, b.cfg)
+	if b.cfg.FeatureCasinoEnabled {
+		casino.RegisterCommands(b.cmdRouter, b.casinoHandler, b.cfg)
+	} else {
+		b.cmdRouter.Register("слоты", func(ctx context.Context, c commands.Context, args []string) {
+			b.sendMessage(c.ChatID, "🎰 Казино временно отключено")
+		})
+	}
 }
 
 func (b *Bot) routeCommand(ctx context.Context, uc UpdateContext, cmd string, args []string) {
