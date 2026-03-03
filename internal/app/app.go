@@ -103,6 +103,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 
 	// === 8. Планировщик задач ===
 	scheduler := jobs.NewScheduler(streakService, memberService, b.SendMessageToUser)
+	b.SetPurgeMetricsProvider(scheduler)
 
 	return &App{
 		Bot:       b,

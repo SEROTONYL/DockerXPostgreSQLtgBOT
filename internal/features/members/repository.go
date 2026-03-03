@@ -34,20 +34,7 @@ func (r *Repository) Create(ctx context.Context, m *Member) error {
 
 // UpsertActiveMember вставляет/обновляет участника и помечает его как active.
 func (r *Repository) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
-	query := `
-		INSERT INTO members (user_id, username, first_name, status, joined_at, left_at, delete_after, last_seen_at, last_known_name)
-		VALUES ($1, $2, $3, $4, $5, NULL, NULL, NOW(), $3)
-		ON CONFLICT (user_id) DO UPDATE
-		SET username = EXCLUDED.username,
-		    first_name = EXCLUDED.first_name,
-		    status = $4,
-		    joined_at = COALESCE(members.joined_at, EXCLUDED.joined_at),
-		    left_at = NULL,
-		    delete_after = NULL,
-		    last_seen_at = NOW(),
-		    last_known_name = EXCLUDED.last_known_name,
-		    updated_at = NOW()
-	`
+	query := upsertActiveMemberQuery()
 	if _, err := r.db.Exec(ctx, query, userID, username, name, StatusActive, joinedAt.UTC()); err != nil {
 		return fmt.Errorf("ошибка upsert активного участника: %w", err)
 	}
@@ -82,13 +69,7 @@ func (r *Repository) IsActiveMember(ctx context.Context, userID int64) (bool, er
 
 // ListActiveMembers возвращает список активных участников.
 func (r *Repository) ListActiveMembers(ctx context.Context) ([]*Member, error) {
-	query := `
-		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
-		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, created_at, updated_at
-		FROM members
-		WHERE status = $1
-		ORDER BY first_name
-	`
+	query := listActiveMembersQuery()
 	return r.queryMembers(ctx, query, StatusActive)
 }
 
@@ -148,6 +129,9 @@ func (r *Repository) PurgeExpiredLeftMembers(ctx context.Context, now time.Time,
 }
 
 // GetByUserID: если не найден — ошибка с pgx.ErrNoRows (errors.Is(err, pgx.ErrNoRows) == true)
+// TODO(admin-lookup): при появлении отдельного административного lookup-а
+// сделать явный метод/флаг для включения left-пользователей, не смешивая его
+// с обычными пользовательскими сценариями.
 func (r *Repository) GetByUserID(ctx context.Context, userID int64) (*Member, error) {
 	query := `
 		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
@@ -172,12 +156,7 @@ func (r *Repository) GetByUserID(ctx context.Context, userID int64) (*Member, er
 
 // GetByUsername: если не найден — ошибка с pgx.ErrNoRows
 func (r *Repository) GetByUsername(ctx context.Context, username string) (*Member, error) {
-	query := `
-		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
-		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, created_at, updated_at
-		FROM members
-		WHERE LOWER(username) = LOWER($1) AND status = $2
-	`
+	query := getByUsernameQuery()
 	var m Member
 	err := r.db.QueryRow(ctx, query, username, StatusActive).Scan(
 		&m.ID, &m.UserID, &m.Username, &m.FirstName, &m.LastName,
@@ -193,6 +172,23 @@ func (r *Repository) GetByUsername(ctx context.Context, username string) (*Membe
 	return &m, nil
 }
 
+func (r *Repository) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {
+	query := countMembersByStatusQuery()
+	if err := r.db.QueryRow(ctx, query, StatusActive, StatusLeft).Scan(&active, &left); err != nil {
+		return 0, 0, fmt.Errorf("ошибка подсчёта участников по статусам: %w", err)
+	}
+	return active, left, nil
+}
+
+func (r *Repository) CountPendingPurge(ctx context.Context, now time.Time) (int, error) {
+	query := countPendingPurgeQuery()
+	var pending int
+	if err := r.db.QueryRow(ctx, query, StatusLeft, now.UTC()).Scan(&pending); err != nil {
+		return 0, fmt.Errorf("ошибка подсчёта pending purge: %w", err)
+	}
+	return pending, nil
+}
+
 func (r *Repository) Exists(ctx context.Context, userID int64) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM members WHERE user_id = $1 AND status = $2)`
 	var exists bool
@@ -200,6 +196,14 @@ func (r *Repository) Exists(ctx context.Context, userID int64) (bool, error) {
 		return false, fmt.Errorf("ошибка проверки существования: %w", err)
 	}
 	return exists, nil
+}
+
+func (r *Repository) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
+	query := touchLastSeenQuery()
+	if _, err := r.db.Exec(ctx, query, userID, seenAt.UTC()); err != nil {
+		return fmt.Errorf("ошибка обновления last_seen_at: %w", err)
+	}
+	return nil
 }
 
 func (r *Repository) UpdateInfo(ctx context.Context, userID int64, info UpdateInfo) error {
@@ -231,25 +235,96 @@ func (r *Repository) UpdateAdminFlag(ctx context.Context, userID int64, isAdmin 
 }
 
 func (r *Repository) GetUsersWithoutRole(ctx context.Context) ([]*Member, error) {
-	query := `
+	query := usersWithoutRoleQuery()
+	return r.queryMembers(ctx, query, StatusActive)
+}
+
+func (r *Repository) GetUsersWithRole(ctx context.Context) ([]*Member, error) {
+	query := usersWithRoleQuery()
+	return r.queryMembers(ctx, query, StatusActive)
+}
+
+func upsertActiveMemberQuery() string {
+	return `
+		INSERT INTO members (user_id, username, first_name, status, joined_at, left_at, delete_after, last_seen_at, last_known_name)
+		VALUES ($1, $2, $3, $4, $5, NULL, NULL, NOW(), $3)
+		ON CONFLICT (user_id) DO UPDATE
+		SET username = EXCLUDED.username,
+		    first_name = EXCLUDED.first_name,
+		    status = $4,
+		    joined_at = COALESCE(members.joined_at, EXCLUDED.joined_at),
+		    left_at = NULL,
+		    delete_after = NULL,
+		    last_seen_at = NOW(),
+		    last_known_name = EXCLUDED.last_known_name,
+		    updated_at = NOW()
+	`
+}
+
+func listActiveMembersQuery() string {
+	return `
+		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
+		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, created_at, updated_at
+		FROM members
+		WHERE status = $1
+		ORDER BY first_name
+	`
+}
+
+func getByUsernameQuery() string {
+	return `
+		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
+		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, created_at, updated_at
+		FROM members
+		WHERE LOWER(username) = LOWER($1) AND status = $2
+	`
+}
+
+func usersWithoutRoleQuery() string {
+	return `
 		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
 		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, created_at, updated_at
 		FROM members
 		WHERE role IS NULL AND is_banned = FALSE AND status = $1
 		ORDER BY first_name
 	`
-	return r.queryMembers(ctx, query, StatusActive)
 }
 
-func (r *Repository) GetUsersWithRole(ctx context.Context) ([]*Member, error) {
-	query := `
+func usersWithRoleQuery() string {
+	return `
 		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
 		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, created_at, updated_at
 		FROM members
 		WHERE role IS NOT NULL AND is_banned = FALSE AND status = $1
 		ORDER BY first_name
 	`
-	return r.queryMembers(ctx, query, StatusActive)
+}
+
+func countMembersByStatusQuery() string {
+	return `
+		SELECT
+			COUNT(*) FILTER (WHERE status = $1) AS active_count,
+			COUNT(*) FILTER (WHERE status = $2) AS left_count
+		FROM members
+	`
+}
+
+func countPendingPurgeQuery() string {
+	return `
+		SELECT COUNT(*)
+		FROM members
+		WHERE status = $1 AND delete_after IS NOT NULL AND delete_after <= $2
+	`
+}
+
+func touchLastSeenQuery() string {
+	return `
+		UPDATE members
+		SET last_seen_at = $2,
+		    updated_at = NOW()
+		WHERE user_id = $1
+		  AND (last_seen_at IS NULL OR last_seen_at < $2 - INTERVAL '5 minutes')
+	`
 }
 
 func purgeSelectionQuery() string {

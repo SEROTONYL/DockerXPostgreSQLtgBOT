@@ -6,6 +6,7 @@ func TestConfigValidate_BotPoolBounds(t *testing.T) {
 	cfg := &Config{
 		FloodChatID:             1,
 		MainGroupID:             2,
+		AdminChatID:             3,
 		BotMaxInflight:          1,
 		BotUpdateTimeoutSeconds: 1,
 		BotWorkers:              4,
@@ -23,6 +24,7 @@ func TestConfigValidate_BotWorkersOutOfRange(t *testing.T) {
 	cfg := &Config{
 		FloodChatID:             1,
 		MainGroupID:             2,
+		AdminChatID:             3,
 		BotMaxInflight:          1,
 		BotUpdateTimeoutSeconds: 1,
 		BotWorkers:              0,
@@ -40,6 +42,7 @@ func TestConfigValidate_BotUpdateQueueOutOfRange(t *testing.T) {
 	cfg := &Config{
 		FloodChatID:             1,
 		MainGroupID:             2,
+		AdminChatID:             3,
 		BotMaxInflight:          1,
 		BotUpdateTimeoutSeconds: 1,
 		BotWorkers:              4,
@@ -67,5 +70,23 @@ func TestConfigValidate_MainGroupRequired(t *testing.T) {
 
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() expected error for MAIN_GROUP_ID == 0")
+	}
+}
+
+func TestConfigValidate_AdminChatRequired(t *testing.T) {
+	cfg := &Config{
+		FloodChatID:             1,
+		MainGroupID:             2,
+		AdminChatID:             0,
+		BotMaxInflight:          1,
+		BotUpdateTimeoutSeconds: 1,
+		BotWorkers:              4,
+		BotUpdateQueue:          100,
+		DBMaxConns:              10,
+		DBMinConns:              1,
+	}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() expected error for ADMIN_CHAT_ID == 0")
 	}
 }

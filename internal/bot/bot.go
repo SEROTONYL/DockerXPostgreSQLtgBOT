@@ -4,6 +4,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -20,8 +21,13 @@ import (
 	"serotonyl.ru/telegram-bot/internal/features/karma"
 	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/features/streak"
+	"serotonyl.ru/telegram-bot/internal/jobs"
 	"serotonyl.ru/telegram-bot/internal/telegram"
 )
+
+type purgeMetricsProvider interface {
+	GetPurgeMetrics() jobs.PurgeMetrics
+}
 
 // Bot — главная структура бота, объединяющая все компоненты.
 type Bot struct {
@@ -47,6 +53,8 @@ type Bot struct {
 	adminService   *admin.Service
 
 	parser *CommandParser
+
+	purgeMetricsProvider purgeMetricsProvider
 }
 
 // New создаёт новый экземпляр бота со всеми зависимостями.
@@ -90,6 +98,11 @@ func New(
 	}
 }
 
+// SetPurgeMetricsProvider подключает источник метрик purge для служебных команд.
+func (b *Bot) SetPurgeMetricsProvider(provider purgeMetricsProvider) {
+	b.purgeMetricsProvider = provider
+}
+
 // Start запускает polling обновлений от Telegram.
 func (b *Bot) Start(ctx context.Context) {
 	pool := newUpdatePool(b.cfg.BotWorkers, b.cfg.BotUpdateQueue, b.handleUpdate)
@@ -115,21 +128,29 @@ func (b *Bot) Start(ctx context.Context) {
 func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 	defer middleware.RecoverFromPanic()
 
-	if b.handleMembershipUpdate(ctx, update) {
+	uc := BuildUpdateContext(update, time.Now().UTC(), b.cfg)
+
+	if b.shouldTouchLastSeen(uc) {
+		if err := b.memberService.TouchLastSeen(ctx, uc.UserID, uc.Now); err != nil {
+			log.WithError(err).WithField("user_id", uc.UserID).Debug("TouchLastSeen failed")
+		}
+	}
+
+	if b.handleMembershipUpdate(ctx, uc) {
 		return
 	}
 
-	if update.CallbackQuery != nil {
-		if b.adminHandler.HandleAdminCallback(ctx, update.CallbackQuery) {
+	if uc.Callback != nil {
+		if b.adminHandler.HandleAdminCallback(ctx, uc.Callback) {
 			return
 		}
 	}
 
-	if update.Message == nil || update.Message.Text == "" {
+	if uc.Message == nil || uc.Message.Text == "" {
 		return
 	}
 
-	message := update.Message
+	message := uc.Message
 	middleware.LogMessage(message)
 
 	if !b.chatFilter.CheckAccess(ctx, message) {
@@ -150,7 +171,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 		log.WithError(err).WithField("user_id", userID).Warn("EnsureMember failed")
 	}
 
-	if message.Chat.Type == models.ChatTypePrivate {
+	if uc.IsPrivate {
 		handled := b.adminHandler.HandleAdminMessage(ctx, chatID, userID, message.Text)
 		if handled {
 			return
@@ -173,7 +194,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 	}).Debug("parsed command")
 
 	if isCommand {
-		b.routeCommand(ctx, chatID, userID, cmd, args)
+		b.routeCommand(ctx, uc, cmd, args)
 		return
 	} else if chatID == b.cfg.FloodChatID {
 		if b.cfg.FeatureStreaksEnabled {
@@ -182,8 +203,8 @@ func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 	}
 }
 
-func (b *Bot) handleMembershipUpdate(ctx context.Context, update models.Update) bool {
-	cmu := extractChatMemberUpdate(update)
+func (b *Bot) handleMembershipUpdate(ctx context.Context, uc UpdateContext) bool {
+	cmu := uc.ChatMember
 	if cmu == nil {
 		return false
 	}
@@ -200,7 +221,7 @@ func (b *Bot) handleMembershipUpdate(ctx context.Context, update models.Update) 
 	}
 
 	name := buildDisplayName(user.FirstName, user.LastName)
-	now := time.Now().UTC()
+	now := uc.Now
 
 	switch classifyMemberStatus(newStatus) {
 	case membershipActionActive:
@@ -226,12 +247,17 @@ func (b *Bot) handleMembershipUpdate(ctx context.Context, update models.Update) 
 }
 
 // routeCommand маршрутизирует команду к нужному обработчику.
-func (b *Bot) routeCommand(ctx context.Context, chatID, userID int64, cmd string, args []string) {
+func (b *Bot) routeCommand(ctx context.Context, uc UpdateContext, cmd string, args []string) {
+	chatID := uc.ChatID
+	userID := uc.UserID
 	log.WithFields(log.Fields{
 		"cmd":  cmd,
 		"args": args,
 	}).Debug("routing command")
 	switch cmd {
+	case "members_status", "members_stats":
+		b.handleMembersStatusCommand(ctx, uc)
+		return
 	case "start", "help":
 		b.sendMessage(chatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
 
@@ -270,6 +296,39 @@ func (b *Bot) routeCommand(ctx context.Context, chatID, userID int64, cmd string
 			b.casinoHandler.HandleSlotStats(ctx, chatID, userID)
 		}
 	}
+}
+
+func (b *Bot) handleMembersStatusCommand(ctx context.Context, uc UpdateContext) {
+	if !uc.IsAdminChat {
+		return
+	}
+
+	active, left, err := b.memberService.CountMembersByStatus(ctx)
+	if err != nil {
+		log.WithError(err).Warn("members status: count by status failed")
+		return
+	}
+	pending, err := b.memberService.CountPendingPurge(ctx, uc.Now)
+	if err != nil {
+		log.WithError(err).Warn("members status: pending purge count failed")
+		return
+	}
+
+	metrics := jobs.PurgeMetrics{}
+	if b.purgeMetricsProvider != nil {
+		metrics = b.purgeMetricsProvider.GetPurgeMetrics()
+	}
+	lastRun := "never"
+	if !metrics.LastRunAt.IsZero() {
+		lastRun = metrics.LastRunAt.Format(time.RFC3339)
+	}
+	lastError := metrics.LastError
+	if strings.TrimSpace(lastError) == "" {
+		lastError = "none"
+	}
+
+	text := fmt.Sprintf("Members:\n- Active: %d\n- Left (grace): %d\n- Pending purge: %d\n\nPurge:\n- Last run: %s\n- Last deleted: %d\n- Total deleted: %d\n- Last error: %s", active, left, pending, lastRun, metrics.LastRunDeleted, metrics.TotalDeleted, lastError)
+	b.sendMessage(uc.ChatID, text)
 }
 
 // handleNewMembers обрабатывает вступление новых участников.

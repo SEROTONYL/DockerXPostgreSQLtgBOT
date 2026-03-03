@@ -22,6 +22,9 @@ type memberRepository interface {
 	PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error)
 	GetByUserID(ctx context.Context, userID int64) (*Member, error)
 	GetByUsername(ctx context.Context, username string) (*Member, error)
+	TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error
+	CountMembersByStatus(ctx context.Context) (active int, left int, err error)
+	CountPendingPurge(ctx context.Context, now time.Time) (int, error)
 }
 
 // Service управляет участниками чата.
@@ -60,6 +63,22 @@ func (s *Service) MarkMemberLeft(ctx context.Context, userID int64, leftAt, dele
 func (s *Service) MarkMemberLeftNow(ctx context.Context, userID int64) error {
 	leftAt := time.Now().UTC()
 	return s.MarkMemberLeft(ctx, userID, leftAt, leftAt.Add(leftGracePeriod))
+}
+
+// TouchLastSeen обновляет last_seen_at не чаще порога троттлинга.
+func (s *Service) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
+	if err := s.repo.TouchLastSeen(ctx, userID, seenAt.UTC()); err != nil {
+		return fmt.Errorf("ошибка touch last seen: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {
+	return s.repo.CountMembersByStatus(ctx)
+}
+
+func (s *Service) CountPendingPurge(ctx context.Context, now time.Time) (int, error) {
+	return s.repo.CountPendingPurge(ctx, now)
 }
 
 // IsActiveMember проверяет активность участника.

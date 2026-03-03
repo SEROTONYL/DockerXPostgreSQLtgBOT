@@ -31,6 +31,48 @@ type memberPurger interface {
 	PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error)
 }
 
+type PurgeMetrics struct {
+	TotalDeleted   int64
+	LastRunAt      time.Time
+	LastRunDeleted int
+	LastError      string
+}
+
+type purgeMetricsStore struct {
+	mu sync.RWMutex
+	v  PurgeMetrics
+}
+
+func (s *purgeMetricsStore) snapshot() PurgeMetrics {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.v
+}
+
+func (s *purgeMetricsStore) markRun(now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.v.LastRunAt = now
+	s.v.LastRunDeleted = 0
+	s.v.LastError = ""
+}
+
+func (s *purgeMetricsStore) markResult(deleted int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.v.LastRunDeleted = deleted
+	s.v.TotalDeleted += int64(deleted)
+}
+
+func (s *purgeMetricsStore) markError(err error) {
+	if err == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.v.LastError = err.Error()
+}
+
 // Scheduler manages background tasks.
 type Scheduler struct {
 	cron          *cron.Cron
@@ -40,6 +82,7 @@ type Scheduler struct {
 
 	purgeCancel context.CancelFunc
 	purgeWG     sync.WaitGroup
+	purgeState  purgeMetricsStore
 }
 
 // NewScheduler creates a scheduler configured for Europe/Moscow.
@@ -103,10 +146,13 @@ func (s *Scheduler) runPurgeWorker(ctx context.Context) {
 }
 
 func (s *Scheduler) runPurgeTick(ctx context.Context, now time.Time) {
+	s.purgeState.markRun(now)
 	totalDeleted := 0
+	var runErr error
 	for i := 0; i < purgeMaxIterations; i++ {
 		deleted, err := s.memberService.PurgeExpiredLeftMembers(ctx, now, purgeBatchLimit)
 		if err != nil {
+			runErr = err
 			log.WithError(err).WithField("iteration", i+1).Error("purge expired members failed")
 			break
 		}
@@ -116,7 +162,15 @@ func (s *Scheduler) runPurgeTick(ctx context.Context, now time.Time) {
 		}
 	}
 
+	s.purgeState.markResult(totalDeleted)
+	if runErr != nil {
+		s.purgeState.markError(runErr)
+	}
 	log.WithField("deleted", totalDeleted).Info("purge expired members: deleted=N")
+}
+
+func (s *Scheduler) GetPurgeMetrics() PurgeMetrics {
+	return s.purgeState.snapshot()
 }
 
 // Stop gracefully stops scheduler.

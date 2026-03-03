@@ -30,6 +30,8 @@ type Config struct {
 	FloodChatID int64 `envconfig:"FLOOD_CHAT_ID" required:"true"`
 	// ID основной группы — источник истины для membership lifecycle.
 	MainGroupID int64 `envconfig:"MAIN_GROUP_ID" required:"true"`
+	// ID админ-чата для служебных команд (например /members_status).
+	AdminChatID int64 `envconfig:"ADMIN_CHAT_ID" required:"true"`
 
 	// --- Database ---
 	// В Docker внутри контейнера "localhost" почти всегда неправильно.
@@ -104,6 +106,9 @@ func (c *Config) Validate() error {
 	}
 	if c.MainGroupID == 0 {
 		return fmt.Errorf("MAIN_GROUP_ID не задан или равен 0")
+	}
+	if c.AdminChatID == 0 {
+		return fmt.Errorf("ADMIN_CHAT_ID не задан или равен 0")
 	}
 	if c.BotMaxInflight <= 0 {
 		return fmt.Errorf("BOT_MAX_INFLIGHT должен быть > 0")
