@@ -3,42 +3,37 @@ package migrations
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
-func TestParseVersion(t *testing.T) {
+func TestIsUpMigrationFile(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name     string
 		filename string
-		want     int
-		wantErr  bool
+		wantVer  int
+		wantOK   bool
 	}{
-		{name: "valid", filename: "0001_init.sql", want: 1},
-		{name: "valid with long name", filename: "0012_add_admin_balance_deltas.sql", want: 12},
-		{name: "no underscore", filename: "0001.sql", wantErr: true},
-		{name: "invalid prefix", filename: "init.sql", wantErr: true},
-		{name: "zero version", filename: "0000_init.sql", wantErr: true},
+		{name: "valid up", filename: "0001_init.sql", wantVer: 1, wantOK: true},
+		{name: "valid up two digits", filename: "0010_x.sql", wantVer: 10, wantOK: true},
+		{name: "reject six-digit down", filename: "000001_init.down.sql", wantOK: false},
+		{name: "reject four-digit down", filename: "0001_init.down.sql", wantOK: false},
+		{name: "reject non matching", filename: "readme.sql", wantOK: false},
+		{name: "reject path", filename: "migrations/0001_init.sql", wantOK: false},
 	}
 
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := parseVersion(tc.filename)
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("parseVersion(%q) expected error", tc.filename)
-				}
-				return
+			gotVer, gotOK := isUpMigrationFile(tc.filename)
+			if gotOK != tc.wantOK {
+				t.Fatalf("isUpMigrationFile(%q) ok = %v, want %v", tc.filename, gotOK, tc.wantOK)
 			}
-
-			if err != nil {
-				t.Fatalf("parseVersion(%q) unexpected error: %v", tc.filename, err)
-			}
-			if got != tc.want {
-				t.Fatalf("parseVersion(%q) = %d, want %d", tc.filename, got, tc.want)
+			if gotVer != tc.wantVer {
+				t.Fatalf("isUpMigrationFile(%q) version = %d, want %d", tc.filename, gotVer, tc.wantVer)
 			}
 		})
 	}
@@ -77,6 +72,9 @@ func TestCollectMigrationFilesSortsByVersion(t *testing.T) {
 	create("0003_c.sql")
 	create("0001_a.sql")
 	create("0002_b.sql")
+	create("0002_b.down.sql")
+	create("000001_legacy.down.sql")
+	create("README.sql")
 
 	files, err := collectMigrationFiles(dir + "/*.sql")
 	if err != nil {
@@ -91,5 +89,42 @@ func TestCollectMigrationFilesSortsByVersion(t *testing.T) {
 		if files[i].version != v {
 			t.Fatalf("files[%d].version = %d, want %d", i, files[i].version, v)
 		}
+	}
+}
+
+func TestBuildMigrationFilesIgnoresDownAndInvalid(t *testing.T) {
+	t.Parallel()
+
+	filenames := []string{
+		"0003_streaks.sql",
+		"0001_init.sql",
+		"0001_init.down.sql",
+		"000001_init.down.sql",
+		"readme.sql",
+		"0010_feature.sql",
+	}
+
+	files, err := buildMigrationFiles(filenames)
+	if err != nil {
+		t.Fatalf("buildMigrationFiles() error: %v", err)
+	}
+
+	got := make([]string, 0, len(files))
+	for _, f := range files {
+		got = append(got, f.filename)
+	}
+
+	want := []string{"0001_init.sql", "0003_streaks.sql", "0010_feature.sql"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("buildMigrationFiles() filenames = %v, want %v", got, want)
+	}
+}
+
+func TestBuildMigrationFilesDuplicateVersion(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildMigrationFiles([]string{"0001_a.sql", "0001_b.sql"})
+	if err == nil {
+		t.Fatal("buildMigrationFiles() expected duplicate version error")
 	}
 }

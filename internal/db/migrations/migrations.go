@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +15,8 @@ import (
 )
 
 const migrationsGlob = "migrations/*.sql"
+
+var upMigrationPattern = regexp.MustCompile(`^\d{4}_.+\.sql$`)
 
 type migrationFile struct {
 	version  int
@@ -34,6 +37,10 @@ func Apply(ctx context.Context, pool *pgxpool.Pool) error {
 	files, err := collectMigrationFiles(migrationsGlob)
 	if err != nil {
 		return err
+	}
+	if len(files) == 0 {
+		log.Info("no up migrations found")
+		return nil
 	}
 
 	applied, err := loadAppliedVersions(ctx, pool)
@@ -80,14 +87,42 @@ func collectMigrationFiles(pattern string) ([]migrationFile, error) {
 		return nil, fmt.Errorf("read migration files: %w", err)
 	}
 
-	files := make([]migrationFile, 0, len(paths))
+	names := make([]string, 0, len(paths))
+	pathByName := make(map[string]string, len(paths))
 	for _, path := range paths {
-		filename := filepath.Base(path)
-		version, err := parseVersion(filename)
-		if err != nil {
-			return nil, err
+		name := filepath.Base(path)
+		names = append(names, name)
+		pathByName[name] = path
+	}
+
+	files, err := buildMigrationFiles(names)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range files {
+		files[i].path = pathByName[files[i].filename]
+	}
+
+	return files, nil
+}
+
+func buildMigrationFiles(filenames []string) ([]migrationFile, error) {
+	files := make([]migrationFile, 0, len(filenames))
+	versions := make(map[int]string)
+
+	for _, name := range filenames {
+		version, ok := isUpMigrationFile(name)
+		if !ok {
+			continue
 		}
-		files = append(files, migrationFile{version: version, filename: filename, path: path})
+
+		if existing, dup := versions[version]; dup {
+			return nil, fmt.Errorf("duplicate migration version %04d: %s and %s", version, existing, name)
+		}
+
+		versions[version] = name
+		files = append(files, migrationFile{version: version, filename: name})
 	}
 
 	sort.Slice(files, func(i, j int) bool {
@@ -131,17 +166,21 @@ func filterPending(files []migrationFile, applied map[int]struct{}) []migrationF
 	return pending
 }
 
-func parseVersion(filename string) (int, error) {
-	base := strings.TrimSuffix(filename, filepath.Ext(filename))
-	parts := strings.SplitN(base, "_", 2)
-	if len(parts) < 2 || parts[0] == "" {
-		return 0, fmt.Errorf("invalid migration filename %q", filename)
+func isUpMigrationFile(name string) (int, bool) {
+	if strings.Contains(name, string(filepath.Separator)) || strings.Contains(name, "/") {
+		return 0, false
+	}
+	if strings.Contains(name, ".down.") {
+		return 0, false
+	}
+	if !upMigrationPattern.MatchString(name) {
+		return 0, false
 	}
 
-	version, err := strconv.Atoi(parts[0])
+	version, err := strconv.Atoi(name[:4])
 	if err != nil || version <= 0 {
-		return 0, fmt.Errorf("invalid migration filename %q", filename)
+		return 0, false
 	}
 
-	return version, nil
+	return version, true
 }
