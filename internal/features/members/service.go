@@ -5,72 +5,81 @@ package members
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"time"
 
-	"github.com/jackc/pgx/v5"
 	log "github.com/sirupsen/logrus"
 )
+
+const leftGracePeriod = 5 * 24 * time.Hour
+
+// Service управляет участниками чата.
+// Связывает обработчики Telegram-событий с репозиторием БД.
+type memberRepository interface {
+	UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error
+	MarkMemberLeft(ctx context.Context, userID int64, leftAt, deleteAfter time.Time) error
+	IsActiveMember(ctx context.Context, userID int64) (bool, error)
+	PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error)
+	GetByUserID(ctx context.Context, userID int64) (*Member, error)
+	GetByUsername(ctx context.Context, username string) (*Member, error)
+}
 
 // Service управляет участниками чата.
 // Связывает обработчики Telegram-событий с репозиторием БД.
 type Service struct {
-	repo *Repository // Репозиторий для работы с таблицей members
+	repo memberRepository // Репозиторий для работы с таблицей members
 }
 
 // NewService создаёт новый сервис участников.
-func NewService(repo *Repository) *Service {
+func NewService(repo memberRepository) *Service {
 	return &Service{repo: repo}
 }
 
 // HandleNewMember обрабатывает вступление нового пользователя в чат.
-// Если пользователь уже есть в базе (перезашёл) — обновляет его данные.
-// Если пользователь новый — создаёт запись.
 func (s *Service) HandleNewMember(ctx context.Context, userID int64, username, firstName, lastName string) error {
-	existing, err := s.repo.GetByUserID(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("ошибка чтения участника из БД (user_id=%d): %w", userID, err)
-	}
-	if existing != nil {
-		log.WithField("user_id", userID).Info("Участник перезашёл в чат, обновляем данные")
-		return s.repo.UpdateInfo(ctx, userID, UpdateInfo{
-			Username:  username,
-			FirstName: firstName,
-			LastName:  lastName,
-		})
-	}
+	return s.UpsertActiveMember(ctx, userID, username, firstName, time.Now().UTC())
+}
 
-	// Если ошибка НЕ "не найдено" — это реально проблема БД, не надо делать вид, что всё норм.
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("ошибка чтения участника (user_id=%d): %w", userID, err)
+// UpsertActiveMember вставляет/обновляет участника и помечает его как active.
+func (s *Service) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
+	if err := s.repo.UpsertActiveMember(ctx, userID, username, name, joinedAt); err != nil {
+		return fmt.Errorf("ошибка upsert участника: %w", err)
 	}
-
-	// Создаём нового участника
-	member := &Member{
-		UserID:    userID,
-		Username:  username,
-		FirstName: firstName,
-		LastName:  lastName,
-		IsAdmin:   false,
-		IsBanned:  false,
-	}
-
-	if err := s.repo.Create(ctx, member); err != nil {
-		return fmt.Errorf("ошибка регистрации нового участника: %w", err)
-	}
-
-	log.WithFields(log.Fields{
-		"user_id":  userID,
-		"username": username,
-	}).Info("Новый участник зарегистрирован")
-
 	return nil
+}
+
+// MarkMemberLeft помечает участника как left и выставляет окно grace period.
+func (s *Service) MarkMemberLeft(ctx context.Context, userID int64, leftAt, deleteAfter time.Time) error {
+	if err := s.repo.MarkMemberLeft(ctx, userID, leftAt, deleteAfter); err != nil {
+		return fmt.Errorf("ошибка пометки участника left: %w", err)
+	}
+	return nil
+}
+
+// MarkMemberLeftNow помечает участника как left с grace period 5 дней.
+func (s *Service) MarkMemberLeftNow(ctx context.Context, userID int64) error {
+	leftAt := time.Now().UTC()
+	return s.MarkMemberLeft(ctx, userID, leftAt, leftAt.Add(leftGracePeriod))
+}
+
+// IsActiveMember проверяет активность участника.
+func (s *Service) IsActiveMember(ctx context.Context, userID int64) (bool, error) {
+	return s.repo.IsActiveMember(ctx, userID)
+}
+
+// PurgeExpiredLeftMembers жёстко удаляет вышедших участников с истекшим delete_after.
+func (s *Service) PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error) {
+	deleted, err := s.repo.PurgeExpiredLeftMembers(ctx, now, limit)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка purge участников: %w", err)
+	}
+	return deleted, nil
 }
 
 // IsMember проверяет, является ли пользователь участником чата.
 // Используется для валидации доступа к DM.
 func (s *Service) IsMember(ctx context.Context, userID int64) (bool, error) {
-	return s.repo.Exists(ctx, userID)
+	return s.IsActiveMember(ctx, userID)
 }
 
 // GetByUserID возвращает участника по его Telegram user ID.
@@ -83,36 +92,16 @@ func (s *Service) GetByUsername(ctx context.Context, username string) (*Member, 
 	return s.repo.GetByUsername(ctx, username)
 }
 
-// EnsureMember гарантирует, что пользователь есть в базе.
-// Если нет — создаёт запись. Используется при первом сообщении в чате и при DM-backfill.
+// EnsureMember гарантирует, что пользователь есть в базе и активен.
 func (s *Service) EnsureMember(ctx context.Context, userID int64, username, firstName, lastName string) error {
-	// Можно было бы сделать просто Create() (у тебя ON CONFLICT DO NOTHING),
-	// но оставим Exists() как "быстрый выход" и понятные логи.
-	exists, err := s.repo.Exists(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("ошибка проверки существования участника (user_id=%d): %w", userID, err)
-	}
-	if exists {
-		return nil
-	}
-
-	member := &Member{
-		UserID:    userID,
-		Username:  username,
-		FirstName: firstName,
-		LastName:  lastName,
-		IsAdmin:   false,
-		IsBanned:  false,
-	}
-
-	if err := s.repo.Create(ctx, member); err != nil {
+	if err := s.UpsertActiveMember(ctx, userID, username, firstName, time.Now().UTC()); err != nil {
 		return fmt.Errorf("ошибка ensure участника (user_id=%d): %w", userID, err)
 	}
 
 	log.WithFields(log.Fields{
 		"user_id":  userID,
 		"username": username,
-	}).Info("Участник бэкфилен в БД (EnsureMember)")
+	}).Debug("Участник upsert как active (EnsureMember)")
 
 	return nil
 }

@@ -8,17 +8,22 @@ import "time"
 // Каждый пользователь, вступивший в FLOOD_CHAT_ID, автоматически
 // создаётся в этой таблице.
 type Member struct {
-	ID        int64     `db:"id"`         // Автоинкрементный ID записи в БД
-	UserID    int64     `db:"user_id"`    // Telegram user ID (уникальный)
-	Username  string    `db:"username"`   // @username (может быть пустым)
-	FirstName string    `db:"first_name"` // Имя пользователя
-	LastName  string    `db:"last_name"`  // Фамилия (может быть пустой)
-	Role      *string   `db:"role"`       // Роль, назначенная админом (до 64 символов, может быть nil)
-	IsAdmin   bool      `db:"is_admin"`   // Флаг администратора
-	IsBanned  bool      `db:"is_banned"`  // Флаг бана
-	JoinedAt  time.Time `db:"joined_at"`  // Когда вступил в чат
-	CreatedAt time.Time `db:"created_at"` // Когда запись создана в БД
-	UpdatedAt time.Time `db:"updated_at"` // Последнее обновление записи
+	ID            int64      `db:"id"`              // Автоинкрементный ID записи в БД
+	UserID        int64      `db:"user_id"`         // Telegram user ID (уникальный)
+	Username      string     `db:"username"`        // @username (может быть пустым)
+	FirstName     string     `db:"first_name"`      // Имя пользователя
+	LastName      string     `db:"last_name"`       // Фамилия (может быть пустой)
+	Role          *string    `db:"role"`            // Роль, назначенная админом (до 64 символов, может быть nil)
+	IsAdmin       bool       `db:"is_admin"`        // Флаг администратора
+	IsBanned      bool       `db:"is_banned"`       // Флаг бана
+	Status        string     `db:"status"`          // Статус участника: active/left
+	JoinedAt      *time.Time `db:"joined_at"`       // Когда вступил в чат
+	LeftAt        *time.Time `db:"left_at"`         // Когда вышел из чата
+	DeleteAfter   *time.Time `db:"delete_after"`    // Дата возможной очистки left-участника
+	LastSeenAt    *time.Time `db:"last_seen_at"`    // Последняя активность в чате
+	LastKnownName *string    `db:"last_known_name"` // Последнее известное отображаемое имя
+	CreatedAt     time.Time  `db:"created_at"`      // Когда запись создана в БД
+	UpdatedAt     time.Time  `db:"updated_at"`      // Последнее обновление записи
 }
 
 // UpdateInfo содержит данные для обновления информации о пользователе.

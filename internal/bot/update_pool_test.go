@@ -141,3 +141,15 @@ func TestUpdatePool_SequentialPerChatAndParallelAcrossChats(t *testing.T) {
 		t.Fatalf("max concurrency = %d, want > 1 for different chats", got)
 	}
 }
+
+func TestUpdateChatID_ChatMemberUpdates(t *testing.T) {
+	chatID, ok := updateChatID(models.Update{ChatMember: &models.ChatMemberUpdated{Chat: models.Chat{ID: 123}}})
+	if !ok || chatID != 123 {
+		t.Fatalf("ChatMember chatID = (%d,%v), want (123,true)", chatID, ok)
+	}
+
+	chatID, ok = updateChatID(models.Update{MyChatMember: &models.ChatMemberUpdated{Chat: models.Chat{ID: 456}}})
+	if !ok || chatID != 456 {
+		t.Fatalf("MyChatMember chatID = (%d,%v), want (456,true)", chatID, ok)
+	}
+}
