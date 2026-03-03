@@ -184,3 +184,25 @@ func TestShouldTouchLastSeen_UsesUpdateTypeAndChatOnly(t *testing.T) {
 		t.Fatal("expected admin chat to not touch last seen")
 	}
 }
+
+func TestHandleUpdate_DeniedByChatFilter_DoesNotWriteMemberSeen(t *testing.T) {
+	tg := &fakeTGStatus{}
+	repo := &fakeMembersRepoStatus{}
+	memberSvc := members.NewService(repo)
+	b := &Bot{
+		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		tg:            tg,
+		memberService: memberSvc,
+		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg),
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+	}
+
+	// Чат не flood/admin и не private -> ChatFilter должен отклонить апдейт.
+	upd := models.Update{Message: &models.Message{Chat: models.Chat{ID: -3003, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u"}, Text: "!пленки"}}
+	b.handleUpdate(context.Background(), upd)
+
+	if repo.ensureSeenCalls != 0 || repo.ensureActiveCalls != 0 {
+		t.Fatalf("expected no member writes when chat filter denies update, got ensureSeen=%d ensureActive=%d", repo.ensureSeenCalls, repo.ensureActiveCalls)
+	}
+}
