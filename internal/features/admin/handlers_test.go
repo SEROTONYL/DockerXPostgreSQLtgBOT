@@ -274,6 +274,24 @@ func TestOpenAdminPanel_ShowsKeyboard(t *testing.T) {
 	}
 }
 
+func TestHandleAdminMessage_DeniedLogin_SendsSingleMessage(t *testing.T) {
+	tg := &fakeTG{}
+	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{}}
+	svc := NewService(fakeAdminRepoHandlers{hasSession: false}, repo, &config.Config{AdminIDs: []int64{}})
+	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg))
+
+	handled := h.HandleAdminMessage(context.Background(), 77, 77, "/login")
+	if !handled {
+		t.Fatal("expected /login to be handled")
+	}
+	if tg.count("send") != 1 {
+		t.Fatalf("send calls = %d, want 1", tg.count("send"))
+	}
+	if last := tg.last("send"); last == nil || !strings.Contains(last.text, "Доступ запрещён") {
+		t.Fatalf("expected denied message, got %#v", last)
+	}
+}
+
 func TestPickerFlow_OpenPicker_ShowsUserList(t *testing.T) {
 	tg := &fakeTG{}
 	role := "old"
