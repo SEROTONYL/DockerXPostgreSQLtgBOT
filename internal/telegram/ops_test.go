@@ -11,18 +11,13 @@ import (
 type fakeClient struct {
 	sendCalls int
 	editCalls int
-	ackCalls  int
 
 	sendErr error
 	editErr error
-	ackErr  error
-
-	lastSendMarkup *models.InlineKeyboardMarkup
 }
 
 func (f *fakeClient) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
 	f.sendCalls++
-	f.lastSendMarkup = markup
 	if f.sendErr != nil {
 		return 0, f.sendErr
 	}
@@ -34,9 +29,8 @@ func (f *fakeClient) EditMessage(chatID int64, messageID int, text string, marku
 	return f.editErr
 }
 
-func (f *fakeClient) AnswerCallbackQuery(callbackID string, text string, showAlert bool) error {
-	f.ackCalls++
-	return f.ackErr
+func (f *fakeClient) AnswerCallback(callbackID string) error {
+	return nil
 }
 
 func (f *fakeClient) GetChatMember(chatID int64, userID int64) (models.ChatMember, error) {
