@@ -198,6 +198,15 @@ func (r *Repository) Exists(ctx context.Context, userID int64) (bool, error) {
 	return exists, nil
 }
 
+func (r *Repository) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
+	query := touchLastSeenQuery()
+	if _, err := r.db.Exec(ctx, query, userID, seenAt.UTC()); err != nil {
+		return fmt.Errorf("ошибка touch last_seen_at: %w", err)
+	}
+	// 0 affected rows — допустимо: троттлинг или отсутствующий пользователь.
+	return nil
+}
+
 func (r *Repository) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
 	query := ensureMemberSeenQuery()
 	if _, err := r.db.Exec(ctx, query, userID, username, name, seenAt.UTC()); err != nil {
@@ -305,6 +314,16 @@ func usersWithRoleQuery() string {
 		FROM members
 		WHERE role IS NOT NULL AND is_banned = FALSE AND status = $1
 		ORDER BY first_name
+	`
+}
+
+func touchLastSeenQuery() string {
+	return `
+		UPDATE members
+		SET last_seen_at = $2,
+		    updated_at = NOW()
+		WHERE user_id = $1
+		  AND (last_seen_at IS NULL OR last_seen_at < $2 - INTERVAL '5 minutes')
 	`
 }
 

@@ -26,6 +26,9 @@ type fakeRepo struct {
 	ensureSeenName      string
 	ensureSeenAt        time.Time
 	ensureActiveCalled  bool
+	touchCalled         bool
+	touchUserID         int64
+	touchSeenAt         time.Time
 	countActive         int
 	countLeft           int
 	pendingPurge        int
@@ -76,6 +79,12 @@ func (f *fakeRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64, use
 	f.ensureSeenUsername = username
 	f.ensureSeenName = name
 	f.ensureSeenAt = seenAt
+	return nil
+}
+func (f *fakeRepo) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
+	f.touchCalled = true
+	f.touchUserID = userID
+	f.touchSeenAt = seenAt
 	return nil
 }
 func (f *fakeRepo) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {
@@ -206,5 +215,18 @@ func TestServiceCountPendingPurge(t *testing.T) {
 	}
 	if pending != 7 {
 		t.Fatalf("pending=%d, want 7", pending)
+	}
+}
+
+func TestServiceTouchLastSeen(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := svc.TouchLastSeen(context.Background(), 88, now); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !repo.touchCalled || repo.touchUserID != 88 || !repo.touchSeenAt.Equal(now) {
+		t.Fatalf("unexpected touch args: %+v", repo)
 	}
 }

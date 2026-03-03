@@ -24,6 +24,7 @@ type memberRepository interface {
 	GetByUsername(ctx context.Context, username string) (*Member, error)
 	EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error
 	EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error
+	TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error
 	CountMembersByStatus(ctx context.Context) (active int, left int, err error)
 	CountPendingPurge(ctx context.Context, now time.Time) (int, error)
 }
@@ -79,6 +80,14 @@ func (s *Service) EnsureMemberSeen(ctx context.Context, userID int64, username, 
 func (s *Service) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
 	if err := s.repo.EnsureActiveMemberSeen(ctx, userID, username, name, seenAt.UTC()); err != nil {
 		return fmt.Errorf("ошибка ensure active member seen: %w", err)
+	}
+	return nil
+}
+
+// TouchLastSeen обновляет только last_seen_at с SQL-троттлингом и безопасен при 0 affected rows.
+func (s *Service) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
+	if err := s.repo.TouchLastSeen(ctx, userID, seenAt.UTC()); err != nil {
+		return fmt.Errorf("ошибка touch last seen: %w", err)
 	}
 	return nil
 }

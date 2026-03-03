@@ -122,3 +122,18 @@ func TestCountPendingPurgeQuery_UsesLeftAndDeleteAfter(t *testing.T) {
 		}
 	}
 }
+
+func TestTouchLastSeenQuery_UsesThrottleCondition(t *testing.T) {
+	q := touchLastSeenQuery()
+	checks := []string{
+		"UPDATE members",
+		"last_seen_at = $2",
+		"user_id = $1",
+		"last_seen_at < $2 - INTERVAL '5 minutes'",
+	}
+	for _, c := range checks {
+		if !strings.Contains(q, c) {
+			t.Fatalf("touch query missing %q: %s", c, q)
+		}
+	}
+}

@@ -194,6 +194,13 @@ func (f *lifecycleFakeRepo) EnsureActiveMemberSeen(ctx context.Context, userID i
 	return nil
 }
 
+func (f *lifecycleFakeRepo) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
+	if f.member.UserID == userID {
+		f.member.LastSeenAt = &seenAt
+	}
+	return nil
+}
+
 func (f *lifecycleFakeRepo) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {
 	if f.member.Status == StatusActive {
 		return 1, 0, nil
@@ -281,6 +288,18 @@ func (r *seenStateRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64
 	}
 	return nil
 }
+func (r *seenStateRepo) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
+	m := r.members[userID]
+	if m == nil {
+		return nil
+	}
+	if m.LastSeenAt == nil || m.LastSeenAt.Before(seenAt.Add(-5*time.Minute)) {
+		t := seenAt
+		m.LastSeenAt = &t
+	}
+	return nil
+}
+
 func (r *seenStateRepo) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {
 	return 0, 0, nil
 }

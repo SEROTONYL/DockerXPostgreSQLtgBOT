@@ -36,6 +36,9 @@ func (f *fakeMemberRepo) EnsureMemberSeen(ctx context.Context, userID int64, use
 func (f *fakeMemberRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
 	return nil
 }
+func (f *fakeMemberRepo) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
+	return nil
+}
 func (f *fakeMemberRepo) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {
 	return 0, 0, nil
 }
