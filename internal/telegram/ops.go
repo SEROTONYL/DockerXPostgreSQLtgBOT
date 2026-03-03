@@ -108,31 +108,9 @@ func (o *Ops) AnswerCallback(ctx context.Context, callbackID string, args ...any
 
 	var err error
 	if text != "" || showAlert {
-		switch c := any(o.c).(type) {
-		case legacyCallbackClientCtx:
-			err = c.AnswerCallbackQueryCtx(ctx, callbackID, text, showAlert)
-		case legacyCallbackClient:
-			err = c.AnswerCallbackQuery(callbackID, text, showAlert)
-		case callbackClientCtx:
-			err = c.AnswerCallbackCtx(ctx, callbackID)
-		case callbackClient:
-			err = c.AnswerCallback(callbackID)
-		default:
-			err = fmt.Errorf("client does not support answer callback")
-		}
+		err = o.answerCallbackWithPayload(ctx, callbackID, text, showAlert)
 	} else {
-		switch c := any(o.c).(type) {
-		case callbackClientCtx:
-			err = c.AnswerCallbackCtx(ctx, callbackID)
-		case callbackClient:
-			err = c.AnswerCallback(callbackID)
-		case legacyCallbackClientCtx:
-			err = c.AnswerCallbackQueryCtx(ctx, callbackID, "", false)
-		case legacyCallbackClient:
-			err = c.AnswerCallbackQuery(callbackID, "", false)
-		default:
-			err = fmt.Errorf("client does not support answer callback")
-		}
+		err = o.answerCallbackAck(ctx, callbackID)
 	}
 
 	if err != nil {
@@ -140,6 +118,36 @@ func (o *Ops) AnswerCallback(ctx context.Context, callbackID string, args ...any
 		return err
 	}
 	return nil
+}
+
+func (o *Ops) answerCallbackWithPayload(ctx context.Context, callbackID, text string, showAlert bool) error {
+	switch c := any(o.c).(type) {
+	case legacyCallbackClientCtx:
+		return c.AnswerCallbackQueryCtx(ctx, callbackID, text, showAlert)
+	case legacyCallbackClient:
+		return c.AnswerCallbackQuery(callbackID, text, showAlert)
+	case callbackClientCtx:
+		return c.AnswerCallbackCtx(ctx, callbackID)
+	case callbackClient:
+		return c.AnswerCallback(callbackID)
+	default:
+		return fmt.Errorf("client does not support answer callback")
+	}
+}
+
+func (o *Ops) answerCallbackAck(ctx context.Context, callbackID string) error {
+	switch c := any(o.c).(type) {
+	case callbackClientCtx:
+		return c.AnswerCallbackCtx(ctx, callbackID)
+	case callbackClient:
+		return c.AnswerCallback(callbackID)
+	case legacyCallbackClientCtx:
+		return c.AnswerCallbackQueryCtx(ctx, callbackID, "", false)
+	case legacyCallbackClient:
+		return c.AnswerCallbackQuery(callbackID, "", false)
+	default:
+		return fmt.Errorf("client does not support answer callback")
+	}
 }
 
 func (o *Ops) EditOrSend(ctx context.Context, chatID int64, messageID int, text string, keyboard models.InlineKeyboardMarkup) (int, bool, error) {
