@@ -54,7 +54,9 @@ func (f *fakeTG) SendMessage(chatID int64, text string, markup *models.InlineKey
 func (f *fakeTG) EditMessage(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
 	return nil
 }
-func (f *fakeTG) AnswerCallback(callbackID string) error { return nil }
+func (f *fakeTG) AnswerCallbackQuery(callbackID string, text string, showAlert bool) error {
+	return nil
+}
 func (f *fakeTG) GetChatMember(chatID int64, userID int64) (member models.ChatMember, err error) {
 	return models.ChatMember{Type: models.ChatMemberTypeLeft}, nil
 }

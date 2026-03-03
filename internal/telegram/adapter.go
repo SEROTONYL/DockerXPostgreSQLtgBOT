@@ -11,7 +11,7 @@ import (
 type Client interface {
 	SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (messageID int, err error)
 	EditMessage(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error
-	AnswerCallback(callbackID string) error
+	AnswerCallbackQuery(callbackID string, text string, showAlert bool) error
 	GetChatMember(chatID int64, userID int64) (member models.ChatMember, err error)
 }
 
@@ -63,12 +63,14 @@ func buildEditMessageTextParams(chatID int64, messageID int, text string, markup
 	return params
 }
 
-func (a *Adapter) AnswerCallback(callbackID string) error {
+func (a *Adapter) AnswerCallbackQuery(callbackID string, text string, showAlert bool) error {
 	if callbackID == "" {
 		return nil
 	}
 	_, err := a.bot.AnswerCallbackQuery(context.Background(), &botapi.AnswerCallbackQueryParams{
 		CallbackQueryID: callbackID,
+		Text:            text,
+		ShowAlert:       showAlert,
 	})
 	return err
 }
