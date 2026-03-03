@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"serotonyl.ru/telegram-bot/internal/commands"
+
 	botapi "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	log "github.com/sirupsen/logrus"
@@ -52,7 +54,8 @@ type Bot struct {
 	casinoService  *casino.Service
 	adminService   *admin.Service
 
-	parser *CommandParser
+	parser    *CommandParser
+	cmdRouter *commands.Router
 
 	purgeMetricsProvider purgeMetricsProvider
 }
@@ -76,7 +79,7 @@ func New(
 	adminHandler *admin.Handler,
 	chatFilter *filters.ChatFilter,
 ) *Bot {
-	return &Bot{
+	b := &Bot{
 		api:            api,
 		tg:             tg,
 		cfg:            cfg,
@@ -95,7 +98,10 @@ func New(
 		casinoService:  casinoService,
 		adminService:   adminService,
 		parser:         NewCommandParser(),
+		cmdRouter:      commands.NewRouter(),
 	}
+	b.registerCommands()
+	return b
 }
 
 // SetPurgeMetricsProvider подключает источник метрик purge для служебных команд.
@@ -283,54 +289,51 @@ func isAdminChatAllowedCommand(cmd string) bool {
 	}
 }
 
+func (b *Bot) registerCommands() {
+	b.cmdRouter.Register("start", func(ctx context.Context, c commands.Context, args []string) {
+		b.sendMessage(c.ChatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
+	})
+	b.cmdRouter.Register("help", func(ctx context.Context, c commands.Context, args []string) {
+		b.sendMessage(c.ChatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
+	})
+	b.cmdRouter.Register("login", func(ctx context.Context, c commands.Context, args []string) {
+		if c.ChatID == c.UserID {
+			b.adminHandler.HandleAdminMessage(ctx, c.ChatID, c.UserID, "/login "+strings.Join(args, " "))
+		}
+	})
+	b.cmdRouter.Register("members_status", func(ctx context.Context, c commands.Context, args []string) {
+		b.handleMembersStatusCommand(ctx, UpdateContext{ChatID: c.ChatID, UserID: c.UserID, IsPrivate: c.IsPrivate, IsAdminChat: c.IsAdminChat, Now: c.Now})
+	})
+	b.cmdRouter.Register("members_stats", func(ctx context.Context, c commands.Context, args []string) {
+		b.handleMembersStatusCommand(ctx, UpdateContext{ChatID: c.ChatID, UserID: c.UserID, IsPrivate: c.IsPrivate, IsAdminChat: c.IsAdminChat, Now: c.Now})
+	})
+
+	economy.RegisterCommands(b.cmdRouter, b.economyHandler, b.cfg)
+	karma.RegisterCommands(b.cmdRouter, b.karmaHandler, b.cfg)
+	streak.RegisterCommands(b.cmdRouter, b.streakHandler, b.cfg)
+	casino.RegisterCommands(b.cmdRouter, b.casinoHandler, b.cfg)
+}
+
 func (b *Bot) routeCommand(ctx context.Context, uc UpdateContext, cmd string, args []string) {
-	chatID := uc.ChatID
-	userID := uc.UserID
 	log.WithFields(log.Fields{
 		"cmd":  cmd,
 		"args": args,
 	}).Debug("routing command")
-	switch cmd {
-	case "members_status", "members_stats":
-		b.handleMembersStatusCommand(ctx, uc)
+
+	if uc.IsAdminChat && !isAdminChatAllowedCommand(cmd) {
 		return
-	case "start", "help":
-		b.sendMessage(chatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
+	}
 
-	case "login":
-		if chatID == userID {
-			b.adminHandler.HandleAdminMessage(ctx, chatID, userID, "/login "+strings.Join(args, " "))
-		}
-	case "пленки":
-		b.economyHandler.HandleBalance(ctx, chatID, userID)
+	c := commands.Context{
+		ChatID:      uc.ChatID,
+		UserID:      uc.UserID,
+		IsPrivate:   uc.IsPrivate,
+		IsAdminChat: uc.IsAdminChat,
+		Now:         uc.Now,
+	}
 
-	case "отсыпать":
-		b.economyHandler.HandleTransfer(ctx, chatID, userID, args)
-
-	case "транзакции":
-		b.economyHandler.HandleTransactions(ctx, chatID, userID)
-
-	case "карма":
-		if b.cfg.FeatureKarmaEnabled {
-			b.karmaHandler.HandleKarma(ctx, chatID, userID)
-		}
-
-	case "огонек":
-		if b.cfg.FeatureStreaksEnabled {
-			b.streakHandler.HandleOgonek(ctx, chatID, userID)
-		}
-
-	case "слоты":
-		if b.cfg.FeatureCasinoEnabled {
-			b.casinoHandler.HandleSlots(ctx, chatID, userID)
-		} else {
-			b.sendMessage(chatID, "🎰 Казино временно отключено")
-		}
-
-	case "статслоты":
-		if b.cfg.FeatureCasinoEnabled {
-			b.casinoHandler.HandleSlotStats(ctx, chatID, userID)
-		}
+	if ok := b.cmdRouter.Dispatch(ctx, c, cmd, args); !ok {
+		log.WithField("cmd", cmd).Debug("unknown command")
 	}
 }
 
