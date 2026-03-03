@@ -37,12 +37,16 @@ type fakeMembersRepoStatus struct {
 	pending           int
 	ensureSeenCalls   int
 	ensureActiveCalls int
+	upsertCalls       int
+	markLeftCalls     int
 }
 
 func (f *fakeMembersRepoStatus) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
+	f.upsertCalls++
 	return nil
 }
 func (f *fakeMembersRepoStatus) MarkMemberLeft(ctx context.Context, userID int64, leftAt, deleteAfter time.Time) error {
+	f.markLeftCalls++
 	return nil
 }
 func (f *fakeMembersRepoStatus) IsActiveMember(ctx context.Context, userID int64) (bool, error) {
@@ -172,18 +176,17 @@ func TestHandleUpdate_AdminChatIgnoresPlainMessages(t *testing.T) {
 
 func TestShouldTouchLastSeen_UsesUpdateTypeAndChatOnly(t *testing.T) {
 	b := &Bot{cfg: &config.Config{MainGroupID: -1001, AdminChatID: -2002}}
-	ctx := context.Background()
 
-	if !b.shouldTouchLastSeen(ctx, UpdateContext{ChatID: -1001, UserID: 10, Message: &models.Message{}}) {
+	if !b.shouldTouchLastSeen(UpdateContext{ChatID: -1001, UserID: 10, Message: &models.Message{}}) {
 		t.Fatal("expected main-group message to touch last seen")
 	}
-	if !b.shouldTouchLastSeen(ctx, UpdateContext{ChatID: -1001, UserID: 10, Callback: &models.CallbackQuery{}}) {
+	if !b.shouldTouchLastSeen(UpdateContext{ChatID: -1001, UserID: 10, Callback: &models.CallbackQuery{}}) {
 		t.Fatal("expected main-group callback to touch last seen")
 	}
-	if b.shouldTouchLastSeen(ctx, UpdateContext{ChatID: 10, UserID: 10, IsPrivate: true, Message: &models.Message{}}) {
+	if b.shouldTouchLastSeen(UpdateContext{ChatID: 10, UserID: 10, IsPrivate: true, Message: &models.Message{}}) {
 		t.Fatal("expected private chat to not touch last seen in strict mode")
 	}
-	if b.shouldTouchLastSeen(ctx, UpdateContext{ChatID: -2002, UserID: 10, IsAdminChat: true, Message: &models.Message{}}) {
+	if b.shouldTouchLastSeen(UpdateContext{ChatID: -2002, UserID: 10, IsAdminChat: true, Message: &models.Message{}}) {
 		t.Fatal("expected admin chat to not touch last seen")
 	}
 }
@@ -207,5 +210,41 @@ func TestHandleUpdate_DeniedByChatFilter_DoesNotWriteMemberSeen(t *testing.T) {
 
 	if repo.ensureSeenCalls != 0 || repo.ensureActiveCalls != 0 {
 		t.Fatalf("expected no member writes when chat filter denies update, got ensureSeen=%d ensureActive=%d", repo.ensureSeenCalls, repo.ensureActiveCalls)
+	}
+}
+
+func TestHandleUpdate_MembershipUpdateHandledOnce(t *testing.T) {
+	tg := &fakeTGStatus{}
+	repo := &fakeMembersRepoStatus{}
+	memberSvc := members.NewService(repo)
+	b := &Bot{
+		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		tg:            tg,
+		memberService: memberSvc,
+		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg),
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+	}
+
+	upsertUser := &models.User{ID: 55, Username: "u", FirstName: "U"}
+	upsertMember := models.ChatMember{Type: models.ChatMemberTypeMember, Member: &models.ChatMemberMember{User: upsertUser}}
+	oldMember := models.ChatMember{Type: models.ChatMemberTypeMember, Member: &models.ChatMemberMember{User: upsertUser}}
+
+	upd := models.Update{
+		Message: &models.Message{Chat: models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, From: upsertUser, Text: "hello"},
+		MyChatMember: &models.ChatMemberUpdated{
+			Chat:          models.Chat{ID: -1001, Type: models.ChatTypeSupergroup},
+			OldChatMember: oldMember,
+			NewChatMember: upsertMember,
+		},
+	}
+
+	b.handleUpdate(context.Background(), upd)
+
+	if repo.upsertCalls != 1 {
+		t.Fatalf("expected membership upsert once, got %d", repo.upsertCalls)
+	}
+	if repo.ensureSeenCalls != 0 || repo.ensureActiveCalls != 0 {
+		t.Fatalf("expected no regular message member writes during membership update, got ensureSeen=%d ensureActive=%d", repo.ensureSeenCalls, repo.ensureActiveCalls)
 	}
 }

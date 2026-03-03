@@ -39,6 +39,19 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 		}).Warn("nil message.From (service/channel message?)")
 		return false
 	}
+
+	chatID := message.Chat.ID
+
+	// Админ-чат — служебный контур, всегда пропускаем до любых прочих проверок.
+	if chatID == f.adminChatID {
+		log.WithFields(log.Fields{
+			"component": "ChatFilter",
+			"chat_id":   chatID,
+			"chat_type": message.Chat.Type,
+		}).Debug("allow: admin chat")
+		return true
+	}
+
 	if f.memberService == nil {
 		log.WithField("component", "ChatFilter").Error("memberService is nil")
 		return false
@@ -52,7 +65,6 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 		return false
 	}
 
-	chatID := message.Chat.ID
 	userID := message.From.ID
 
 	logger := log.WithFields(log.Fields{
@@ -64,12 +76,6 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 	})
 
 	// 1) Разрешённые чаты
-
-	// 1) Отдельный админ-чат всегда разрешён (служебный контур).
-	if chatID == f.adminChatID {
-		logger.Debug("allow: admin chat")
-		return true
-	}
 
 	if chatID == f.floodChatID {
 		logger.Debug("allow: flood chat")

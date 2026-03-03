@@ -124,8 +124,7 @@ func (b *Bot) Start(ctx context.Context) {
 	b.api.Start(ctx)
 }
 
-func (b *Bot) shouldTouchLastSeen(ctx context.Context, uc UpdateContext) bool {
-	_ = ctx // явный контракт: используем родительский context, без context.Background().
+func (b *Bot) shouldTouchLastSeen(uc UpdateContext) bool {
 	if uc.IsAdminChat || uc.UserID == 0 || uc.ChatMember != nil {
 		return false
 	}
@@ -141,15 +140,30 @@ func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 
 	uc := BuildUpdateContext(update, time.Now().UTC(), b.cfg)
 
+	if uc.IsAdminChat {
+		if uc.Message == nil {
+			return
+		}
+		cmd, args, isCommand := b.parser.ParseCommand(uc.Message.Text)
+		if isCommand && isAdminChatAllowedCommand(cmd) {
+			b.routeCommand(ctx, uc, cmd, args)
+		}
+		return
+	}
+
 	if b.handleMembershipUpdate(ctx, uc) {
 		return
 	}
 
 	if uc.Callback != nil {
-		if uc.IsAdminChat {
+		if uc.Callback.Message.Message == nil {
 			return
 		}
-		if b.shouldTouchLastSeen(ctx, uc) {
+		middleware.LogMessage(uc.Callback.Message.Message)
+		if !b.chatFilter.CheckAccess(ctx, uc.Callback.Message.Message) {
+			return
+		}
+		if b.shouldTouchLastSeen(uc) {
 			if err := b.memberService.EnsureActiveMemberSeen(ctx, uc.UserID, uc.Username, uc.FullName, uc.Now); err != nil {
 				log.WithError(err).WithField("user_id", uc.UserID).Debug("EnsureActiveMemberSeen failed")
 			}
@@ -178,15 +192,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 	chatID := message.Chat.ID
 	userID := message.From.ID
 
-	if uc.IsAdminChat {
-		cmd, args, isCommand := b.parser.ParseCommand(message.Text)
-		if isCommand && isAdminChatAllowedCommand(cmd) {
-			b.routeCommand(ctx, uc, cmd, args)
-		}
-		return
-	}
-
-	if b.shouldTouchLastSeen(ctx, uc) {
+	if b.shouldTouchLastSeen(uc) {
 		if err := b.memberService.EnsureActiveMemberSeen(ctx, userID, message.From.Username, buildDisplayName(message.From.FirstName, message.From.LastName), uc.Now); err != nil {
 			log.WithError(err).WithField("user_id", userID).Debug("EnsureActiveMemberSeen failed")
 		}
