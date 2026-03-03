@@ -26,8 +26,10 @@ type Config struct {
 	AdminIDs    []int64 `envconfig:"-"` // заполним вручную
 
 	TelegramBotToken string `envconfig:"TELEGRAM_BOT_TOKEN" required:"true"`
-	// ID чата, в котором бот работает (единственный разрешённый групповой чат)
+	// ID flood-чата для игровых/контентных механик.
 	FloodChatID int64 `envconfig:"FLOOD_CHAT_ID" required:"true"`
+	// ID основной группы — источник истины для membership lifecycle.
+	MainGroupID int64 `envconfig:"MAIN_GROUP_ID" required:"true"`
 
 	// --- Database ---
 	// В Docker внутри контейнера "localhost" почти всегда неправильно.
@@ -99,6 +101,9 @@ func (c *Config) DatabaseDSN() string {
 func (c *Config) Validate() error {
 	if c.FloodChatID == 0 {
 		return fmt.Errorf("FLOOD_CHAT_ID не задан или равен 0")
+	}
+	if c.MainGroupID == 0 {
+		return fmt.Errorf("MAIN_GROUP_ID не задан или равен 0")
 	}
 	if c.BotMaxInflight <= 0 {
 		return fmt.Errorf("BOT_MAX_INFLIGHT должен быть > 0")

@@ -3,11 +3,13 @@ package jobs
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
 	log "github.com/sirupsen/logrus"
 
+	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/features/streak"
 )
 
@@ -19,17 +21,29 @@ const (
 	cronErrorReminders   = "[CRON] Reminder run failed"
 	cronInfoStarted      = "Scheduler started (Europe/Moscow)"
 	cronInfoStopped      = "Scheduler stopped"
+
+	purgeTickInterval  = time.Hour
+	purgeBatchLimit    = 500
+	purgeMaxIterations = 10
 )
+
+type memberPurger interface {
+	PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error)
+}
 
 // Scheduler manages background tasks.
 type Scheduler struct {
 	cron          *cron.Cron
 	streakService *streak.Service
+	memberService memberPurger
 	sendFunc      func(userID int64, text string)
+
+	purgeCancel context.CancelFunc
+	purgeWG     sync.WaitGroup
 }
 
 // NewScheduler creates a scheduler configured for Europe/Moscow.
-func NewScheduler(streakService *streak.Service, sendFunc func(userID int64, text string)) *Scheduler {
+func NewScheduler(streakService *streak.Service, memberService *members.Service, sendFunc func(userID int64, text string)) *Scheduler {
 	loc, err := time.LoadLocation("Europe/Moscow")
 	if err != nil {
 		log.WithError(err).Warn(cronWarnLoadLocation)
@@ -41,6 +55,7 @@ func NewScheduler(streakService *streak.Service, sendFunc func(userID int64, tex
 	return &Scheduler{
 		cron:          c,
 		streakService: streakService,
+		memberService: memberService,
 		sendFunc:      sendFunc,
 	}
 }
@@ -63,10 +78,54 @@ func (s *Scheduler) Start(ctx context.Context) {
 
 	s.cron.Start()
 	log.Info(cronInfoStarted)
+
+	purgeCtx, cancel := context.WithCancel(ctx)
+	s.purgeCancel = cancel
+	s.purgeWG.Add(1)
+	go func() {
+		defer s.purgeWG.Done()
+		s.runPurgeWorker(purgeCtx)
+	}()
+}
+
+func (s *Scheduler) runPurgeWorker(ctx context.Context) {
+	ticker := time.NewTicker(purgeTickInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.runPurgeTick(ctx, time.Now().UTC())
+		}
+	}
+}
+
+func (s *Scheduler) runPurgeTick(ctx context.Context, now time.Time) {
+	totalDeleted := 0
+	for i := 0; i < purgeMaxIterations; i++ {
+		deleted, err := s.memberService.PurgeExpiredLeftMembers(ctx, now, purgeBatchLimit)
+		if err != nil {
+			log.WithError(err).WithField("iteration", i+1).Error("purge expired members failed")
+			break
+		}
+		totalDeleted += deleted
+		if deleted == 0 {
+			break
+		}
+	}
+
+	log.WithField("deleted", totalDeleted).Info("purge expired members: deleted=N")
 }
 
 // Stop gracefully stops scheduler.
 func (s *Scheduler) Stop() {
+	if s.purgeCancel != nil {
+		s.purgeCancel()
+	}
+	s.purgeWG.Wait()
+
 	ctx := s.cron.Stop()
 	<-ctx.Done()
 	log.Info(cronInfoStopped)

@@ -1,8 +1,10 @@
 package jobs
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCronLogMessages_DoNotContainMojibakeMarkers(t *testing.T) {
@@ -24,5 +26,44 @@ func TestCronLogMessages_DoNotContainMojibakeMarkers(t *testing.T) {
 				t.Fatalf("log message %q contains mojibake marker %q", msg, marker)
 			}
 		}
+	}
+}
+
+type fakeMemberPurger struct {
+	returns []int
+	calls   int
+}
+
+func (f *fakeMemberPurger) PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error) {
+	f.calls++
+	if f.calls <= len(f.returns) {
+		return f.returns[f.calls-1], nil
+	}
+	return 0, nil
+}
+
+func TestRunPurgeTick_LoopsUntilZero(t *testing.T) {
+	purger := &fakeMemberPurger{returns: []int{500, 120, 0}}
+	s := &Scheduler{memberService: purger}
+
+	s.runPurgeTick(context.Background(), time.Now().UTC())
+
+	if purger.calls != 3 {
+		t.Fatalf("calls = %d, want 3", purger.calls)
+	}
+}
+
+func TestRunPurgeTick_StopsAtMaxIterations(t *testing.T) {
+	returns := make([]int, purgeMaxIterations+5)
+	for i := range returns {
+		returns[i] = 1
+	}
+	purger := &fakeMemberPurger{returns: returns}
+	s := &Scheduler{memberService: purger}
+
+	s.runPurgeTick(context.Background(), time.Now().UTC())
+
+	if purger.calls != purgeMaxIterations {
+		t.Fatalf("calls = %d, want %d", purger.calls, purgeMaxIterations)
 	}
 }

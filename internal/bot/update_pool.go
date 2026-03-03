@@ -168,6 +168,16 @@ func updateChatID(update models.Update) (int64, bool) {
 			return update.EditedBusinessMessage.Chat.ID, true
 		}
 	}
+	if update.ChatMember != nil {
+		if update.ChatMember.Chat.ID != 0 {
+			return update.ChatMember.Chat.ID, true
+		}
+	}
+	if update.MyChatMember != nil {
+		if update.MyChatMember.Chat.ID != 0 {
+			return update.MyChatMember.Chat.ID, true
+		}
+	}
 	if update.CallbackQuery != nil {
 		if update.CallbackQuery.Message.Message != nil {
 			if update.CallbackQuery.Message.Message.Chat.ID != 0 {
