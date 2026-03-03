@@ -52,7 +52,6 @@ type Handler struct {
 	service        *Service
 	memberService  *members.Service
 	economyService economyService
-	bot            telegram.Client
 	ops            *telegram.Ops
 	undoMu         sync.Mutex
 	lastRoleUndo   map[int64]*roleUndoData
@@ -66,13 +65,12 @@ type roleUndoData struct {
 }
 
 // NewHandler создаёт обработчик админ-панели.
-func NewHandler(service *Service, memberService *members.Service, economyService economyService, bot telegram.Client) *Handler {
+func NewHandler(service *Service, memberService *members.Service, economyService economyService, ops *telegram.Ops) *Handler {
 	return &Handler{
 		service:        service,
 		memberService:  memberService,
 		economyService: economyService,
-		bot:            bot,
-		ops:            telegram.NewOps(bot),
+		ops:            ops,
 		lastRoleUndo:   make(map[int64]*roleUndoData),
 	}
 }

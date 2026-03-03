@@ -12,6 +12,7 @@ import (
 
 	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/features/members"
+	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 type tgCall struct {
@@ -192,13 +193,13 @@ func (r *fakeMemberRepoHandlers) UpdateAdminFlag(ctx context.Context, userID int
 func newAdminHandlerForFlow(t *testing.T, memberRepo *fakeMemberRepoHandlers, tg *fakeTG) *Handler {
 	t.Helper()
 	svc := NewService(fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
-	return NewHandler(svc, nil, &fakeEconomy{}, tg)
+	return NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg))
 }
 
 func newAdminHandlerWithEconomy(t *testing.T, memberRepo *fakeMemberRepoHandlers, tg *fakeTG, econ *fakeEconomy) *Handler {
 	t.Helper()
 	svc := NewService(fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
-	return NewHandler(svc, nil, econ, tg)
+	return NewHandler(svc, nil, econ, telegram.NewOps(tg))
 }
 
 func callback(chatID int64, msgID int, userID int64, data string) *models.CallbackQuery {
@@ -619,7 +620,7 @@ func TestUnauthorizedUser_CannotOpenAdminPanel(t *testing.T) {
 	tg := &fakeTG{}
 	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: false}}}
 	svc := NewService(fakeAdminRepoHandlers{hasSession: true}, repo, &config.Config{})
-	h := NewHandler(svc, nil, &fakeEconomy{}, tg)
+	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg))
 
 	handled := h.HandleAdminMessage(context.Background(), 77, 77, "/login")
 	if !handled {

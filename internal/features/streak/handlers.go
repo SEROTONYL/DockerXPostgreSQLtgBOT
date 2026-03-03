@@ -16,13 +16,13 @@ import (
 // Handler обрабатывает команды стрик-системы.
 type Handler struct {
 	service *Service
-	bot     telegram.Client
+	tgOps   *telegram.Ops
 	cfg     *config.Config
 }
 
 // NewHandler создаёт новый обработчик стрик-команд.
-func NewHandler(service *Service, bot telegram.Client, cfg *config.Config) *Handler {
-	return &Handler{service: service, bot: bot, cfg: cfg}
+func NewHandler(service *Service, tgOps *telegram.Ops, cfg *config.Config) *Handler {
+	return &Handler{service: service, tgOps: tgOps, cfg: cfg}
 }
 
 // HandleOgonek обрабатывает команду !огонек — показывает прогресс стрика.
@@ -92,7 +92,7 @@ func (h *Handler) HandleOgonek(ctx context.Context, chatID int64, userID int64) 
 
 // sendMessage — вспомогательный метод для отправки текстовых сообщений.
 func (h *Handler) sendMessage(chatID int64, text string) {
-	if _, err := h.bot.SendMessage(chatID, text, nil); err != nil {
+	if _, err := h.tgOps.Send(context.Background(), chatID, text, nil); err != nil {
 		log.WithError(err).Error("Ошибка отправки сообщения")
 	}
 }

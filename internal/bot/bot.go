@@ -33,9 +33,9 @@ type purgeMetricsProvider interface {
 
 // Bot — главная структура бота, объединяющая все компоненты.
 type Bot struct {
-	api *botapi.Bot
-	tg  telegram.Client
-	cfg *config.Config
+	api   *botapi.Bot
+	tgOps *telegram.Ops
+	cfg   *config.Config
 
 	chatFilter  *filters.ChatFilter
 	rateLimiter *middleware.RateLimiter
@@ -63,7 +63,7 @@ type Bot struct {
 // New создаёт новый экземпляр бота со всеми зависимостями.
 func New(
 	api *botapi.Bot,
-	tg telegram.Client,
+	tgOps *telegram.Ops,
 	cfg *config.Config,
 	memberService *members.Service,
 	memberHandler *members.Handler,
@@ -81,7 +81,7 @@ func New(
 ) *Bot {
 	b := &Bot{
 		api:            api,
-		tg:             tg,
+		tgOps:          tgOps,
 		cfg:            cfg,
 		chatFilter:     chatFilter,
 		rateLimiter:    middleware.NewRateLimiter(cfg.RateLimitRequests, cfg.RateLimitWindow),
@@ -291,10 +291,10 @@ func isAdminChatAllowedCommand(cmd string) bool {
 
 func (b *Bot) registerCommands() {
 	b.cmdRouter.Register("start", func(ctx context.Context, c commands.Context, args []string) {
-		b.sendMessage(c.ChatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
+		b.sendMessage(ctx, c.ChatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
 	})
 	b.cmdRouter.Register("help", func(ctx context.Context, c commands.Context, args []string) {
-		b.sendMessage(c.ChatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
+		b.sendMessage(ctx, c.ChatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
 	})
 	b.cmdRouter.Register("login", func(ctx context.Context, c commands.Context, args []string) {
 		if c.ChatID == c.UserID {
@@ -367,7 +367,7 @@ func (b *Bot) handleMembersStatusCommand(ctx context.Context, uc UpdateContext) 
 	}
 
 	text := fmt.Sprintf("Members:\n- Active: %d\n- Left (grace): %d\n- Pending purge: %d\n\nPurge:\n- Last run: %s\n- Last deleted: %d\n- Total deleted: %d\n- Last error: %s", active, left, pending, lastRun, metrics.LastRunDeleted, metrics.TotalDeleted, lastError)
-	b.sendMessage(uc.ChatID, text)
+	b.sendMessage(ctx, uc.ChatID, text)
 }
 
 // handleNewMembers обрабатывает вступление новых участников.
@@ -391,15 +391,15 @@ func (b *Bot) handleNewMembers(ctx context.Context, newMembers []models.User) {
 }
 
 // sendMessage — утилита для отправки сообщений.
-func (b *Bot) sendMessage(chatID int64, text string) {
-	if _, err := b.tg.SendMessage(chatID, text, nil); err != nil {
+func (b *Bot) sendMessage(ctx context.Context, chatID int64, text string) {
+	if _, err := b.tgOps.Send(ctx, chatID, text, nil); err != nil {
 		log.WithError(err).WithField("chat_id", chatID).Error("Ошибка отправки сообщения")
 	}
 }
 
 // SendMessageToUser отправляет сообщение пользователю (для напоминаний).
 func (b *Bot) SendMessageToUser(userID int64, text string) {
-	if _, err := b.tg.SendMessage(userID, text, nil); err != nil {
+	if _, err := b.tgOps.Send(context.Background(), userID, text, nil); err != nil {
 		log.WithError(err).WithField("user_id", userID).Debug("Не удалось отправить сообщение")
 	} else {
 		log.WithField("user_id", userID).Debug("message sent")

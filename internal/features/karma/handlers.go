@@ -13,12 +13,12 @@ import (
 // Handler обрабатывает события кармы.
 type Handler struct {
 	service *Service
-	bot     telegram.Client
+	tgOps   *telegram.Ops
 }
 
 // NewHandler создаёт обработчик кармы.
-func NewHandler(service *Service, bot telegram.Client) *Handler {
-	return &Handler{service: service, bot: bot}
+func NewHandler(service *Service, tgOps *telegram.Ops) *Handler {
+	return &Handler{service: service, tgOps: tgOps}
 }
 
 // HandleKarma — команда !карма. Показывает ТОЛЬКО свою карму.
@@ -43,7 +43,7 @@ func (h *Handler) HandleThankYou(ctx context.Context, chatID int64, fromUserID, 
 }
 
 func (h *Handler) sendMessage(chatID int64, text string) {
-	if _, err := h.bot.SendMessage(chatID, text, nil); err != nil {
+	if _, err := h.tgOps.Send(context.Background(), chatID, text, nil); err != nil {
 		log.WithError(err).Error("Ошибка отправки сообщения")
 	}
 }

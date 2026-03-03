@@ -8,6 +8,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"serotonyl.ru/telegram-bot/internal/features/members"
+	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 type fakeMemberRepo struct{}
@@ -63,7 +64,7 @@ func (f *fakeTG) GetChatMember(chatID int64, userID int64) (member models.ChatMe
 
 func TestCheckAccess_AdminChatAlwaysAllowed(t *testing.T) {
 	memberSvc := members.NewService(&fakeMemberRepo{})
-	f := NewChatFilter(-1001, -2002, memberSvc, &fakeTG{})
+	f := NewChatFilter(-1001, -2002, memberSvc, &fakeTG{}, telegram.NewOps(&fakeTG{}))
 	msg := &models.Message{Chat: models.Chat{ID: -2002, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 42}}
 
 	if ok := f.CheckAccess(context.Background(), msg); !ok {

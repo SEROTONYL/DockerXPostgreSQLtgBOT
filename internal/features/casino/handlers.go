@@ -15,12 +15,12 @@ import (
 // Handler обрабатывает команды казино.
 type Handler struct {
 	service *Service
-	bot     telegram.Client
+	tgOps   *telegram.Ops
 }
 
 // NewHandler создаёт обработчик казино.
-func NewHandler(service *Service, bot telegram.Client) *Handler {
-	return &Handler{service: service, bot: bot}
+func NewHandler(service *Service, tgOps *telegram.Ops) *Handler {
+	return &Handler{service: service, tgOps: tgOps}
 }
 
 // HandleSlots обрабатывает команду !слоты — спин слот-машины.
@@ -137,7 +137,7 @@ func (h *Handler) HandleSlotStats(ctx context.Context, chatID int64, userID int6
 }
 
 func (h *Handler) sendMessage(chatID int64, text string) {
-	if _, err := h.bot.SendMessage(chatID, text, nil); err != nil {
+	if _, err := h.tgOps.Send(context.Background(), chatID, text, nil); err != nil {
 		log.WithError(err).Error("Ошибка отправки сообщения")
 	}
 }
