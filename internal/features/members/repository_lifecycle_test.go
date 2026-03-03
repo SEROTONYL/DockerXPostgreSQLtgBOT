@@ -67,17 +67,30 @@ func TestPurgeDeleteQueries_RemoveDomainDataBeforeMembers(t *testing.T) {
 	}
 }
 
-func TestTouchLastSeenQuery_UsesThrottleCondition(t *testing.T) {
-	q := touchLastSeenQuery()
+func TestEnsureMemberSeenQuery_UsesThrottleCondition(t *testing.T) {
+	q := ensureMemberSeenQuery()
 	checks := []string{
 		"UPDATE members",
-		"last_seen_at = $2",
-		"user_id = $1",
-		"last_seen_at IS NULL OR last_seen_at < $2 - INTERVAL '5 minutes'",
+		"WHERE user_id = $1",
+		"last_seen_at < $4 - INTERVAL '5 minutes'",
 	}
 	for _, c := range checks {
 		if !strings.Contains(q, c) {
-			t.Fatalf("touch query missing %q: %s", c, q)
+			t.Fatalf("ensure seen query missing %q: %s", c, q)
+		}
+	}
+}
+
+func TestEnsureActiveMemberSeenQuery_UsesThrottleCondition(t *testing.T) {
+	q := ensureActiveMemberSeenQuery()
+	checks := []string{
+		"INSERT INTO members",
+		"ON CONFLICT (user_id) DO UPDATE",
+		"members.last_seen_at < $5 - INTERVAL '5 minutes'",
+	}
+	for _, c := range checks {
+		if !strings.Contains(q, c) {
+			t.Fatalf("ensure active seen query missing %q: %s", c, q)
 		}
 	}
 }

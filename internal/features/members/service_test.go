@@ -20,9 +20,12 @@ type fakeRepo struct {
 	isActiveResult      bool
 	purgeCalled         bool
 	purgeDeleted        int
-	touchCalled         bool
-	touchUserID         int64
-	touchSeenAt         time.Time
+	ensureSeenCalled    bool
+	ensureSeenUserID    int64
+	ensureSeenUsername  string
+	ensureSeenName      string
+	ensureSeenAt        time.Time
+	ensureActiveCalled  bool
 	countActive         int
 	countLeft           int
 	pendingPurge        int
@@ -59,10 +62,20 @@ func (f *fakeRepo) GetByUserID(ctx context.Context, userID int64) (*Member, erro
 func (f *fakeRepo) GetByUsername(ctx context.Context, username string) (*Member, error) {
 	return nil, nil
 }
-func (f *fakeRepo) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
-	f.touchCalled = true
-	f.touchUserID = userID
-	f.touchSeenAt = seenAt
+func (f *fakeRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	f.ensureSeenCalled = true
+	f.ensureSeenUserID = userID
+	f.ensureSeenUsername = username
+	f.ensureSeenName = name
+	f.ensureSeenAt = seenAt
+	return nil
+}
+func (f *fakeRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	f.ensureActiveCalled = true
+	f.ensureSeenUserID = userID
+	f.ensureSeenUsername = username
+	f.ensureSeenName = name
+	f.ensureSeenAt = seenAt
 	return nil
 }
 func (f *fakeRepo) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {
@@ -144,17 +157,31 @@ func TestServicePurgeExpiredLeftMembers(t *testing.T) {
 	}
 }
 
-func TestServiceTouchLastSeen(t *testing.T) {
+func TestServiceEnsureMemberSeen(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(repo)
 	now := time.Now().UTC().Truncate(time.Second)
 
-	if err := svc.TouchLastSeen(context.Background(), 12, now); err != nil {
+	if err := svc.EnsureMemberSeen(context.Background(), 12, "john", "John", now); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !repo.touchCalled || repo.touchUserID != 12 || !repo.touchSeenAt.Equal(now) {
-		t.Fatalf("unexpected touch args: %+v", repo)
+	if !repo.ensureSeenCalled || repo.ensureSeenUserID != 12 || repo.ensureSeenUsername != "john" || repo.ensureSeenName != "John" || !repo.ensureSeenAt.Equal(now) {
+		t.Fatalf("unexpected ensure seen args: %+v", repo)
+	}
+}
+
+func TestServiceEnsureActiveMemberSeen(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := svc.EnsureActiveMemberSeen(context.Background(), 77, "neo", "Neo", now); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !repo.ensureActiveCalled || repo.ensureSeenUserID != 77 || !repo.ensureSeenAt.Equal(now) {
+		t.Fatalf("unexpected ensure active args: %+v", repo)
 	}
 }
 

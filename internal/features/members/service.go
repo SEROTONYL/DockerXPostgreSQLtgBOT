@@ -22,7 +22,8 @@ type memberRepository interface {
 	PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error)
 	GetByUserID(ctx context.Context, userID int64) (*Member, error)
 	GetByUsername(ctx context.Context, username string) (*Member, error)
-	TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error
+	EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error
+	EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error
 	CountMembersByStatus(ctx context.Context) (active int, left int, err error)
 	CountPendingPurge(ctx context.Context, now time.Time) (int, error)
 }
@@ -65,10 +66,19 @@ func (s *Service) MarkMemberLeftNow(ctx context.Context, userID int64) error {
 	return s.MarkMemberLeft(ctx, userID, leftAt, leftAt.Add(leftGracePeriod))
 }
 
-// TouchLastSeen обновляет last_seen_at не чаще порога троттлинга.
-func (s *Service) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
-	if err := s.repo.TouchLastSeen(ctx, userID, seenAt.UTC()); err != nil {
-		return fmt.Errorf("ошибка touch last seen: %w", err)
+// EnsureMemberSeen обновляет известные данные/last_seen только для уже существующего участника.
+// Строгий режим: если записи нет (например, DM "из воздуха"), создаём ничего и возвращаем nil.
+func (s *Service) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	if err := s.repo.EnsureMemberSeen(ctx, userID, username, name, seenAt.UTC()); err != nil {
+		return fmt.Errorf("ошибка ensure member seen: %w", err)
+	}
+	return nil
+}
+
+// EnsureActiveMemberSeen обновляет/создаёт участника как active (для апдейтов из основной группы).
+func (s *Service) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	if err := s.repo.EnsureActiveMemberSeen(ctx, userID, username, name, seenAt.UTC()); err != nil {
+		return fmt.Errorf("ошибка ensure active member seen: %w", err)
 	}
 	return nil
 }

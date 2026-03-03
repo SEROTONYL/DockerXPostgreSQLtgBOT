@@ -1,7 +1,6 @@
 package bot
 
 import (
-	"context"
 	"time"
 
 	"github.com/go-telegram/bot/models"
@@ -93,21 +92,4 @@ func hasUserActivity(uc UpdateContext) bool {
 		return true
 	}
 	return false
-}
-
-// shouldTouchLastSeen определяет, когда можно безопасно трогать last_seen_at.
-// Правило: в MAIN_GROUP_ID и membership update всегда можно; в DM/прочих чатах —
-// только если участник уже существует (чтобы не создавать пользователя "из воздуха").
-func (b *Bot) shouldTouchLastSeen(ctx UpdateContext) bool {
-	if !hasUserActivity(ctx) {
-		return false
-	}
-	if ctx.ChatID == b.cfg.MainGroupID || ctx.ChatMember != nil {
-		return true
-	}
-	active, err := b.memberService.IsActiveMember(context.Background(), ctx.UserID)
-	if err != nil {
-		return false
-	}
-	return active
 }

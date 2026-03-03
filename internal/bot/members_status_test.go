@@ -55,7 +55,10 @@ func (f *fakeMembersRepoStatus) GetByUserID(ctx context.Context, userID int64) (
 func (f *fakeMembersRepoStatus) GetByUsername(ctx context.Context, username string) (*members.Member, error) {
 	return &members.Member{}, nil
 }
-func (f *fakeMembersRepoStatus) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
+func (f *fakeMembersRepoStatus) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	return nil
+}
+func (f *fakeMembersRepoStatus) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
 	return nil
 }
 func (f *fakeMembersRepoStatus) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {

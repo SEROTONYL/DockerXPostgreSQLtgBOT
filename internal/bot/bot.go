@@ -130,12 +130,6 @@ func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 
 	uc := BuildUpdateContext(update, time.Now().UTC(), b.cfg)
 
-	if b.shouldTouchLastSeen(uc) {
-		if err := b.memberService.TouchLastSeen(ctx, uc.UserID, uc.Now); err != nil {
-			log.WithError(err).WithField("user_id", uc.UserID).Debug("TouchLastSeen failed")
-		}
-	}
-
 	if b.handleMembershipUpdate(ctx, uc) {
 		return
 	}
@@ -143,6 +137,15 @@ func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 	if uc.Callback != nil {
 		if uc.IsAdminChat {
 			return
+		}
+		if uc.ChatID == b.cfg.MainGroupID {
+			if err := b.memberService.EnsureActiveMemberSeen(ctx, uc.UserID, uc.Username, uc.FullName, uc.Now); err != nil {
+				log.WithError(err).WithField("user_id", uc.UserID).Debug("EnsureActiveMemberSeen failed")
+			}
+		} else {
+			if err := b.memberService.EnsureMemberSeen(ctx, uc.UserID, uc.Username, uc.FullName, uc.Now); err != nil {
+				log.WithError(err).WithField("user_id", uc.UserID).Debug("EnsureMemberSeen failed")
+			}
 		}
 		if b.adminHandler.HandleAdminCallback(ctx, uc.Callback) {
 			return
@@ -176,10 +179,14 @@ func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 		return
 	}
 
-	if err := b.memberService.EnsureMember(ctx, userID,
-		message.From.Username, message.From.FirstName, message.From.LastName,
-	); err != nil {
-		log.WithError(err).WithField("user_id", userID).Warn("EnsureMember failed")
+	if chatID == b.cfg.MainGroupID {
+		if err := b.memberService.EnsureActiveMemberSeen(ctx, userID, message.From.Username, buildDisplayName(message.From.FirstName, message.From.LastName), uc.Now); err != nil {
+			log.WithError(err).WithField("user_id", userID).Debug("EnsureActiveMemberSeen failed")
+		}
+	} else {
+		if err := b.memberService.EnsureMemberSeen(ctx, userID, message.From.Username, buildDisplayName(message.From.FirstName, message.From.LastName), uc.Now); err != nil {
+			log.WithError(err).WithField("user_id", userID).Debug("EnsureMemberSeen failed")
+		}
 	}
 
 	if uc.IsPrivate {

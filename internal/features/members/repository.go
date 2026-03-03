@@ -198,10 +198,18 @@ func (r *Repository) Exists(ctx context.Context, userID int64) (bool, error) {
 	return exists, nil
 }
 
-func (r *Repository) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
-	query := touchLastSeenQuery()
-	if _, err := r.db.Exec(ctx, query, userID, seenAt.UTC()); err != nil {
-		return fmt.Errorf("ошибка обновления last_seen_at: %w", err)
+func (r *Repository) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	query := ensureMemberSeenQuery()
+	if _, err := r.db.Exec(ctx, query, userID, username, name, seenAt.UTC()); err != nil {
+		return fmt.Errorf("ошибка ensure member seen: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	query := ensureActiveMemberSeenQuery()
+	if _, err := r.db.Exec(ctx, query, userID, username, name, StatusActive, seenAt.UTC()); err != nil {
+		return fmt.Errorf("ошибка ensure active member seen: %w", err)
 	}
 	return nil
 }
@@ -300,6 +308,41 @@ func usersWithRoleQuery() string {
 	`
 }
 
+func ensureMemberSeenQuery() string {
+	return `
+		UPDATE members
+		SET username = $2,
+		    first_name = $3,
+		    last_known_name = $3,
+		    last_seen_at = CASE
+		        WHEN last_seen_at IS NULL OR last_seen_at < $4 - INTERVAL '5 minutes' THEN $4
+		        ELSE last_seen_at
+		    END,
+		    updated_at = NOW()
+		WHERE user_id = $1
+	`
+}
+
+func ensureActiveMemberSeenQuery() string {
+	return `
+		INSERT INTO members (user_id, username, first_name, status, joined_at, left_at, delete_after, last_seen_at, last_known_name)
+		VALUES ($1, $2, $3, $4, $5, NULL, NULL, $5, $3)
+		ON CONFLICT (user_id) DO UPDATE
+		SET username = EXCLUDED.username,
+		    first_name = EXCLUDED.first_name,
+		    status = $4,
+		    joined_at = COALESCE(members.joined_at, EXCLUDED.joined_at),
+		    left_at = NULL,
+		    delete_after = NULL,
+		    last_seen_at = CASE
+		        WHEN members.last_seen_at IS NULL OR members.last_seen_at < $5 - INTERVAL '5 minutes' THEN $5
+		        ELSE members.last_seen_at
+		    END,
+		    last_known_name = EXCLUDED.last_known_name,
+		    updated_at = NOW()
+	`
+}
+
 func countMembersByStatusQuery() string {
 	return `
 		SELECT
@@ -314,16 +357,6 @@ func countPendingPurgeQuery() string {
 		SELECT COUNT(*)
 		FROM members
 		WHERE status = $1 AND delete_after IS NOT NULL AND delete_after <= $2
-	`
-}
-
-func touchLastSeenQuery() string {
-	return `
-		UPDATE members
-		SET last_seen_at = $2,
-		    updated_at = NOW()
-		WHERE user_id = $1
-		  AND (last_seen_at IS NULL OR last_seen_at < $2 - INTERVAL '5 minutes')
 	`
 }
 
