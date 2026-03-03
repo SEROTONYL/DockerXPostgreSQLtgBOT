@@ -11,6 +11,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"serotonyl.ru/telegram-bot/internal/features/members"
+	"serotonyl.ru/telegram-bot/internal/telegram"
 	"serotonyl.ru/telegram-bot/internal/uiwizard"
 )
 
@@ -39,10 +40,10 @@ const (
 	undoTTL                = 30 * time.Minute
 )
 
-func (h *Handler) startBalanceAdjustMode(chatID, userID int64, panelMsgID int) {
+func (h *Handler) startBalanceAdjustMode(ctx context.Context, chatID, userID int64, panelMsgID int) {
 	data := &BalanceAdjustData{PageSize: userPickerPageSize, SelectedUserIDs: map[int64]bool{}, Wizard: &uiwizard.WizardState{ChatID: chatID, MessageID: panelMsgID, StartedAt: time.Now(), Step: StateBalanceAdjustMode}}
 	h.service.SetState(userID, StateBalanceAdjustMode, data)
-	h.renderWizard(chatID, userID, data, "balance_adjust_mode", "Выберите режим изменения баланса:", newInlineKeyboardMarkup(
+	h.renderWizard(ctx, chatID, userID, data, "balance_adjust_mode", "Выберите режим изменения баланса:", newInlineKeyboardMarkup(
 		newInlineKeyboardRow(
 			newInlineKeyboardButtonData("➕ Прибавить", "admin:balmode:add"),
 			newInlineKeyboardButtonData("➖ Отнять", "admin:balmode:deduct"),
@@ -51,7 +52,7 @@ func (h *Handler) startBalanceAdjustMode(chatID, userID int64, panelMsgID int) {
 	))
 }
 
-func (h *Handler) renderWizard(chatID, userID int64, data *BalanceAdjustData, screenName, text string, markup models.InlineKeyboardMarkup) {
+func (h *Handler) renderWizard(ctx context.Context, chatID, userID int64, data *BalanceAdjustData, screenName, text string, markup models.InlineKeyboardMarkup) {
 	if data == nil {
 		if st := h.service.GetState(userID); st != nil {
 			data, _ = st.Data.(*BalanceAdjustData)
@@ -64,22 +65,15 @@ func (h *Handler) renderWizard(chatID, userID int64, data *BalanceAdjustData, sc
 	if w.ChatID == 0 {
 		w.ChatID = chatID
 	}
+	h.setWizardCtx(ctx)
 	ui := uiwizard.Output{Text: text, Markup: &markup}
 	err := uiwizard.Render(h, w, ui,
-		func(err error) bool {
-			d := strings.ToLower(err.Error())
-			return strings.Contains(d, "message to edit not found") ||
-				strings.Contains(d, "message not found") ||
-				strings.Contains(d, "message can't be edited") ||
-				strings.Contains(d, "message can’t be edited")
-		},
-		func(err error) bool {
-			return strings.Contains(strings.ToLower(err.Error()), "message is not modified")
-		},
+		telegram.ShouldFallbackToSendOnEdit,
+		telegram.IsEditNotModified,
 	)
 	if err != nil {
 		h.logAdminUIError(userID, chatID, w.MessageID, screenName, "wizard_render", 0, "", err)
-		h.sendUIErrorHint(chatID, err)
+		h.sendUIErrorHint(ctx, chatID, err)
 		return
 	}
 	h.attachPanelMessageID(userID, w.MessageID)
@@ -186,7 +180,7 @@ func (h *Handler) renderBalancePicker(chatID, userID int64) {
 	}
 	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalPickBack, "danger")))
 	text := fmt.Sprintf("Выберите пользователей (только с ролью).\nВыбрано: %d", len(data.SelectedUserIDs))
-	h.renderWizard(chatID, userID, data, "balance_adjust_picker", text, newInlineKeyboardMarkup(rows...))
+	h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_picker", text, newInlineKeyboardMarkup(rows...))
 }
 
 func (h *Handler) handleBalancePicker(chatID, userID int64, cb string) {
@@ -226,7 +220,7 @@ func (h *Handler) handleBalancePicker(chatID, userID int64, cb string) {
 		h.service.SetState(userID, StateBalanceAdjustAmount, data)
 		h.renderBalanceAmount(chatID, userID)
 	case cb == cbBalPickBack:
-		h.startBalanceAdjustMode(chatID, userID, h.balanceWizardState(data).MessageID)
+		h.startBalanceAdjustMode(h.currentWizardCtx(), chatID, userID, h.balanceWizardState(data).MessageID)
 	case strings.HasPrefix(cb, cbBalPickToggle+":"):
 		id, err := strconv.ParseInt(strings.TrimPrefix(cb, cbBalPickToggle+":"), 10, 64)
 		if err != nil || id <= 0 {
@@ -252,7 +246,7 @@ func (h *Handler) renderBalanceAmount(chatID, userID int64) {
 		h.resetBalanceFlow(chatID, userID, data)
 		return
 	}
-	deltas, err := h.service.repo.ListBalanceDeltas(context.Background(), chatID)
+	deltas, err := h.service.repo.ListBalanceDeltas(h.currentWizardCtx(), chatID)
 	if err != nil {
 		h.renderWizardError(chatID, userID, data, "balance_adjust_amount", "Выберите сумму изменения:", "Не удалось загрузить дельты", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
 		return
@@ -268,7 +262,7 @@ func (h *Handler) renderBalanceAmount(chatID, userID int64) {
 	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData("➕ Добавить дельту", cbBalAmtAddDelta)))
 	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData("Ввести сумму вручную", cbBalAmtManual)))
 	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger")))
-	h.renderWizard(chatID, userID, data, "balance_adjust_amount", "Выберите сумму изменения:", newInlineKeyboardMarkup(rows...))
+	h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_amount", "Выберите сумму изменения:", newInlineKeyboardMarkup(rows...))
 }
 
 func (h *Handler) handleBalanceAmount(chatID, userID int64, cb string) {
@@ -294,7 +288,7 @@ func (h *Handler) handleBalanceAmount(chatID, userID int64, cb string) {
 	case state.State == StateBalanceAdjustAmount && cb == cbBalAmtManual:
 		data.AwaitingManual = true
 		h.balanceWizardState(data).AwaitTextFor = "amount"
-		h.renderWizard(chatID, userID, data, "balance_adjust_amount_manual", fmt.Sprintf("Отправьте сумму (целое число > 0 и <= %d)", maxBalanceAdjustAmount), newInlineKeyboardMarkup(
+		h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_amount_manual", fmt.Sprintf("Отправьте сумму (целое число > 0 и <= %d)", maxBalanceAdjustAmount), newInlineKeyboardMarkup(
 			newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger")),
 		))
 	case state.State == StateBalanceAdjustAmount && cb == cbBalAmtAddDelta:
@@ -303,7 +297,7 @@ func (h *Handler) handleBalanceAmount(chatID, userID int64, cb string) {
 		uiwizard.Transition(w, StateBalanceDeltaName)
 		w.AwaitTextFor = "delta_name"
 		h.service.SetState(userID, StateBalanceDeltaName, data)
-		h.renderWizard(chatID, userID, data, "balance_delta_name", "Введите название дельты (1..32)", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
+		h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_delta_name", "Введите название дельты (1..32)", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
 	case cb == cbBalAmtBack && state.State == StateBalanceAdjustAmount:
 		uiwizard.Transition(h.balanceWizardState(data), StateBalanceAdjustPicker)
 		h.service.SetState(userID, StateBalanceAdjustPicker, data)
@@ -341,7 +335,7 @@ func (h *Handler) handleBalanceAdjustManualAmount(ctx context.Context, chatID, u
 		normalized := strings.ReplaceAll(strings.TrimSpace(rawText), " ", "")
 		amount, err := strconv.ParseInt(normalized, 10, 64)
 		if err != nil || validateBalanceAmount(amount) != nil {
-			h.renderWizard(chatID, userID, data, "balance_adjust_amount_manual", fmt.Sprintf("Отправьте сумму (целое число > 0 и <= %d)\n❌ Некорректная сумма", maxBalanceAdjustAmount), newInlineKeyboardMarkup(
+			h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_amount_manual", fmt.Sprintf("Отправьте сумму (целое число > 0 и <= %d)\n❌ Некорректная сумма", maxBalanceAdjustAmount), newInlineKeyboardMarkup(
 				newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger")),
 			))
 			return true
@@ -363,13 +357,13 @@ func (h *Handler) handleBalanceAdjustManualAmount(ctx context.Context, chatID, u
 			}
 		}
 		if len([]rune(name)) == 0 || len([]rune(name)) > 32 {
-			h.renderWizard(chatID, userID, data, "balance_delta_name", "Введите название дельты (1..32)\n❌ Некорректное название", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
+			h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_delta_name", "Введите название дельты (1..32)\n❌ Некорректное название", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
 			return true
 		}
 		data.PendingDeltaName = name
 		uiwizard.Transition(h.balanceWizardState(data), StateBalanceDeltaAmount)
 		h.service.SetState(userID, StateBalanceDeltaAmount, data)
-		h.renderWizard(chatID, userID, data, "balance_delta_amount", fmt.Sprintf("Введите сумму дельты (целое > 0 и <= %d)", maxBalanceAdjustAmount), newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
+		h.renderWizard(ctx, chatID, userID, data, "balance_delta_amount", fmt.Sprintf("Введите сумму дельты (целое > 0 и <= %d)", maxBalanceAdjustAmount), newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
 		return true
 	}
 	if state.State == StateBalanceDeltaAmount {
@@ -382,11 +376,11 @@ func (h *Handler) handleBalanceAdjustManualAmount(ctx context.Context, chatID, u
 		normalized := strings.ReplaceAll(strings.TrimSpace(rawText), " ", "")
 		amount, err := strconv.ParseInt(normalized, 10, 64)
 		if err != nil || validateBalanceAmount(amount) != nil {
-			h.renderWizard(chatID, userID, data, "balance_delta_amount", fmt.Sprintf("Введите сумму дельты (целое > 0 и <= %d)\n❌ Некорректная сумма", maxBalanceAdjustAmount), newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
+			h.renderWizard(ctx, chatID, userID, data, "balance_delta_amount", fmt.Sprintf("Введите сумму дельты (целое > 0 и <= %d)\n❌ Некорректная сумма", maxBalanceAdjustAmount), newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
 			return true
 		}
 		if err := h.service.repo.CreateBalanceDelta(ctx, chatID, data.PendingDeltaName, amount, userID); err != nil {
-			h.renderWizard(chatID, userID, data, "balance_delta_amount", "❌ Не удалось создать дельту", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
+			h.renderWizard(ctx, chatID, userID, data, "balance_delta_amount", "❌ Не удалось создать дельту", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
 			return true
 		}
 		data.PendingDeltaName = ""
@@ -418,7 +412,7 @@ func (h *Handler) renderBalanceConfirm(chatID, userID int64) {
 		sign = "-"
 	}
 	text := fmt.Sprintf("Подтверждение:\nРежим: %s\nПользователи: %s\nСумма: %s%d\nБудет применено к %d пользователям", map[BalanceAdjustMode]string{BalanceAdjustModeAdd: "➕", BalanceAdjustModeDeduct: "➖"}[data.Mode], summary, sign, data.Amount, len(ids))
-	h.renderWizard(chatID, userID, data, "balance_adjust_confirm", text, newInlineKeyboardMarkup(
+	h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_confirm", text, newInlineKeyboardMarkup(
 		newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Применить", cbBalConfirmApply, "success")),
 		newInlineKeyboardRow(newInlineKeyboardButtonData("↩️ Назад", cbBalConfirmBack), newInlineKeyboardButtonDataStyled("❌ Отмена", cbBalConfirmCancel, "danger")),
 	))
@@ -444,7 +438,7 @@ func (h *Handler) handleBalanceConfirm(ctx context.Context, chatID, userID int64
 		h.renderBalanceAmount(chatID, userID)
 	case cbBalConfirmCancel:
 		h.service.ClearState(userID)
-		h.showKeyboardSafe(chatID, userID, h.balanceWizardState(data).MessageID)
+		h.showKeyboardSafe(ctx, chatID, userID, h.balanceWizardState(data).MessageID)
 	case cbBalConfirmApply:
 		ids := selectedIDs(data.SelectedUserIDs)
 		invalidIDs := h.findInvalidUsersForAdjust(ctx, ids)
@@ -472,9 +466,9 @@ func (h *Handler) handleBalanceConfirm(ctx context.Context, chatID, userID int64
 					errText = fmt.Sprintf("Недостаточно средств у userID=%d", id)
 				}
 				if len(rollbackErrs) > 0 {
-					h.renderWizard(chatID, userID, data, "balance_adjust_error", fmt.Sprintf("❌ Ошибка применения: %s\nОткат: %s", errText, strings.Join(rollbackErrs, "; ")), newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
+					h.renderWizard(ctx, chatID, userID, data, "balance_adjust_error", fmt.Sprintf("❌ Ошибка применения: %s\nОткат: %s", errText, strings.Join(rollbackErrs, "; ")), newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
 				} else {
-					h.renderWizard(chatID, userID, data, "balance_adjust_error", fmt.Sprintf("❌ Ошибка применения: %s", errText), newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
+					h.renderWizard(ctx, chatID, userID, data, "balance_adjust_error", fmt.Sprintf("❌ Ошибка применения: %s", errText), newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
 				}
 				return
 			}
@@ -507,7 +501,7 @@ func (h *Handler) renderBalanceSuccess(chatID, userID int64, data *BalanceAdjust
 		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("↩️ Отменить", cbBalUndo, "danger")))
 	}
 	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success")))
-	h.renderWizard(chatID, userID, data, "balance_adjust_success", text, newInlineKeyboardMarkup(rows...))
+	h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_success", text, newInlineKeyboardMarkup(rows...))
 }
 
 func (h *Handler) handleBalanceUndo(ctx context.Context, chatID, userID int64) {
@@ -517,25 +511,25 @@ func (h *Handler) handleBalanceUndo(ctx context.Context, chatID, userID int64) {
 	}
 	data, _ := state.Data.(*BalanceAdjustData)
 	if data == nil || len(data.LastOperation) == 0 || data.Undone {
-		h.renderWizard(chatID, userID, data, "balance_adjust_undo_empty", "Нечего отменять", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
+		h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_undo_empty", "Нечего отменять", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
 		return
 	}
 	if time.Since(data.LastOperationAt) > undoTTL {
 		data.LastOperation = nil
 		data.Undone = true
-		h.renderWizard(chatID, userID, data, "balance_adjust_undo_expired", "Операция устарела, откат недоступен", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
+		h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_undo_expired", "Операция устарела, откат недоступен", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
 		return
 	}
 	for i := len(data.LastOperation) - 1; i >= 0; i-- {
 		op := data.LastOperation[i]
 		if op.Mode == BalanceAdjustModeAdd {
 			if err := h.economyService.DeductBalance(ctx, op.UserID, op.Amount, "admin_adjust_undo", "undo"); err != nil {
-				h.renderWizard(chatID, userID, data, "balance_adjust_undo_err", "❌ Ошибка отката", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
+				h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_undo_err", "❌ Ошибка отката", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
 				return
 			}
 		} else {
 			if err := h.economyService.AddBalance(ctx, op.UserID, op.Amount, "admin_adjust_undo", "undo"); err != nil {
-				h.renderWizard(chatID, userID, data, "balance_adjust_undo_err", "❌ Ошибка отката", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
+				h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_undo_err", "❌ Ошибка отката", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
 				return
 			}
 		}
@@ -543,7 +537,7 @@ func (h *Handler) handleBalanceUndo(ctx context.Context, chatID, userID int64) {
 	data.Undone = true
 	data.LastOperation = nil
 	h.service.ClearState(userID)
-	h.renderAdminScreen(chatID, userID, h.balanceWizardState(data).MessageID, "balance_adjust_undo_done", "↩️ Откат выполнен", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
+	h.renderAdminScreen(h.currentWizardCtx(), chatID, userID, h.balanceWizardState(data).MessageID, "balance_adjust_undo_done", "↩️ Откат выполнен", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
 }
 
 func (h *Handler) ensureBalanceState(chatID, userID int64, expected string) bool {
@@ -561,7 +555,7 @@ func (h *Handler) ensureBalanceState(chatID, userID int64, expected string) bool
 }
 
 func (h *Handler) renderWizardError(chatID, userID int64, data *BalanceAdjustData, screenName, base, errText string, markup models.InlineKeyboardMarkup) {
-	h.renderWizard(chatID, userID, data, screenName, fmt.Sprintf("%s\n❌ %s", base, errText), markup)
+	h.renderWizard(h.currentWizardCtx(), chatID, userID, data, screenName, fmt.Sprintf("%s\n❌ %s", base, errText), markup)
 }
 
 func (h *Handler) resetBalanceFlow(chatID, userID int64, data *BalanceAdjustData) {
@@ -574,10 +568,10 @@ func (h *Handler) resetBalanceFlow(chatID, userID int64, data *BalanceAdjustData
 	}
 	h.service.ClearState(userID)
 	if flowMsgID > 0 {
-		h.renderAdminScreen(chatID, userID, flowMsgID, "balance_adjust_reset", "⚠️ Сессия сбилась/устарела. Возврат в админ-панель.", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
+		h.renderAdminScreen(h.currentWizardCtx(), chatID, userID, flowMsgID, "balance_adjust_reset", "⚠️ Сессия сбилась/устарела. Возврат в админ-панель.", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"))))
 		return
 	}
-	h.showKeyboardSafe(chatID, userID, 0)
+	h.showKeyboardSafe(h.currentWizardCtx(), chatID, userID, 0)
 }
 
 func (h *Handler) balanceWizardState(data *BalanceAdjustData) *uiwizard.WizardState {
@@ -594,11 +588,11 @@ func (h *Handler) balanceWizardState(data *BalanceAdjustData) *uiwizard.WizardSt
 }
 
 func (h *Handler) EditMessageText(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
-	return h.ops.Edit(context.Background(), chatID, messageID, text, markup)
+	return h.ops.Edit(h.currentWizardCtx(), chatID, messageID, text, markup)
 }
 
 func (h *Handler) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
-	return h.ops.Send(context.Background(), chatID, text, markup)
+	return h.ops.Send(h.currentWizardCtx(), chatID, text, markup)
 }
 
 func validateBalanceAmount(amount int64) error {
