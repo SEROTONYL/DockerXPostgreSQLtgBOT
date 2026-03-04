@@ -11,6 +11,14 @@ import (
 	"serotonyl.ru/telegram-bot/internal/commands"
 	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/feature"
+	"serotonyl.ru/telegram-bot/internal/features/admin"
+	"serotonyl.ru/telegram-bot/internal/features/casino"
+	"serotonyl.ru/telegram-bot/internal/features/core"
+	"serotonyl.ru/telegram-bot/internal/features/debts"
+	"serotonyl.ru/telegram-bot/internal/features/economy"
+	"serotonyl.ru/telegram-bot/internal/features/karma"
+	"serotonyl.ru/telegram-bot/internal/features/members"
+	"serotonyl.ru/telegram-bot/internal/features/streak"
 	"serotonyl.ru/telegram-bot/internal/jobs"
 )
 
@@ -34,27 +42,65 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	}
 
 	var scheduler *jobs.Scheduler
-	adminModule := modules.BuildAdminModule(cfg, infra, tg, func() jobs.PurgeMetrics {
-		if scheduler == nil {
-			return jobs.PurgeMetrics{}
-		}
-		return scheduler.GetPurgeMetrics()
+	adminModule, err := admin.NewModule(admin.Deps{
+		Cfg:            cfg,
+		Ops:            tg.Ops,
+		Service:        infra.AdminService,
+		MemberService:  infra.MemberService,
+		EconomyService: infra.EconomyService,
+		PurgeMetrics: func() jobs.PurgeMetrics {
+			if scheduler == nil {
+				return jobs.PurgeMetrics{}
+			}
+			return scheduler.GetPurgeMetrics()
+		},
 	})
-	memberModule := modules.BuildMemberModule(cfg, infra, tg)
-	streakModule := modules.BuildStreakModule(cfg, infra, tg)
-	karmaModule := modules.BuildKarmaModule(cfg, infra, tg)
-	casinoModule := modules.BuildCasinoModule(cfg, infra, tg)
-	coreModule := modules.BuildCoreModule(tg)
+	if err != nil {
+		return nil, err
+	}
+
+	economyModule, err := economy.NewModule(economy.Deps{Cfg: cfg, Ops: tg.Ops, Service: infra.EconomyService, MemberService: infra.MemberService})
+	if err != nil {
+		return nil, err
+	}
+
+	streakModule, err := streak.NewModule(streak.Deps{Cfg: cfg, Ops: tg.Ops, Service: infra.StreakService})
+	if err != nil {
+		return nil, err
+	}
+
+	karmaModule, err := karma.NewModule(karma.Deps{Cfg: cfg, Ops: tg.Ops, Service: infra.KarmaService})
+	if err != nil {
+		return nil, err
+	}
+
+	casinoModule, err := casino.NewModule(casino.Deps{Cfg: cfg, Ops: tg.Ops, Service: infra.CasinoService})
+	if err != nil {
+		return nil, err
+	}
+
+	coreFeature, err := core.Build(core.Deps{Ops: tg.Ops})
+	if err != nil {
+		return nil, err
+	}
+	memberFeature, err := members.Build(members.Deps{})
+	if err != nil {
+		return nil, err
+	}
+	debtsFeature, err := debts.Build(debts.Deps{})
+	if err != nil {
+		return nil, err
+	}
 
 	features := []feature.Feature{
-		coreModule.CoreFeature,
+		coreFeature,
 		adminModule.Feature,
-		memberModule.EconomyFeature,
+		economyModule.Feature,
 		karmaModule.Feature,
 		streakModule.Feature,
 		casinoModule.Feature,
-		memberModule.MemberFeature,
-		coreModule.DebtsFeature,
+		memberFeature,
+		debtsFeature,
 	}
 
 	cmdRouter := commands.NewRouter()
@@ -63,7 +109,13 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	}
 
 	chatFilter := modules.BuildChatFilter(cfg, infra, tg)
-	b := modules.BuildBot(cfg, infra, tg, cmdRouter, chatFilter, adminModule, memberModule, streakModule, karmaModule, casinoModule)
+	b := modules.BuildBot(cfg, infra, tg, cmdRouter, chatFilter, modules.BotHandlers{
+		Admin:   adminModule.Handler,
+		Economy: economyModule.Handler,
+		Streak:  streakModule.Handler,
+		Karma:   karmaModule.Handler,
+		Casino:  casinoModule.Handler,
+	})
 
 	scheduler = modules.BuildScheduler(infra, b)
 	b.SetPurgeMetricsProvider(scheduler)
