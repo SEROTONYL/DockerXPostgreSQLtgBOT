@@ -4,11 +4,12 @@ package bot
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
 	"serotonyl.ru/telegram-bot/internal/commands"
+	"serotonyl.ru/telegram-bot/internal/jobs"
+	"serotonyl.ru/telegram-bot/internal/telegram"
 
 	botapi "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -17,38 +18,66 @@ import (
 	"serotonyl.ru/telegram-bot/internal/bot/filters"
 	"serotonyl.ru/telegram-bot/internal/bot/middleware"
 	"serotonyl.ru/telegram-bot/internal/config"
-	"serotonyl.ru/telegram-bot/internal/features/admin"
-	"serotonyl.ru/telegram-bot/internal/features/casino"
-	"serotonyl.ru/telegram-bot/internal/features/economy"
-	"serotonyl.ru/telegram-bot/internal/features/karma"
-	"serotonyl.ru/telegram-bot/internal/features/members"
-	"serotonyl.ru/telegram-bot/internal/features/streak"
-	"serotonyl.ru/telegram-bot/internal/jobs"
-	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 type purgeMetricsProvider interface {
 	GetPurgeMetrics() jobs.PurgeMetrics
 }
 
+type memberService interface {
+	EnsureActiveMemberSeen(ctx context.Context, userID int64, username, fullName string, now time.Time) error
+	CountMembersByStatus(ctx context.Context) (active int, left int, err error)
+	CountPendingPurge(ctx context.Context, now time.Time) (int, error)
+	UpsertActiveMember(ctx context.Context, userID int64, username, fullName string, now time.Time) error
+	MarkMemberLeft(ctx context.Context, userID int64, leftAt, purgeAfter time.Time) error
+	HandleNewMember(ctx context.Context, userID int64, username, firstName, lastName string) error
+}
+
+type economyService interface {
+	CreateBalance(ctx context.Context, userID int64) error
+}
+
+type streakService interface {
+	CountMessage(ctx context.Context, userID int64, text string) error
+	CreateStreak(ctx context.Context, userID int64) error
+}
+
+type karmaService interface {
+	CreateKarma(ctx context.Context, userID int64) error
+}
+
+type adminHandler interface {
+	HandleAdminMessage(ctx context.Context, chatID int64, userID int64, text string) bool
+	HandleAdminCallback(ctx context.Context, q *models.CallbackQuery) bool
+}
+
+type economyHandler interface{}
+type streakHandler interface{}
+type karmaHandler interface {
+	HandleThankYou(ctx context.Context, chatID int64, fromUserID int64, toUserID int64)
+}
+type casinoHandler interface{}
+
 // Deps содержит зависимости для создания Bot.
 type Deps struct {
 	API            *botapi.Bot
 	Ops            *telegram.Ops
+	CmdRouter      *commands.Router
 	Cfg            *config.Config
-	MemberService  *members.Service
-	MemberHandler  *members.Handler
-	EconomyService *economy.Service
-	EconomyHandler *economy.Handler
-	StreakService  *streak.Service
-	StreakHandler  *streak.Handler
-	KarmaService   *karma.Service
-	KarmaHandler   *karma.Handler
-	CasinoService  *casino.Service
-	CasinoHandler  *casino.Handler
-	AdminService   *admin.Service
-	AdminHandler   *admin.Handler
+	MemberService  memberService
+	MemberHandler  any
+	EconomyService economyService
+	EconomyHandler economyHandler
+	StreakService  streakService
+	StreakHandler  streakHandler
+	KarmaService   karmaService
+	KarmaHandler   karmaHandler
+	CasinoService  any
+	CasinoHandler  casinoHandler
+	AdminService   any
+	AdminHandler   adminHandler
 	ChatFilter     *filters.ChatFilter
+	IsThankYou     func(text string) bool
 }
 
 // Bot — главная структура бота, объединяющая все компоненты.
@@ -60,19 +89,20 @@ type Bot struct {
 	chatFilter  *filters.ChatFilter
 	rateLimiter *middleware.RateLimiter
 
-	memberHandler  *members.Handler
-	economyHandler *economy.Handler
-	streakHandler  *streak.Handler
-	karmaHandler   *karma.Handler
-	casinoHandler  *casino.Handler
-	adminHandler   *admin.Handler
+	memberHandler  any
+	economyHandler economyHandler
+	streakHandler  streakHandler
+	karmaHandler   karmaHandler
+	casinoHandler  casinoHandler
+	adminHandler   adminHandler
 
-	memberService  *members.Service
-	economyService *economy.Service
-	streakService  *streak.Service
-	karmaService   *karma.Service
-	casinoService  *casino.Service
-	adminService   *admin.Service
+	memberService  memberService
+	economyService economyService
+	streakService  streakService
+	karmaService   karmaService
+	casinoService  any
+	adminService   any
+	isThankYou     func(text string) bool
 
 	parser    *CommandParser
 	cmdRouter *commands.Router
@@ -101,9 +131,15 @@ func New(d Deps) *Bot {
 		casinoService:  d.CasinoService,
 		adminService:   d.AdminService,
 		parser:         NewCommandParser(),
-		cmdRouter:      commands.NewRouter(),
+		cmdRouter:      d.CmdRouter,
+		isThankYou:     d.IsThankYou,
 	}
-	b.registerCommands()
+	if b.cmdRouter == nil {
+		b.cmdRouter = commands.NewRouter()
+	}
+	if b.isThankYou == nil {
+		b.isThankYou = func(string) bool { return false }
+	}
 	return b
 }
 
@@ -215,7 +251,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update models.Update) {
 	}
 
 	if b.cfg.FeatureKarmaEnabled && message.ReplyToMessage != nil && message.ReplyToMessage.From != nil {
-		if karma.IsThankYou(message.Text) {
+		if b.isThankYou(message.Text) {
 			b.karmaHandler.HandleThankYou(ctx, chatID, userID, message.ReplyToMessage.From.ID)
 			return
 		}
@@ -292,31 +328,6 @@ func isAdminChatAllowedCommand(cmd string) bool {
 	}
 }
 
-func (b *Bot) registerCommands() {
-	b.cmdRouter.Register("start", func(ctx context.Context, c commands.Context, args []string) {
-		b.sendMessage(ctx, c.ChatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
-	})
-	b.cmdRouter.Register("help", func(ctx context.Context, c commands.Context, args []string) {
-		b.sendMessage(ctx, c.ChatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
-	})
-	b.cmdRouter.Register("login", func(ctx context.Context, c commands.Context, args []string) {
-		if c.ChatID == c.UserID {
-			b.adminHandler.HandleAdminMessage(ctx, c.ChatID, c.UserID, "/login "+strings.Join(args, " "))
-		}
-	})
-	b.cmdRouter.Register("members_status", func(ctx context.Context, c commands.Context, args []string) {
-		b.handleMembersStatusCommand(ctx, UpdateContext{ChatID: c.ChatID, UserID: c.UserID, IsPrivate: c.IsPrivate, IsAdminChat: c.IsAdminChat, Now: c.Now})
-	})
-	b.cmdRouter.Register("members_stats", func(ctx context.Context, c commands.Context, args []string) {
-		b.handleMembersStatusCommand(ctx, UpdateContext{ChatID: c.ChatID, UserID: c.UserID, IsPrivate: c.IsPrivate, IsAdminChat: c.IsAdminChat, Now: c.Now})
-	})
-
-	economy.RegisterCommands(b.cmdRouter, b.economyHandler, b.cfg)
-	karma.RegisterCommands(b.cmdRouter, b.karmaHandler, b.cfg)
-	streak.RegisterCommands(b.cmdRouter, b.streakHandler, b.cfg)
-	casino.RegisterCommands(b.cmdRouter, b.casinoHandler, b.cfg)
-}
-
 func (b *Bot) routeCommand(ctx context.Context, uc UpdateContext, cmd string, args []string) {
 	log.WithFields(log.Fields{
 		"cmd":  cmd,
@@ -338,39 +349,6 @@ func (b *Bot) routeCommand(ctx context.Context, uc UpdateContext, cmd string, ar
 	if ok := b.cmdRouter.Dispatch(ctx, c, cmd, args); !ok {
 		log.WithField("cmd", cmd).Debug("unknown command")
 	}
-}
-
-func (b *Bot) handleMembersStatusCommand(ctx context.Context, uc UpdateContext) {
-	if !uc.IsAdminChat {
-		return
-	}
-
-	active, left, err := b.memberService.CountMembersByStatus(ctx)
-	if err != nil {
-		log.WithError(err).Warn("members status: count by status failed")
-		return
-	}
-	pending, err := b.memberService.CountPendingPurge(ctx, uc.Now)
-	if err != nil {
-		log.WithError(err).Warn("members status: pending purge count failed")
-		return
-	}
-
-	metrics := jobs.PurgeMetrics{}
-	if b.purgeMetricsProvider != nil {
-		metrics = b.purgeMetricsProvider.GetPurgeMetrics()
-	}
-	lastRun := "never"
-	if !metrics.LastRunAt.IsZero() {
-		lastRun = metrics.LastRunAt.Format(time.RFC3339)
-	}
-	lastError := metrics.LastError
-	if strings.TrimSpace(lastError) == "" {
-		lastError = "none"
-	}
-
-	text := fmt.Sprintf("Members:\n- Active: %d\n- Left (grace): %d\n- Pending purge: %d\n\nPurge:\n- Last run: %s\n- Last deleted: %d\n- Total deleted: %d\n- Last error: %s", active, left, pending, lastRun, metrics.LastRunDeleted, metrics.TotalDeleted, lastError)
-	b.sendMessage(ctx, uc.ChatID, text)
 }
 
 // handleNewMembers обрабатывает вступление новых участников.
