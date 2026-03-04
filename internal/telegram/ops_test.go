@@ -112,20 +112,39 @@ func TestOpsEditOrSend_CantBeEdited_FallbackToSend(t *testing.T) {
 	}
 }
 
-func TestOpsEditOrSend_Forbidden_NoFallbackSend(t *testing.T) {
+func TestOpsEditOrSend_Forbidden_FallbackToSend(t *testing.T) {
 	client := &fakeClient{editErr: errors.New("Forbidden: bot was blocked by the user")}
 	op := NewOps(client)
 	markup := models.InlineKeyboardMarkup{}
 
 	_, usedEdit, err := op.EditOrSend(context.Background(), 1, 42, "text", markup)
-	if err == nil {
-		t.Fatal("expected error")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
 	}
 	if usedEdit {
 		t.Fatalf("usedEdit = true, want false")
 	}
-	if client.sendCalls != 0 {
-		t.Fatalf("sendCalls = %d, want 0", client.sendCalls)
+	if client.sendCalls != 1 {
+		t.Fatalf("sendCalls = %d, want 1", client.sendCalls)
+	}
+}
+
+func TestOpsRenderScreen_CallbackAckAndEdit(t *testing.T) {
+	client := &callbackPreferenceClient{}
+	ops := NewOps(client)
+
+	msgID, usedEdit, err := ops.RenderScreen(context.Background(), RenderCtx{ChatID: 1, MessageID: 99, FromCallback: true, CallbackQueryID: "cb-1", PreferEdit: true}, Screen{Text: "ok"})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !usedEdit {
+		t.Fatal("usedEdit = false, want true")
+	}
+	if msgID != 99 {
+		t.Fatalf("msgID = %d, want 99", msgID)
+	}
+	if client.callbackCalls != 1 {
+		t.Fatalf("callbackCalls = %d, want 1", client.callbackCalls)
 	}
 }
 
