@@ -33,7 +33,7 @@ func RenderScreen(ctx context.Context, ops *Ops, s Screen) (msgID int, usedEdit 
 			}
 			return sentID, false, nil
 		}
-		return 0, false, err
+		return 0, true, err
 	}
 
 	sentID, sendErr := ops.Send(ctx, s.ChatID, s.Text, mk)
