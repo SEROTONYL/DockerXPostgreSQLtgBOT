@@ -991,3 +991,89 @@ func TestBalanceUndo_ClearsOperation_SecondUndoShowsEmpty(t *testing.T) {
 		t.Fatalf("expected empty undo message")
 	}
 }
+
+type fakeAdminRepoAuth struct {
+	hasSession bool
+	attempts   int
+}
+
+func (r *fakeAdminRepoAuth) CreateSession(ctx context.Context, session *AdminSession) error {
+	r.hasSession = true
+	return nil
+}
+func (r *fakeAdminRepoAuth) GetActiveSession(ctx context.Context, userID int64) (*AdminSession, error) {
+	if !r.hasSession {
+		return nil, nil
+	}
+	return &AdminSession{UserID: userID}, nil
+}
+func (r *fakeAdminRepoAuth) DeactivateSession(ctx context.Context, userID int64) error { return nil }
+func (r *fakeAdminRepoAuth) UpdateActivity(ctx context.Context, userID int64) error    { return nil }
+func (r *fakeAdminRepoAuth) LogAttempt(ctx context.Context, userID int64, success bool) error {
+	if !success {
+		r.attempts++
+	}
+	return nil
+}
+func (r *fakeAdminRepoAuth) GetRecentAttempts(ctx context.Context, userID int64, period time.Duration) (int, error) {
+	return r.attempts, nil
+}
+func (r *fakeAdminRepoAuth) ListBalanceDeltas(ctx context.Context, chatID int64) ([]*BalanceDelta, error) {
+	return nil, nil
+}
+func (r *fakeAdminRepoAuth) CreateBalanceDelta(ctx context.Context, chatID int64, name string, amount int64, createdBy int64) error {
+	return nil
+}
+
+func TestHandleAdminMessage_LoginWithActiveSession_ShowsPanelWithoutAlreadyLoggedMessage(t *testing.T) {
+	tg := &fakeTG{}
+	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	handled := h.HandleAdminMessage(context.Background(), 77, 77, 0, "/login")
+	if !handled {
+		t.Fatalf("expected handled=true")
+	}
+	if !hasCallText(tg.calls, "send", "Админ-панель") {
+		t.Fatalf("expected admin panel render")
+	}
+	if hasCallText(tg.calls, "send", "уже вош") {
+		t.Fatalf("did not expect already-logged-in message")
+	}
+}
+
+func TestHandleAdminMessage_LoginAuthFlowSuccess_ShowsPanelAndClearsState(t *testing.T) {
+	tg := &fakeTG{}
+	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}}
+	authRepo := &fakeAdminRepoAuth{}
+	svc := NewService(authRepo, repo, &config.Config{
+		AdminIDs:          []int64{77},
+		AdminPasswordHash: "$argon2id$v=19$m=65536,t=3,p=2$VHfCcsoxysCkOC6xwArT0A$XbpCLks/kLUE2rUgd7m9gqEIft8M+LQf+2ibCRLitAU",
+	})
+	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg))
+
+	handled := h.HandleAdminMessage(context.Background(), 77, 77, 0, "/login")
+	if !handled {
+		t.Fatalf("expected login prompt handled")
+	}
+	if state := svc.GetState(77); state == nil || state.State != StateAwaitingPassword {
+		t.Fatalf("expected awaiting password state")
+	}
+
+	handled = h.HandleAdminMessage(context.Background(), 77, 77, 0, "secret")
+	if !handled {
+		t.Fatalf("expected password handled")
+	}
+	if !authRepo.hasSession {
+		t.Fatalf("expected active admin session")
+	}
+	if svc.GetState(77) != nil {
+		t.Fatalf("expected state to be cleared after successful auth")
+	}
+	if !hasCallText(tg.calls, "send", "Админ-панель") {
+		t.Fatalf("expected admin panel render after successful auth")
+	}
+	if hasCallText(tg.calls, "send", "Аутентификация успешна") {
+		t.Fatalf("expected no extra success message spam")
+	}
+}

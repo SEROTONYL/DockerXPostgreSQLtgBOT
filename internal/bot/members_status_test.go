@@ -294,3 +294,32 @@ func TestHandleUpdate_MembershipUpdateHandledOnce(t *testing.T) {
 		t.Fatalf("expected no regular message member writes during membership update, got ensureSeen=%d ensureActive=%d", repo.ensureSeenCalls, repo.ensureActiveCalls)
 	}
 }
+
+type adminHandlerRecorder struct {
+	msgCalls int
+}
+
+func (a *adminHandlerRecorder) HandleAdminCallback(ctx context.Context, cb *models.CallbackQuery) bool {
+	return false
+}
+
+func (a *adminHandlerRecorder) HandleAdminMessage(ctx context.Context, chatID int64, userID int64, messageID int, text string) bool {
+	a.msgCalls++
+	return false
+}
+
+func TestLoginCommand_GroupChat_IgnoredWithoutSideEffects(t *testing.T) {
+	tg := &fakeTGStatus{}
+	adminRecorder := &adminHandlerRecorder{}
+	b := &Bot{ops: telegram.NewOps(tg), adminHandler: adminRecorder, cmdRouter: commands.NewRouter()}
+	b.registerCoreCommands()
+
+	b.routeCommand(context.Background(), UpdateContext{ChatID: -3001, UserID: 77, IsPrivate: false, Now: time.Now().UTC()}, "login", nil)
+
+	if len(tg.sent) != 0 {
+		t.Fatalf("expected no outgoing messages, got %d", len(tg.sent))
+	}
+	if adminRecorder.msgCalls != 0 {
+		t.Fatalf("expected no admin handler calls, got %d", adminRecorder.msgCalls)
+	}
+}
