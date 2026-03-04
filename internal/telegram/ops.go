@@ -23,6 +23,12 @@ type botClient struct {
 	bot *botapi.Bot
 }
 
+type updateRuntime interface {
+	RegisterUpdateHandler(match func(*models.Update) bool, handler func(context.Context, *models.Update))
+	Start(ctx context.Context)
+	GetMe(ctx context.Context) (*models.User, error)
+}
+
 func NewBotClient(bot *botapi.Bot) Client {
 	if bot == nil {
 		panic("telegram.NewBotClient: nil bot")
@@ -69,6 +75,20 @@ func (a *botClient) GetChatMember(chatID int64, userID int64) (models.ChatMember
 		return models.ChatMember{}, nil
 	}
 	return *cm, nil
+}
+
+func (a *botClient) RegisterUpdateHandler(match func(*models.Update) bool, handler func(context.Context, *models.Update)) {
+	a.bot.RegisterHandlerMatchFunc(match, func(handlerCtx context.Context, _ *botapi.Bot, update *models.Update) {
+		handler(handlerCtx, update)
+	})
+}
+
+func (a *botClient) Start(ctx context.Context) {
+	a.bot.Start(ctx)
+}
+
+func (a *botClient) GetMe(ctx context.Context) (*models.User, error) {
+	return a.bot.GetMe(ctx)
 }
 
 func (a *botClient) AnswerCallback(callbackID string) error {
@@ -246,6 +266,32 @@ func (o *Ops) GetChatMember(ctx context.Context, chatID int64, userID int64) (mo
 		return models.ChatMember{}, err
 	}
 	return member, nil
+}
+
+func (o *Ops) RegisterUpdateHandler(match func(*models.Update) bool, handler func(context.Context, *models.Update)) error {
+	r, ok := any(o.c).(updateRuntime)
+	if !ok {
+		return fmt.Errorf("client does not support update handlers")
+	}
+	r.RegisterUpdateHandler(match, handler)
+	return nil
+}
+
+func (o *Ops) Start(ctx context.Context) error {
+	r, ok := any(o.c).(updateRuntime)
+	if !ok {
+		return fmt.Errorf("client does not support bot runtime")
+	}
+	r.Start(ctx)
+	return nil
+}
+
+func (o *Ops) GetMe(ctx context.Context) (*models.User, error) {
+	r, ok := any(o.c).(updateRuntime)
+	if !ok {
+		return nil, fmt.Errorf("client does not support getMe")
+	}
+	return r.GetMe(ctx)
 }
 
 func (o *Ops) AnswerCallback(ctx context.Context, callbackID string, args ...any) error {

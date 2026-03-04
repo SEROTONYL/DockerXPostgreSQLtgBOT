@@ -11,7 +11,6 @@ import (
 	"serotonyl.ru/telegram-bot/internal/jobs"
 	"serotonyl.ru/telegram-bot/internal/telegram"
 
-	botapi "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	log "github.com/sirupsen/logrus"
 
@@ -60,7 +59,6 @@ type casinoHandler interface{}
 
 // Deps содержит зависимости для создания Bot.
 type Deps struct {
-	API            *botapi.Bot
 	Ops            *telegram.Ops
 	CmdRouter      *commands.Router
 	Cfg            *config.Config
@@ -82,7 +80,6 @@ type Deps struct {
 
 // Bot — главная структура бота, объединяющая все компоненты.
 type Bot struct {
-	api *botapi.Bot
 	ops *telegram.Ops
 	cfg *config.Config
 
@@ -113,7 +110,6 @@ type Bot struct {
 // New создаёт новый экземпляр бота со всеми зависимостями.
 func New(d Deps) *Bot {
 	b := &Bot{
-		api:            d.API,
 		ops:            d.Ops,
 		cfg:            d.Cfg,
 		chatFilter:     d.ChatFilter,
@@ -162,11 +158,17 @@ func (b *Bot) Start(ctx context.Context) {
 	}).Info("Бот запущен и ожидает сообщения...")
 	log.Infof("update pool: workers=%d queue=%d", b.cfg.BotWorkers, b.cfg.BotUpdateQueue)
 
-	b.api.RegisterHandlerMatchFunc(func(update *models.Update) bool { return true }, func(handlerCtx context.Context, _ *botapi.Bot, update *models.Update) {
+	err := b.ops.RegisterUpdateHandler(func(update *models.Update) bool { return true }, func(handlerCtx context.Context, update *models.Update) {
 		pool.Enqueue(handlerCtx, *update)
 	})
+	if err != nil {
+		log.WithError(err).Error("failed to register telegram update handler")
+		return
+	}
 
-	b.api.Start(ctx)
+	if err := b.ops.Start(ctx); err != nil {
+		log.WithError(err).Error("telegram bot runtime stopped with error")
+	}
 }
 
 func (b *Bot) shouldTouchLastSeen(uc UpdateContext) bool {
