@@ -111,7 +111,7 @@ func (b *Bot) handleMessageUpdate(ctx context.Context, uc UpdateContext) {
 	}
 
 	if b.cfg.FeatureKarmaEnabled && message.ReplyToMessage != nil && message.ReplyToMessage.From != nil {
-		if b.isThankYou(message.Text) {
+		if b.thankYou != nil && b.thankYou.IsThankYou(message.Text) {
 			b.karmaHandler.HandleThankYou(ctx, chatID, userID, message.ReplyToMessage.From.ID)
 			return
 		}

@@ -10,14 +10,10 @@ import (
 	"serotonyl.ru/telegram-bot/internal/bot"
 	"serotonyl.ru/telegram-bot/internal/commands"
 	"serotonyl.ru/telegram-bot/internal/config"
-	"serotonyl.ru/telegram-bot/internal/feature"
 	"serotonyl.ru/telegram-bot/internal/features/admin"
 	"serotonyl.ru/telegram-bot/internal/features/casino"
-	"serotonyl.ru/telegram-bot/internal/features/core"
-	"serotonyl.ru/telegram-bot/internal/features/debts"
 	"serotonyl.ru/telegram-bot/internal/features/economy"
 	"serotonyl.ru/telegram-bot/internal/features/karma"
-	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/features/streak"
 	"serotonyl.ru/telegram-bot/internal/jobs"
 )
@@ -79,43 +75,17 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		return nil, err
 	}
 
-	coreFeature, err := core.Build(core.Deps{Ops: tg.Ops})
-	if err != nil {
-		return nil, err
-	}
-	memberFeature, err := members.Build(members.Deps{})
-	if err != nil {
-		return nil, err
-	}
-	debtsFeature, err := debts.Build(debts.Deps{})
-	if err != nil {
-		return nil, err
-	}
-
-	features := []feature.Feature{
-		coreFeature,
-		adminModule.Feature,
-		economyModule.Feature,
-		karmaModule.Feature,
-		streakModule.Feature,
-		casinoModule.Feature,
-		memberFeature,
-		debtsFeature,
-	}
-
 	cmdRouter := commands.NewRouter()
-	for _, f := range features {
-		f.RegisterCommands(cmdRouter)
-	}
+	economy.RegisterCommands(cmdRouter, economyModule.Handler, cfg)
+	karma.RegisterCommands(cmdRouter, karmaModule.Handler, cfg)
+	streak.RegisterCommands(cmdRouter, streakModule.Handler, cfg)
+	casino.RegisterCommands(cmdRouter, casinoModule.Handler, cfg)
 
 	chatFilter := modules.BuildChatFilter(cfg, infra, tg)
 	b := modules.BuildBot(cfg, infra, tg, cmdRouter, chatFilter, modules.BotHandlers{
-		Admin:   adminModule.Handler,
-		Economy: economyModule.Handler,
-		Streak:  streakModule.Handler,
-		Karma:   karmaModule.Handler,
-		Casino:  casinoModule.Handler,
-	})
+		Admin: adminModule.Handler,
+		Karma: karmaModule.Handler,
+	}, modules.KarmaClassifier{Match: karma.IsThankYou})
 
 	scheduler = modules.BuildScheduler(infra, b)
 	b.SetPurgeMetricsProvider(scheduler)

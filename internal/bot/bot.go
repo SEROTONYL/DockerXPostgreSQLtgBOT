@@ -5,7 +5,6 @@ package bot
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/go-telegram/bot/models"
 
@@ -24,56 +23,19 @@ type purgeMetricsProvider interface {
 	GetPurgeMetrics() jobs.PurgeMetrics
 }
 
-type memberService interface {
-	EnsureActiveMemberSeen(ctx context.Context, userID int64, username, fullName string, now time.Time) error
-	CountMembersByStatus(ctx context.Context) (active int, left int, err error)
-	CountPendingPurge(ctx context.Context, now time.Time) (int, error)
-	UpsertActiveMember(ctx context.Context, userID int64, username, fullName string, now time.Time) error
-	MarkMemberLeft(ctx context.Context, userID int64, leftAt, purgeAfter time.Time) error
-	HandleNewMember(ctx context.Context, userID int64, username, firstName, lastName string) error
-}
-
-type economyService interface {
-	CreateBalance(ctx context.Context, userID int64) error
-}
-
-type streakService interface {
-	CountMessage(ctx context.Context, userID int64, text string) error
-	CreateStreak(ctx context.Context, userID int64) error
-}
-
-type karmaService interface {
-	CreateKarma(ctx context.Context, userID int64) error
-}
-
-type adminHandler interface {
-	HandleAdminMessage(ctx context.Context, chatID int64, userID int64, text string) bool
-	HandleAdminCallback(ctx context.Context, q *models.CallbackQuery) bool
-}
-
-type economyHandler interface{}
-type streakHandler interface{}
-type karmaHandler interface {
-	HandleThankYou(ctx context.Context, chatID int64, fromUserID int64, toUserID int64)
-}
-type casinoHandler interface{}
-
 // Deps содержит зависимости для создания Bot.
 type Deps struct {
 	Ops            *telegram.Ops
 	CmdRouter      *commands.Router
 	Cfg            *config.Config
-	MemberService  memberService
-	EconomyService economyService
-	EconomyHandler economyHandler
-	StreakService  streakService
-	StreakHandler  streakHandler
-	KarmaService   karmaService
-	KarmaHandler   karmaHandler
-	CasinoHandler  casinoHandler
-	AdminHandler   adminHandler
+	MemberService  MemberService
+	EconomyService EconomyService
+	StreakService  StreakService
+	KarmaService   KarmaService
+	KarmaHandler   KarmaHandler
+	AdminHandler   AdminHandler
 	ChatFilter     *filters.ChatFilter
-	IsThankYou     func(text string) bool
+	ThankYou       KarmaThankYouClassifier
 }
 
 // Validate проверяет обязательные зависимости для Bot.
@@ -83,6 +45,9 @@ func (d Deps) Validate() error {
 	}
 	if d.Cfg == nil {
 		return fmt.Errorf("bot deps: cfg is nil")
+	}
+	if d.CmdRouter == nil {
+		return fmt.Errorf("bot deps: cmd router is nil")
 	}
 	if d.MemberService == nil {
 		return fmt.Errorf("bot deps: member service is nil")
@@ -107,17 +72,14 @@ type Bot struct {
 	chatFilter  *filters.ChatFilter
 	rateLimiter *middleware.RateLimiter
 
-	economyHandler economyHandler
-	streakHandler  streakHandler
-	karmaHandler   karmaHandler
-	casinoHandler  casinoHandler
-	adminHandler   adminHandler
+	adminHandler AdminHandler
+	karmaHandler KarmaHandler
 
-	memberService  memberService
-	economyService economyService
-	streakService  streakService
-	karmaService   karmaService
-	isThankYou     func(text string) bool
+	memberService  MemberService
+	economyService EconomyService
+	streakService  StreakService
+	karmaService   KarmaService
+	thankYou       KarmaThankYouClassifier
 
 	parser    *CommandParser
 	cmdRouter *commands.Router
@@ -125,7 +87,8 @@ type Bot struct {
 	purgeMetricsProvider purgeMetricsProvider
 }
 
-// New создаёт новый экземпляр бота со всеми зависимостями.
+// New создаёт новый экземпляр бота.
+// Все команды фич должны быть зарегистрированы в CmdRouter снаружи (composition root в internal/app).
 func New(d Deps) *Bot {
 	if err := d.Validate(); err != nil {
 		panic(err)
@@ -136,25 +99,17 @@ func New(d Deps) *Bot {
 		cfg:            d.Cfg,
 		chatFilter:     d.ChatFilter,
 		rateLimiter:    middleware.NewRateLimiter(d.Cfg.RateLimitRequests, d.Cfg.RateLimitWindow),
-		economyHandler: d.EconomyHandler,
-		streakHandler:  d.StreakHandler,
-		karmaHandler:   d.KarmaHandler,
-		casinoHandler:  d.CasinoHandler,
 		adminHandler:   d.AdminHandler,
+		karmaHandler:   d.KarmaHandler,
 		memberService:  d.MemberService,
 		economyService: d.EconomyService,
 		streakService:  d.StreakService,
 		karmaService:   d.KarmaService,
 		parser:         NewCommandParser(),
 		cmdRouter:      d.CmdRouter,
-		isThankYou:     d.IsThankYou,
+		thankYou:       d.ThankYou,
 	}
-	if b.cmdRouter == nil {
-		b.cmdRouter = commands.NewRouter()
-	}
-	if b.isThankYou == nil {
-		b.isThankYou = func(string) bool { return false }
-	}
+	b.registerCoreCommands()
 	return b
 }
 
