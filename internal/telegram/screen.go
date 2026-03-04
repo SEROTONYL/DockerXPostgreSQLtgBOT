@@ -14,27 +14,33 @@ type Screen struct {
 }
 
 func RenderScreen(ctx context.Context, ops *Ops, s Screen) (msgID int, usedEdit bool, err error) {
+	mk := inlineMarkup(s.ReplyMarkup)
+
 	if s.MessageID > 0 {
-		err = ops.Edit(ctx, s.ChatID, s.MessageID, s.Text, inlineMarkup(s.ReplyMarkup))
-		if err == nil || IsEditNotModified(err) {
+		err = ops.Edit(ctx, s.ChatID, s.MessageID, s.Text, mk)
+		if err == nil {
+			return s.MessageID, true, nil
+		}
+
+		if IsEditNotModified(err) {
 			return s.MessageID, true, nil
 		}
 
 		if ShouldFallbackToSendOnEdit(err) {
-			msgID, sendErr := ops.Send(ctx, s.ChatID, s.Text, inlineMarkup(s.ReplyMarkup))
+			sentID, sendErr := ops.Send(ctx, s.ChatID, s.Text, mk)
 			if sendErr != nil {
 				return 0, false, sendErr
 			}
-			return msgID, false, nil
+			return sentID, false, nil
 		}
 		return 0, false, err
 	}
 
-	msgID, err = ops.Send(ctx, s.ChatID, s.Text, inlineMarkup(s.ReplyMarkup))
-	if err != nil {
-		return 0, false, err
+	sentID, sendErr := ops.Send(ctx, s.ChatID, s.Text, mk)
+	if sendErr != nil {
+		return 0, false, sendErr
 	}
-	return msgID, false, nil
+	return sentID, false, nil
 }
 
 func inlineMarkup(markup any) *models.InlineKeyboardMarkup {
