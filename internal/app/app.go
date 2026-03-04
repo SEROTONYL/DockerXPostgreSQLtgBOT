@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 
-	botapi "github.com/go-telegram/bot"
 	"github.com/jackc/pgx/v5/pgxpool"
 	log "github.com/sirupsen/logrus"
 
@@ -35,7 +34,6 @@ type App struct {
 	Bot       *bot.Bot
 	Scheduler *jobs.Scheduler
 	DB        *pgxpool.Pool
-	BotAPI    *botapi.Bot
 }
 
 // New создаёт и инициализирует приложение.
@@ -53,15 +51,10 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	}
 
 	// === 2. Telegram Bot API ===
-	botAPI, err := botapi.New(cfg.TelegramBotToken)
+	botAPI, err := telegram.NewRawBot(cfg.TelegramBotToken)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка создания Telegram API: %w", err)
 	}
-	me, err := botAPI.GetMe(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка getMe Telegram API: %w", err)
-	}
-	log.Infof("Авторизован как @%s", me.Username)
 
 	// === 3. Репозитории ===
 	memberRepo := members.NewRepository(pool)
@@ -82,6 +75,11 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	// === 5. Telegram adapter/ops ===
 	tgClient := telegram.NewBotClient(botAPI)
 	tgOps := telegram.NewOpsWithLogger(tgClient, log.NewEntry(log.StandardLogger()))
+	me, err := tgOps.GetMe(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка getMe Telegram API: %w", err)
+	}
+	log.Infof("Авторизован как @%s", me.Username)
 
 	// === 6. Обработчики ===
 	memberHandler := members.NewHandler(memberService)
@@ -118,7 +116,6 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 
 	// === 8. Собираем бота ===
 	b := bot.New(bot.Deps{
-		API:            botAPI,
 		Ops:            tgOps,
 		CmdRouter:      cmdRouter,
 		Cfg:            cfg,
@@ -146,7 +143,6 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		Bot:       b,
 		Scheduler: scheduler,
 		DB:        pool,
-		BotAPI:    botAPI,
 	}, nil
 }
 
