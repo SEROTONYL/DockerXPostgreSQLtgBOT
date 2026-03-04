@@ -13,26 +13,28 @@ type Screen struct {
 	ReplyMarkup any
 }
 
-func RenderScreen(ctx context.Context, ops *Ops, s Screen) error {
-	if s.MessageID != 0 {
-		err := ops.Edit(ctx, s.ChatID, s.MessageID, s.Text, inlineMarkup(s.ReplyMarkup))
-		if err == nil {
-			return nil
+func RenderScreen(ctx context.Context, ops *Ops, s Screen) (msgID int, usedEdit bool, err error) {
+	if s.MessageID > 0 {
+		err = ops.Edit(ctx, s.ChatID, s.MessageID, s.Text, inlineMarkup(s.ReplyMarkup))
+		if err == nil || IsEditNotModified(err) {
+			return s.MessageID, true, nil
 		}
 
-		switch classifyEditError(err) {
-		case editErrNotModified:
-			return nil
-		case editErrNotFound:
-			_, sendErr := ops.Send(ctx, s.ChatID, s.Text, inlineMarkup(s.ReplyMarkup))
-			return sendErr
-		default:
-			return err
+		if ShouldFallbackToSendOnEdit(err) {
+			msgID, sendErr := ops.Send(ctx, s.ChatID, s.Text, inlineMarkup(s.ReplyMarkup))
+			if sendErr != nil {
+				return 0, false, sendErr
+			}
+			return msgID, false, nil
 		}
+		return 0, false, err
 	}
 
-	_, err := ops.Send(ctx, s.ChatID, s.Text, inlineMarkup(s.ReplyMarkup))
-	return err
+	msgID, err = ops.Send(ctx, s.ChatID, s.Text, inlineMarkup(s.ReplyMarkup))
+	if err != nil {
+		return 0, false, err
+	}
+	return msgID, false, nil
 }
 
 func inlineMarkup(markup any) *models.InlineKeyboardMarkup {
