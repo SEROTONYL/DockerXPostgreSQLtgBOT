@@ -371,7 +371,7 @@ func (h *Handler) handleAssignRoleText(ctx context.Context, chatID int64, userID
 	}
 
 	h.setUndoRoleChange(userID, selected.UserID, "", role)
-	h.sendRoleChangeSuccess(ctx, chatID, userID, h.panelMessageIDFromState(userID), fmt.Sprintf("✅ Роль назначена: %s → %s", selected.DisplayName(), role))
+	h.sendRoleChangeSuccess(ctx, chatID, userID, h.panelMessageIDFromState(userID), fmt.Sprintf("✅ Роль назначена: %s → %s", normalizeRoleLabel(""), role))
 	h.service.ClearState(userID)
 }
 
@@ -438,7 +438,9 @@ func (h *Handler) handleChangeRoleText(ctx context.Context, chatID int64, userID
 	}
 
 	oldRole := ""
-	if selected.Role != nil {
+	if currentMember, err := h.service.memberRepo.GetByUserID(ctx, selected.UserID); err == nil && currentMember != nil && currentMember.Role != nil {
+		oldRole = strings.TrimSpace(*currentMember.Role)
+	} else if selected.Role != nil {
 		oldRole = strings.TrimSpace(*selected.Role)
 	}
 
@@ -829,7 +831,7 @@ func (h *Handler) roleChangeSuccessActionsMarkup() models.InlineKeyboardMarkup {
 			newInlineKeyboardButtonDataStyled("↩️ Отменить", cbAdminUndoLast, "danger"),
 		),
 		newInlineKeyboardRow(
-			newInlineKeyboardButtonDataStyled("✅ В панель", cbAdminReturnPanel, "success"),
+			newInlineKeyboardButtonDataStyled("🏠 Админка", cbAdminReturnPanel, "success"),
 		),
 	)
 }
@@ -837,7 +839,7 @@ func (h *Handler) roleChangeSuccessActionsMarkup() models.InlineKeyboardMarkup {
 func (h *Handler) roleChangeUndoDoneMarkup() models.InlineKeyboardMarkup {
 	return newInlineKeyboardMarkup(
 		newInlineKeyboardRow(
-			newInlineKeyboardButtonDataStyled("✅ В панель", cbAdminReturnPanel, "success"),
+			newInlineKeyboardButtonDataStyled("🏠 Админка", cbAdminReturnPanel, "success"),
 		),
 	)
 }
@@ -975,7 +977,7 @@ func newInlineKeyboardRow(buttons ...models.InlineKeyboardButton) []models.Inlin
 }
 
 func newInlineKeyboardButtonData(text, data string) models.InlineKeyboardButton {
-	return models.InlineKeyboardButton{Text: text, CallbackData: data}
+	return models.InlineKeyboardButton{Text: strings.TrimSpace(text), CallbackData: data}
 }
 
 func newInlineKeyboardButtonDataStyled(text, data, style string) models.InlineKeyboardButton {
