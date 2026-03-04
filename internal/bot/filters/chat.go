@@ -109,7 +109,7 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 				message.From.FirstName,
 				message.From.LastName,
 			); err != nil {
-				logger.WithError(err).Warn("failed to backfill member to DB (allowing anyway)")
+				logger.WithError(err).Warn("failed to backfill member to DB (access allowed despite failure)")
 			}
 			logger.WithField("tg_status", cm.Type).Info("allow: private (telegram member, backfilled)")
 			return true
