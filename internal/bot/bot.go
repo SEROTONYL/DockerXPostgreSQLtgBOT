@@ -4,6 +4,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -78,6 +79,29 @@ type Deps struct {
 	IsThankYou     func(text string) bool
 }
 
+// Validate проверяет обязательные зависимости для Bot.
+func (d Deps) Validate() error {
+	if d.Ops == nil {
+		return fmt.Errorf("bot deps: ops is nil")
+	}
+	if d.Cfg == nil {
+		return fmt.Errorf("bot deps: cfg is nil")
+	}
+	if d.MemberService == nil {
+		return fmt.Errorf("bot deps: member service is nil")
+	}
+	if d.AdminHandler == nil {
+		return fmt.Errorf("bot deps: admin handler is nil")
+	}
+	if d.KarmaHandler == nil {
+		return fmt.Errorf("bot deps: karma handler is nil")
+	}
+	if d.ChatFilter == nil {
+		return fmt.Errorf("bot deps: chat filter is nil")
+	}
+	return nil
+}
+
 // Bot — главная структура бота, объединяющая все компоненты.
 type Bot struct {
 	ops *telegram.Ops
@@ -109,6 +133,10 @@ type Bot struct {
 
 // New создаёт новый экземпляр бота со всеми зависимостями.
 func New(d Deps) *Bot {
+	if err := d.Validate(); err != nil {
+		panic(err)
+	}
+
 	b := &Bot{
 		ops:            d.Ops,
 		cfg:            d.Cfg,
