@@ -3,7 +3,6 @@ package telegram
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	botapi "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -156,22 +155,6 @@ type legacyCallbackClient interface {
 type legacyCallbackClientCtx interface {
 	AnswerCallbackQueryCtx(ctx context.Context, callbackID string, text string, showAlert bool) error
 }
-
-type editErrorKind string
-
-const (
-	editErrNone         editErrorKind = "none"
-	editErrNotModified  editErrorKind = "not_modified"
-	editErrNotFound     editErrorKind = "not_found"
-	editErrCantBeEdited editErrorKind = "cant_be_edited"
-	editErrForbidden    editErrorKind = "forbidden"
-	editErrOther        editErrorKind = "other"
-)
-
-var editNeedlesNotModified = []string{"message is not modified"}
-var editNeedlesNotFound = []string{"message to edit not found", "message not found", "message_id_invalid", "message_id invalid"}
-var editNeedlesCantBeEdited = []string{"message can't be edited", "message can’t be edited"}
-var editNeedlesForbidden = []string{"bot was blocked by the user", "chat not found", "forbidden", "not enough rights", "user is deactivated"}
 
 func NewOps(c Client) *Ops {
 	return NewOpsWithLogger(c, logrus.NewEntry(logrus.StandardLogger()))
@@ -341,66 +324,5 @@ func (o *Ops) answerCallbackAck(ctx context.Context, callbackID string) error {
 }
 
 func (o *Ops) EditOrSend(ctx context.Context, chatID int64, messageID int, text string, keyboard models.InlineKeyboardMarkup) (int, bool, error) {
-	if messageID <= 0 {
-		msgID, err := o.Send(ctx, chatID, text, &keyboard)
-		if err != nil {
-			return 0, false, err
-		}
-		return msgID, false, nil
-	}
-
-	err := o.Edit(ctx, chatID, messageID, text, &keyboard)
-	if err == nil {
-		return messageID, true, nil
-	}
-
-	switch {
-	case IsEditNotModified(err):
-		return messageID, true, nil
-	case ShouldFallbackToSendOnEdit(err):
-		msgID, sendErr := o.Send(ctx, chatID, text, &keyboard)
-		if sendErr != nil {
-			return 0, false, sendErr
-		}
-		return msgID, false, nil
-	default:
-		return 0, false, err
-	}
-}
-
-func ShouldFallbackToSendOnEdit(err error) bool {
-	kind := classifyEditError(err)
-	return kind == editErrNotFound || kind == editErrCantBeEdited || kind == editErrForbidden
-}
-
-func IsEditNotModified(err error) bool {
-	return classifyEditError(err) == editErrNotModified
-}
-
-func classifyEditError(err error) editErrorKind {
-	if err == nil {
-		return editErrNone
-	}
-	d := strings.ToLower(err.Error())
-	switch {
-	case containsAny(d, editNeedlesNotModified):
-		return editErrNotModified
-	case containsAny(d, editNeedlesNotFound):
-		return editErrNotFound
-	case containsAny(d, editNeedlesCantBeEdited):
-		return editErrCantBeEdited
-	case containsAny(d, editNeedlesForbidden):
-		return editErrForbidden
-	default:
-		return editErrOther
-	}
-}
-
-func containsAny(s string, needles []string) bool {
-	for _, needle := range needles {
-		if strings.Contains(s, needle) {
-			return true
-		}
-	}
-	return false
+	return RenderScreen(ctx, o, Screen{ChatID: chatID, MessageID: messageID, Text: text, ReplyMarkup: keyboard})
 }
