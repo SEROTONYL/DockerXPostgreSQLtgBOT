@@ -355,6 +355,74 @@ func TestPickerFlow_OpenPicker_ShowsUserList(t *testing.T) {
 	}
 }
 
+func TestPickerFlow_NoCandidates_RendersPanelEdit_NoSend(t *testing.T) {
+	tg := &fakeTG{}
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		without: []*members.Member{},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	ok := h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminAssignRole))
+	if !ok {
+		t.Fatalf("expected callback handled")
+	}
+
+	if hasCallText(tg.calls, "send", "Все пользователи уже имеют роли") {
+		t.Fatalf("must not send standalone no-candidates message")
+	}
+
+	e := tg.last("edit")
+	if e == nil {
+		t.Fatalf("expected panel edit")
+	}
+	if !strings.Contains(e.text, "Все пользователи уже имеют роли") {
+		t.Fatalf("unexpected no-candidates text: %q", e.text)
+	}
+	if e.messageID != 42 {
+		t.Fatalf("expected edit of panel message id=42, got %d", e.messageID)
+	}
+	if e.markup == nil {
+		t.Fatalf("expected markup")
+	}
+	if len(e.markup.InlineKeyboard) != 1 || len(e.markup.InlineKeyboard[0]) != 1 {
+		t.Fatalf("expected exactly one return button row, got %#v", e.markup.InlineKeyboard)
+	}
+	btn := e.markup.InlineKeyboard[0][0]
+	if btn.Text != "✅ Вернуться в админку" || btn.CallbackData != cbAdminReturnPanel {
+		t.Fatalf("unexpected return button: %#v", btn)
+	}
+	if hasButton(e.markup, "👤 Назначить роль", cbAdminAssignRole) || hasButton(e.markup, "🔄 Сменить роль", cbAdminChangeRole) {
+		t.Fatalf("no-candidates screen must not contain admin panel action buttons")
+	}
+	if st := h.service.GetState(77); st != nil {
+		t.Fatalf("expected flow state cleared, got %q", st.State)
+	}
+}
+
+func TestNoCandidates_ReturnButton_GoesBackToPanel(t *testing.T) {
+	tg := &fakeTG{}
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		without: []*members.Member{},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminAssignRole))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminReturnPanel))
+
+	e := tg.last("edit")
+	if e == nil {
+		t.Fatalf("expected panel edit")
+	}
+	if !strings.Contains(e.text, "✅ Админ-панель открыта") {
+		t.Fatalf("expected return to panel text, got: %q", e.text)
+	}
+	if !hasButton(e.markup, "👤 Назначить роль", cbAdminAssignRole) || !hasButton(e.markup, "🔄 Сменить роль", cbAdminChangeRole) {
+		t.Fatalf("expected main admin panel buttons after return")
+	}
+}
+
 func TestPickerFlow_Pagination_StyleRestartsOnNewPage(t *testing.T) {
 	tg := &fakeTG{}
 	role := "old"
