@@ -12,6 +12,7 @@ import (
 	"serotonyl.ru/telegram-bot/internal/bot/middleware"
 	"serotonyl.ru/telegram-bot/internal/commands"
 	"serotonyl.ru/telegram-bot/internal/config"
+	"serotonyl.ru/telegram-bot/internal/features/admin"
 	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/jobs"
 	"serotonyl.ru/telegram-bot/internal/telegram"
@@ -97,11 +98,20 @@ type fakePurgeMetricsProvider struct {
 
 func (f fakePurgeMetricsProvider) GetPurgeMetrics() jobs.PurgeMetrics { return f.m }
 
+func registerTestCommands(b *Bot) {
+	admin.NewFeature(&config.Config{}, b.ops, b.adminHandler, b.memberService, func() jobs.PurgeMetrics {
+		if b.purgeMetricsProvider != nil {
+			return b.purgeMetricsProvider.GetPurgeMetrics()
+		}
+		return jobs.PurgeMetrics{}
+	}).RegisterCommands(b.cmdRouter)
+}
+
 func TestMembersStatusCommand_IgnoredOutsideAdminChat(t *testing.T) {
 	tg := &fakeTGStatus{}
 	repo := &fakeMembersRepoStatus{active: 10, left: 3, pending: 1}
 	b := &Bot{ops: telegram.NewOps(tg), memberService: members.NewService(repo), cfg: &config.Config{}, cmdRouter: commands.NewRouter()}
-	b.registerCommands()
+	registerTestCommands(b)
 
 	b.routeCommand(context.Background(), UpdateContext{ChatID: 111, UserID: 42, IsAdminChat: false, Now: time.Now().UTC()}, "members_status", nil)
 
@@ -115,7 +125,7 @@ func TestMembersStatusCommand_ReturnsDataInAdminChat(t *testing.T) {
 	repo := &fakeMembersRepoStatus{active: 10, left: 3, pending: 2}
 	now := time.Now().UTC().Truncate(time.Second)
 	b := &Bot{ops: telegram.NewOps(tg), memberService: members.NewService(repo), cfg: &config.Config{}, cmdRouter: commands.NewRouter(), purgeMetricsProvider: fakePurgeMetricsProvider{m: jobs.PurgeMetrics{TotalDeleted: 99, LastRunAt: now, LastRunDeleted: 5, LastError: "boom"}}}
-	b.registerCommands()
+	registerTestCommands(b)
 
 	b.routeCommand(context.Background(), UpdateContext{ChatID: 777, UserID: 77, IsAdminChat: true, Now: now}, "members_status", nil)
 
@@ -153,7 +163,7 @@ func TestHandleUpdate_AdminChatIgnoresNonAdminCommands(t *testing.T) {
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
 	}
-	b.registerCommands()
+	registerTestCommands(b)
 
 	upd := models.Update{Message: &models.Message{Chat: models.Chat{ID: -2002, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 42, Username: "u"}, Text: "/пленки"}}
 	b.handleUpdate(context.Background(), upd)
@@ -179,7 +189,7 @@ func TestHandleUpdate_AdminChatIgnoresPlainMessages(t *testing.T) {
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
 	}
-	b.registerCommands()
+	registerTestCommands(b)
 
 	upd := models.Update{Message: &models.Message{Chat: models.Chat{ID: -2002, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 42, Username: "u"}, Text: "hello admin chat"}}
 	b.handleUpdate(context.Background(), upd)
@@ -222,7 +232,7 @@ func TestHandleUpdate_DeniedByChatFilter_DoesNotWriteMemberSeen(t *testing.T) {
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
 	}
-	b.registerCommands()
+	registerTestCommands(b)
 
 	// Чат не flood/admin и не private -> ChatFilter должен отклонить апдейт.
 	upd := models.Update{Message: &models.Message{Chat: models.Chat{ID: -3003, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u"}, Text: "!пленки"}}
@@ -246,7 +256,7 @@ func TestHandleUpdate_MembershipUpdateHandledOnce(t *testing.T) {
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
 	}
-	b.registerCommands()
+	registerTestCommands(b)
 
 	upsertUser := &models.User{ID: 55, Username: "u", FirstName: "U"}
 	upsertMember := models.ChatMember{Type: models.ChatMemberTypeMember, Member: &models.ChatMemberMember{User: upsertUser}}

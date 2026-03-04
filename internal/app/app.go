@@ -13,11 +13,15 @@ import (
 
 	"serotonyl.ru/telegram-bot/internal/bot"
 	"serotonyl.ru/telegram-bot/internal/bot/filters"
+	"serotonyl.ru/telegram-bot/internal/commands"
 	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/db/migrations"
 	"serotonyl.ru/telegram-bot/internal/db/postgres"
+	"serotonyl.ru/telegram-bot/internal/feature"
 	"serotonyl.ru/telegram-bot/internal/features/admin"
 	"serotonyl.ru/telegram-bot/internal/features/casino"
+	"serotonyl.ru/telegram-bot/internal/features/core"
+	"serotonyl.ru/telegram-bot/internal/features/debts"
 	"serotonyl.ru/telegram-bot/internal/features/economy"
 	"serotonyl.ru/telegram-bot/internal/features/karma"
 	"serotonyl.ru/telegram-bot/internal/features/members"
@@ -90,10 +94,33 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	// === 6. Фильтры ===
 	chatFilter := filters.NewChatFilter(cfg.FloodChatID, cfg.AdminChatID, memberService, tgOps)
 
-	// === 7. Собираем бота ===
+	// === 7. Роутер и регистрация команд через фичи ===
+	cmdRouter := commands.NewRouter()
+	var scheduler *jobs.Scheduler
+	features := []feature.Feature{
+		core.NewFeature(tgOps),
+		admin.NewFeature(cfg, tgOps, adminHandler, memberService, func() jobs.PurgeMetrics {
+			if scheduler == nil {
+				return jobs.PurgeMetrics{}
+			}
+			return scheduler.GetPurgeMetrics()
+		}),
+		economy.NewFeature(economyHandler, cfg),
+		karma.NewFeature(karmaHandler, cfg),
+		streak.NewFeature(streakHandler, cfg),
+		casino.NewFeature(casinoHandler, cfg),
+		members.NewFeature(),
+		debts.NewFeature(),
+	}
+	for _, f := range features {
+		f.RegisterCommands(cmdRouter)
+	}
+
+	// === 8. Собираем бота ===
 	b := bot.New(bot.Deps{
 		API:            botAPI,
 		Ops:            tgOps,
+		CmdRouter:      cmdRouter,
 		Cfg:            cfg,
 		MemberService:  memberService,
 		MemberHandler:  memberHandler,
@@ -108,10 +135,11 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		AdminService:   adminService,
 		AdminHandler:   adminHandler,
 		ChatFilter:     chatFilter,
+		IsThankYou:     karma.IsThankYou,
 	})
 
-	// === 8. Планировщик задач ===
-	scheduler := jobs.NewScheduler(streakService, memberService, b.SendMessageToUser)
+	// === 9. Планировщик задач ===
+	scheduler = jobs.NewScheduler(streakService, memberService, b.SendMessageToUser)
 	b.SetPurgeMetricsProvider(scheduler)
 
 	return &App{
