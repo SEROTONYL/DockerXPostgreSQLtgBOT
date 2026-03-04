@@ -141,22 +141,6 @@ type Ops struct {
 	log *logrus.Entry
 }
 
-type Screen struct {
-	Text              string
-	ReplyMarkup       *models.InlineKeyboardMarkup
-	ParseMode         string
-	DisableWebPreview bool
-}
-
-type RenderCtx struct {
-	ChatID          int64
-	UserID          int64
-	MessageID       int
-	FromCallback    bool
-	CallbackQueryID string
-	PreferEdit      bool
-}
-
 type callbackClient interface {
 	AnswerCallback(callbackID string) error
 }
@@ -382,37 +366,6 @@ func (o *Ops) EditOrSend(ctx context.Context, chatID int64, messageID int, text 
 	default:
 		return 0, false, err
 	}
-}
-
-func (o *Ops) RenderScreen(ctx context.Context, rc RenderCtx, s Screen) (int, bool, error) {
-	if rc.FromCallback && rc.CallbackQueryID != "" {
-		if err := o.AnswerCallback(ctx, rc.CallbackQueryID); err != nil {
-			return 0, false, err
-		}
-	}
-
-	if rc.MessageID <= 0 {
-		msgID, err := o.Send(ctx, rc.ChatID, s.Text, s.ReplyMarkup)
-		if err != nil {
-			return 0, false, err
-		}
-		return msgID, false, nil
-	}
-
-	err := o.Edit(ctx, rc.ChatID, rc.MessageID, s.Text, s.ReplyMarkup)
-	if err == nil || IsEditNotModified(err) {
-		return rc.MessageID, true, nil
-	}
-
-	if !ShouldFallbackToSendOnEdit(err) {
-		return 0, false, err
-	}
-
-	msgID, sendErr := o.Send(ctx, rc.ChatID, s.Text, s.ReplyMarkup)
-	if sendErr != nil {
-		return 0, false, sendErr
-	}
-	return msgID, false, nil
 }
 
 func ShouldFallbackToSendOnEdit(err error) bool {

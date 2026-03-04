@@ -129,25 +129,6 @@ func TestOpsEditOrSend_Forbidden_FallbackToSend(t *testing.T) {
 	}
 }
 
-func TestOpsRenderScreen_CallbackAckAndEdit(t *testing.T) {
-	client := &callbackPreferenceClient{}
-	ops := NewOps(client)
-
-	msgID, usedEdit, err := ops.RenderScreen(context.Background(), RenderCtx{ChatID: 1, MessageID: 99, FromCallback: true, CallbackQueryID: "cb-1", PreferEdit: true}, Screen{Text: "ok"})
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if !usedEdit {
-		t.Fatal("usedEdit = false, want true")
-	}
-	if msgID != 99 {
-		t.Fatalf("msgID = %d, want 99", msgID)
-	}
-	if client.callbackCalls != 1 {
-		t.Fatalf("callbackCalls = %d, want 1", client.callbackCalls)
-	}
-}
-
 type callbackPreferenceClient struct {
 	callbackCalls      int
 	callbackQueryCalls int
