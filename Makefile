@@ -1,4 +1,4 @@
-.PHONY: build run test clean docker-up docker-down migrate hash
+.PHONY: build run test clean docker-up docker-down migrate hash deps arch-check vet ci
 
 # Сборка бинарника
 build:
@@ -42,3 +42,14 @@ hash:
 deps:
 	go mod download
 	go mod tidy
+
+# Проверка архитектурных импортов
+arch-check:
+	./scripts/check_arch_imports.sh
+
+# Локальный CI прогон
+ci: arch-check vet test
+
+# Статический анализ
+vet:
+	go vet ./...
