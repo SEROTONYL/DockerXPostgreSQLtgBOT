@@ -63,3 +63,7 @@
 - Репозитории не знают про Telegram (`tgbotapi`, `internal/telegram`, `internal/bot` отсутствуют).
 - Callback-обработчики делают ACK в начале.
 - UI-рендер не плодит лишние сообщения, используется стратегия `edit-or-send`.
+
+## Автоматическая проверка архитектуры
+
+`make arch-check` обязателен для локальной проверки и запускается в CI через `make ci`; PR не должен мержиться с нарушениями. Скрипт `scripts/check_arch_imports.sh` проверяет Rule A (запрет импортов `internal/features/*` из `./internal/bot/...`) и Rule B (запрет Telegram/bot-импортов в `internal/repo|storage|db`, при этом `internal/db/postgres` исключён).

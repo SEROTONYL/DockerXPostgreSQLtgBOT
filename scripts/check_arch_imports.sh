@@ -12,82 +12,74 @@ GOMOD_PATH="$(go env GOMOD 2>/dev/null || true)"
 
 MODULE_PATH="$(go list -m -f '{{.Path}}')"
 
-check_bot_imports() {
-  [ -d "internal/bot" ] || return 0
-
-  forbidden_prefix="${MODULE_PATH}/internal/features"
-  violations_file="$(mktemp)"
-  trap 'rm -f "$violations_file"' EXIT INT TERM
-
-  # Rule A applies to package internal/bot.
-  go list -f '{{.ImportPath}} {{join .Imports " "}}' ./internal/bot | while IFS= read -r line; do
-    pkg_name="$(printf '%s' "$line" | awk '{print $1}')"
-    imports="$(printf '%s' "$line" | cut -d' ' -f2-)"
-    for imp in $imports; do
-      case "$imp" in
-        "$forbidden_prefix"|"$forbidden_prefix"/*)
-          printf '%s -> %s\n' "$pkg_name" "$imp" >>"$violations_file"
-          ;;
-      esac
-    done
-  done
-
-  if [ -s "$violations_file" ]; then
-    printf 'ERROR: internal/bot must not import internal/features/*\n' >&2
-    sort -u "$violations_file" >&2
-    exit 1
-  fi
+TMP_A="$(mktemp)"
+TMP_B="$(mktemp)"
+TMP_PKGS="$(mktemp)"
+cleanup() {
+  rm -f "$TMP_A" "$TMP_B" "$TMP_PKGS"
 }
+trap cleanup EXIT INT TERM
 
-check_repo_like_imports() {
-  patterns=""
-  [ -d "internal/repo" ] && patterns="$patterns ./internal/repo/..."
-  [ -d "internal/storage" ] && patterns="$patterns ./internal/storage/..."
-
-  if [ -d "internal/db" ]; then
-    for dir in internal/db/*; do
-      [ -d "$dir" ] || continue
-      base="$(basename "$dir")"
-      [ "$base" = "postgres" ] && continue
-      patterns="$patterns ./$dir/..."
-    done
-  fi
-
-  [ -n "$(printf '%s' "$patterns" | tr -d '[:space:]')" ] || return 0
-
-  forbidden_imports="
-${MODULE_PATH}/internal/telegram
-${MODULE_PATH}/internal/bot
-github.com/go-telegram/bot
-github.com/go-telegram/bot/models
-github.com/go-telegram-bot-api/telegram-bot-api
-github.com/go-telegram-bot-api/telegram-bot-api/v5
-"
-
-  violations_file="$(mktemp)"
-  trap 'rm -f "$violations_file"' EXIT INT TERM
-
-  for pkg in $patterns; do
-    go list -f '{{.ImportPath}} {{join .Imports " "}}' "$pkg" | while IFS= read -r line; do
-      pkg_name="$(printf '%s' "$line" | awk '{print $1}')"
-      imports="$(printf '%s' "$line" | cut -d' ' -f2-)"
-      for forbidden in $forbidden_imports; do
-        [ -n "$forbidden" ] || continue
-        if printf '%s\n' "$imports" | tr ' ' '\n' | grep -Fx "$forbidden" >/dev/null 2>&1; then
-          printf '%s -> %s\n' "$pkg_name" "$forbidden" >>"$violations_file"
-        fi
+# Rule A: ./internal/bot/... must not import ${MODULE_PATH}/internal/features/*
+if [ -d "internal/bot" ]; then
+  go list -f '{{.ImportPath}} {{join .Imports " "}}' ./internal/bot/... |
+    while IFS= read -r line; do
+      pkg_name=$(printf '%s\n' "$line" | awk '{print $1}')
+      imports=$(printf '%s\n' "$line" | cut -d' ' -f2-)
+      for imp in $imports; do
+        case "$imp" in
+          "${MODULE_PATH}/internal/features"|"${MODULE_PATH}/internal/features"/*)
+            printf '%s -> %s\n' "$pkg_name" "$imp" >>"$TMP_A"
+            ;;
+        esac
       done
     done
-  done
+fi
 
-  if [ -s "$violations_file" ]; then
-    printf 'ERROR: repository/storage/db packages contain forbidden imports:\n' >&2
-    sort -u "$violations_file" >&2
-    exit 1
+if [ -s "$TMP_A" ]; then
+  printf 'ERROR: Rule A violated: packages under ./internal/bot/... must not import %s/internal/features/*\n' "$MODULE_PATH" >&2
+  sort -u "$TMP_A" >&2
+  exit 1
+fi
+
+# Rule B: repo/storage/db packages must not import bot/telegram libraries.
+for dir in internal/repo internal/storage; do
+  if [ -d "$dir" ]; then
+    go list "$dir/..." >>"$TMP_PKGS"
   fi
-}
+done
 
-check_bot_imports
-check_repo_like_imports
+if [ -d "internal/db" ]; then
+  find internal/db -mindepth 1 -maxdepth 1 -type d | while IFS= read -r dir; do
+    base=$(basename "$dir")
+    [ "$base" = "postgres" ] && continue
+    go list "$dir/..." >>"$TMP_PKGS"
+  done
+fi
 
-echo 'OK: architecture import rules passed'
+if [ -s "$TMP_PKGS" ]; then
+  sort -u "$TMP_PKGS" -o "$TMP_PKGS"
+
+  go list -f '{{.ImportPath}} {{join .Imports " "}}' $(cat "$TMP_PKGS") |
+    while IFS= read -r line; do
+      pkg_name=$(printf '%s\n' "$line" | awk '{print $1}')
+      imports=$(printf '%s\n' "$line" | cut -d' ' -f2-)
+      for imp in $imports; do
+        case "$imp" in
+          "${MODULE_PATH}/internal/telegram"|"${MODULE_PATH}/internal/bot"|"github.com/go-telegram/bot"|"github.com/go-telegram/bot/models"|"github.com/go-telegram-bot-api/telegram-bot-api"|"github.com/go-telegram-bot-api/telegram-bot-api/v5")
+            printf '%s -> %s\n' "$pkg_name" "$imp" >>"$TMP_B"
+            ;;
+        esac
+      done
+    done
+else
+  printf "Skip rule B: no packages found\n"
+fi
+
+if [ -s "$TMP_B" ]; then
+  printf 'ERROR: Rule B violated: repo/storage/db packages must not import bot or telegram adapters directly\n' >&2
+  sort -u "$TMP_B" >&2
+  exit 1
+fi
+
+printf 'OK: architecture import rules passed\n'
