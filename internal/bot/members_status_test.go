@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-telegram/bot/models"
 
-	"serotonyl.ru/telegram-bot/internal/bot/filters"
 	"serotonyl.ru/telegram-bot/internal/bot/middleware"
 	"serotonyl.ru/telegram-bot/internal/commands"
 	"serotonyl.ru/telegram-bot/internal/config"
@@ -20,6 +19,17 @@ import (
 
 type fakeTGStatus struct {
 	sent []string
+}
+
+type fakeChatFilterStatus struct {
+	allow func(message *models.Message) bool
+}
+
+func (f fakeChatFilterStatus) CheckAccess(ctx context.Context, message *models.Message) bool {
+	if f.allow == nil {
+		return true
+	}
+	return f.allow(message)
 }
 
 func (f *fakeTGStatus) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
@@ -158,7 +168,7 @@ func TestHandleUpdate_AdminChatIgnoresNonAdminCommands(t *testing.T) {
 		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, telegram.NewOps(tg)),
+		chatFilter:    fakeChatFilterStatus{},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -184,7 +194,7 @@ func TestHandleUpdate_AdminChatIgnoresPlainMessages(t *testing.T) {
 		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, telegram.NewOps(tg)),
+		chatFilter:    fakeChatFilterStatus{},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -227,10 +237,18 @@ func TestHandleUpdate_DeniedByChatFilter_DoesNotWriteMemberSeen(t *testing.T) {
 		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, telegram.NewOps(tg)),
-		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
-		parser:        NewCommandParser(),
-		cmdRouter:     commands.NewRouter(),
+		chatFilter: fakeChatFilterStatus{allow: func(message *models.Message) bool {
+			if message == nil {
+				return false
+			}
+			if message.Chat.ID == -1001 || message.Chat.ID == -2002 {
+				return true
+			}
+			return message.Chat.Type == models.ChatTypePrivate
+		}},
+		rateLimiter: middleware.NewRateLimiter(100, time.Minute),
+		parser:      NewCommandParser(),
+		cmdRouter:   commands.NewRouter(),
 	}
 	registerTestCommands(b)
 
@@ -251,7 +269,7 @@ func TestHandleUpdate_MembershipUpdateHandledOnce(t *testing.T) {
 		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, telegram.NewOps(tg)),
+		chatFilter:    fakeChatFilterStatus{},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
