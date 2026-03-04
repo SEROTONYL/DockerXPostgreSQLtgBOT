@@ -858,7 +858,10 @@ func (h *Handler) handleUndoLastRole(ctx context.Context, chatID, userID int64, 
 func (h *Handler) renderAdminScreen(ctx context.Context, chatID, userID int64, panelMsgID int, screenName, text string, keyboard models.InlineKeyboardMarkup) error {
 	msgID, usedEdit, err := telegram.RenderScreen(ctx, h.ops, telegram.Screen{ChatID: chatID, MessageID: panelMsgID, Text: text, ReplyMarkup: &keyboard})
 	if err != nil {
-		action := map[bool]string{true: "edit", false: "send"}[usedEdit]
+		action := "send"
+		if usedEdit {
+			action = "edit"
+		}
 		h.logAdminUIError(userID, chatID, panelMsgID, screenName, action, 0, err.Error(), err)
 		return err
 	}
