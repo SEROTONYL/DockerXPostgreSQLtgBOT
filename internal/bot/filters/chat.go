@@ -14,16 +14,14 @@ type ChatFilter struct {
 	floodChatID   int64
 	adminChatID   int64
 	memberService *members.Service
-	tgClient      telegram.Client
 	tgOps         *telegram.Ops
 }
 
-func NewChatFilter(floodChatID int64, adminChatID int64, memberService *members.Service, client telegram.Client, ops *telegram.Ops) *ChatFilter {
+func NewChatFilter(floodChatID int64, adminChatID int64, memberService *members.Service, ops *telegram.Ops) *ChatFilter {
 	return &ChatFilter{
 		floodChatID:   floodChatID,
 		adminChatID:   adminChatID,
 		memberService: memberService,
-		tgClient:      client,
 		tgOps:         ops,
 	}
 }
@@ -56,10 +54,6 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 
 	if f.memberService == nil {
 		log.WithField("component", "ChatFilter").Error("memberService is nil")
-		return false
-	}
-	if f.tgClient == nil {
-		log.WithField("component", "ChatFilter").Error("tgClient is nil")
 		return false
 	}
 	if f.tgOps == nil {
@@ -101,7 +95,7 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 		}
 
 		// 2.1) БД не знает пользователя: проверяем членство через Telegram API
-		cm, err := f.tgClient.GetChatMember(f.floodChatID, userID)
+		cm, err := f.tgOps.GetChatMember(ctx, f.floodChatID, userID)
 		if err != nil {
 			logger.WithError(err).Error("member check failed (telegram GetChatMember)")
 			return false
