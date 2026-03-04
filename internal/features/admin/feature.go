@@ -13,7 +13,7 @@ import (
 )
 
 type adminMessageHandler interface {
-	HandleAdminMessage(ctx context.Context, chatID int64, userID int64, text string) bool
+	HandleAdminMessage(ctx context.Context, chatID int64, userID int64, messageID int, text string) bool
 }
 
 type membersStatusService interface {
@@ -40,7 +40,7 @@ func (f *Feature) RegisterCommands(r *commands.Router) {
 		if f.adminHandler == nil || c.ChatID != c.UserID {
 			return
 		}
-		f.adminHandler.HandleAdminMessage(ctx, c.ChatID, c.UserID, "/login "+strings.Join(args, " "))
+		f.adminHandler.HandleAdminMessage(ctx, c.ChatID, c.UserID, 0, "/login "+strings.Join(args, " "))
 	})
 	r.Register("members_status", func(ctx context.Context, c commands.Context, args []string) {
 		f.handleMembersStatusCommand(ctx, c)

@@ -104,7 +104,7 @@ func (b *Bot) handleMessageUpdate(ctx context.Context, uc UpdateContext) {
 	}
 
 	if uc.IsPrivate {
-		handled := b.adminHandler.HandleAdminMessage(ctx, chatID, userID, message.Text)
+		handled := b.adminHandler.HandleAdminMessage(ctx, chatID, userID, message.ID, message.Text)
 		if handled {
 			return
 		}

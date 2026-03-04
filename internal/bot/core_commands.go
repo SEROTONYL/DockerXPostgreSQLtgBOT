@@ -21,7 +21,7 @@ func (b *Bot) registerCoreCommands() {
 		if b.adminHandler == nil || c.ChatID != c.UserID {
 			return
 		}
-		b.adminHandler.HandleAdminMessage(ctx, c.ChatID, c.UserID, "/login "+strings.Join(args, " "))
+		b.adminHandler.HandleAdminMessage(ctx, c.ChatID, c.UserID, 0, "/login "+strings.Join(args, " "))
 	})
 	b.cmdRouter.Register("members_status", func(ctx context.Context, c commands.Context, args []string) {
 		b.handleMembersStatusCommand(ctx, c)

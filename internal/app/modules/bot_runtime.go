@@ -18,7 +18,7 @@ func BuildChatFilter(cfg *config.Config, infra *Infra, tg *Telegram) *filters.Ch
 
 type BotHandlers struct {
 	Admin interface {
-		HandleAdminMessage(ctx context.Context, chatID int64, userID int64, text string) bool
+		HandleAdminMessage(ctx context.Context, chatID int64, userID int64, messageID int, text string) bool
 		HandleAdminCallback(ctx context.Context, q *models.CallbackQuery) bool
 	}
 	Karma interface {
