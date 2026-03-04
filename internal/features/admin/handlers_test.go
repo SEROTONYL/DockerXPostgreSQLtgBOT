@@ -48,6 +48,14 @@ func (f *fakeTG) GetChatMember(chatID int64, userID int64) (models.ChatMember, e
 	return models.ChatMember{}, nil
 }
 
+func (f *fakeTG) EditReplyMarkup(chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error {
+	return nil
+}
+
+func (f *fakeTG) DeleteMessage(chatID int64, messageID int) error {
+	return nil
+}
+
 func (f *fakeTG) count(kind string) int {
 	n := 0
 	for _, c := range f.calls {

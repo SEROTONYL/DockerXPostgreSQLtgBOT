@@ -53,10 +53,9 @@ type Deps struct {
 
 // Bot — главная структура бота, объединяющая все компоненты.
 type Bot struct {
-	api   *botapi.Bot
-	ops   *telegram.Ops
-	tgOps *telegram.Ops
-	cfg   *config.Config
+	api *botapi.Bot
+	ops *telegram.Ops
+	cfg *config.Config
 
 	chatFilter  *filters.ChatFilter
 	rateLimiter *middleware.RateLimiter
@@ -86,7 +85,6 @@ func New(d Deps) *Bot {
 	b := &Bot{
 		api:            d.API,
 		ops:            d.Ops,
-		tgOps:          d.Ops,
 		cfg:            d.Cfg,
 		chatFilter:     d.ChatFilter,
 		rateLimiter:    middleware.NewRateLimiter(d.Cfg.RateLimitRequests, d.Cfg.RateLimitWindow),
@@ -397,26 +395,18 @@ func (b *Bot) handleNewMembers(ctx context.Context, newMembers []models.User) {
 
 // sendMessage — утилита для отправки сообщений.
 func (b *Bot) sendMessage(ctx context.Context, chatID int64, text string) {
-	ops := b.ops
-	if ops == nil {
-		ops = b.tgOps
-	}
-	if ops == nil {
+	if b.ops == nil {
 		return
 	}
-	_, _ = ops.Send(ctx, chatID, text, nil)
+	_, _ = b.ops.Send(ctx, chatID, text, nil)
 }
 
 // SendMessageToUser отправляет сообщение пользователю (для напоминаний).
 func (b *Bot) SendMessageToUser(userID int64, text string) {
-	ops := b.ops
-	if ops == nil {
-		ops = b.tgOps
-	}
-	if ops == nil {
+	if b.ops == nil {
 		return
 	}
-	_, _ = ops.Send(context.Background(), userID, text, nil)
+	_, _ = b.ops.Send(context.Background(), userID, text, nil)
 }
 
 type membershipAction string

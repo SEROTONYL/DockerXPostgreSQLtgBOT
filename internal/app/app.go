@@ -76,7 +76,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	adminService := admin.NewService(adminRepo, memberRepo, cfg)
 
 	// === 5. Telegram adapter/ops ===
-	tgClient := telegram.NewAdapter(botAPI)
+	tgClient := telegram.NewBotClient(botAPI)
 	tgOps := telegram.NewOpsWithLogger(tgClient, log.NewEntry(log.StandardLogger()))
 
 	// === 6. Обработчики ===
@@ -88,7 +88,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	adminHandler := admin.NewHandler(adminService, memberService, economyService, tgOps)
 
 	// === 6. Фильтры ===
-	chatFilter := filters.NewChatFilter(cfg.FloodChatID, cfg.AdminChatID, memberService, tgClient, tgOps)
+	chatFilter := filters.NewChatFilter(cfg.FloodChatID, cfg.AdminChatID, memberService, tgOps)
 
 	// === 7. Собираем бота ===
 	b := bot.New(bot.Deps{

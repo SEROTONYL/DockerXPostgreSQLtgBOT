@@ -61,10 +61,16 @@ func (f *fakeTG) AnswerCallbackQuery(callbackID string, text string, showAlert b
 func (f *fakeTG) GetChatMember(chatID int64, userID int64) (member models.ChatMember, err error) {
 	return models.ChatMember{Type: models.ChatMemberTypeLeft}, nil
 }
+func (f *fakeTG) EditReplyMarkup(chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error {
+	return nil
+}
+func (f *fakeTG) DeleteMessage(chatID int64, messageID int) error {
+	return nil
+}
 
 func TestCheckAccess_AdminChatAlwaysAllowed(t *testing.T) {
 	memberSvc := members.NewService(&fakeMemberRepo{})
-	f := NewChatFilter(-1001, -2002, memberSvc, &fakeTG{}, telegram.NewOps(&fakeTG{}))
+	f := NewChatFilter(-1001, -2002, memberSvc, telegram.NewOps(&fakeTG{}))
 	msg := &models.Message{Chat: models.Chat{ID: -2002, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 42}}
 
 	if ok := f.CheckAccess(context.Background(), msg); !ok {

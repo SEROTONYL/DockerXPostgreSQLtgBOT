@@ -35,6 +35,14 @@ func (f *fakeTGStatus) GetChatMember(chatID int64, userID int64) (member models.
 	return models.ChatMember{}, nil
 }
 
+func (f *fakeTGStatus) EditReplyMarkup(chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error {
+	return nil
+}
+
+func (f *fakeTGStatus) DeleteMessage(chatID int64, messageID int) error {
+	return nil
+}
+
 type fakeMembersRepoStatus struct {
 	active            int
 	left              int
@@ -92,7 +100,7 @@ func (f fakePurgeMetricsProvider) GetPurgeMetrics() jobs.PurgeMetrics { return f
 func TestMembersStatusCommand_IgnoredOutsideAdminChat(t *testing.T) {
 	tg := &fakeTGStatus{}
 	repo := &fakeMembersRepoStatus{active: 10, left: 3, pending: 1}
-	b := &Bot{tgOps: telegram.NewOps(tg), memberService: members.NewService(repo), cfg: &config.Config{}, cmdRouter: commands.NewRouter()}
+	b := &Bot{ops: telegram.NewOps(tg), memberService: members.NewService(repo), cfg: &config.Config{}, cmdRouter: commands.NewRouter()}
 	b.registerCommands()
 
 	b.routeCommand(context.Background(), UpdateContext{ChatID: 111, UserID: 42, IsAdminChat: false, Now: time.Now().UTC()}, "members_status", nil)
@@ -106,7 +114,7 @@ func TestMembersStatusCommand_ReturnsDataInAdminChat(t *testing.T) {
 	tg := &fakeTGStatus{}
 	repo := &fakeMembersRepoStatus{active: 10, left: 3, pending: 2}
 	now := time.Now().UTC().Truncate(time.Second)
-	b := &Bot{tgOps: telegram.NewOps(tg), memberService: members.NewService(repo), cfg: &config.Config{}, cmdRouter: commands.NewRouter(), purgeMetricsProvider: fakePurgeMetricsProvider{m: jobs.PurgeMetrics{TotalDeleted: 99, LastRunAt: now, LastRunDeleted: 5, LastError: "boom"}}}
+	b := &Bot{ops: telegram.NewOps(tg), memberService: members.NewService(repo), cfg: &config.Config{}, cmdRouter: commands.NewRouter(), purgeMetricsProvider: fakePurgeMetricsProvider{m: jobs.PurgeMetrics{TotalDeleted: 99, LastRunAt: now, LastRunDeleted: 5, LastError: "boom"}}}
 	b.registerCommands()
 
 	b.routeCommand(context.Background(), UpdateContext{ChatID: 777, UserID: 77, IsAdminChat: true, Now: now}, "members_status", nil)
@@ -138,9 +146,9 @@ func TestHandleUpdate_AdminChatIgnoresNonAdminCommands(t *testing.T) {
 	memberSvc := members.NewService(repo)
 	b := &Bot{
 		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
-		tgOps:         telegram.NewOps(tg),
+		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg, telegram.NewOps(tg)),
+		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, telegram.NewOps(tg)),
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -164,9 +172,9 @@ func TestHandleUpdate_AdminChatIgnoresPlainMessages(t *testing.T) {
 	memberSvc := members.NewService(repo)
 	b := &Bot{
 		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
-		tgOps:         telegram.NewOps(tg),
+		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg, telegram.NewOps(tg)),
+		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, telegram.NewOps(tg)),
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -207,9 +215,9 @@ func TestHandleUpdate_DeniedByChatFilter_DoesNotWriteMemberSeen(t *testing.T) {
 	memberSvc := members.NewService(repo)
 	b := &Bot{
 		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
-		tgOps:         telegram.NewOps(tg),
+		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg, telegram.NewOps(tg)),
+		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, telegram.NewOps(tg)),
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -231,9 +239,9 @@ func TestHandleUpdate_MembershipUpdateHandledOnce(t *testing.T) {
 	memberSvc := members.NewService(repo)
 	b := &Bot{
 		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
-		tgOps:         telegram.NewOps(tg),
+		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, tg, telegram.NewOps(tg)),
+		chatFilter:    filters.NewChatFilter(-1001, -2002, memberSvc, telegram.NewOps(tg)),
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),

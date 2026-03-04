@@ -29,6 +29,14 @@ func (f *fakeClient) EditMessage(chatID int64, messageID int, text string, marku
 	return f.editErr
 }
 
+func (f *fakeClient) EditReplyMarkup(chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error {
+	return nil
+}
+
+func (f *fakeClient) DeleteMessage(chatID int64, messageID int) error {
+	return nil
+}
+
 func (f *fakeClient) AnswerCallback(callbackID string) error {
 	return nil
 }
@@ -133,6 +141,14 @@ func (c *callbackPreferenceClient) SendMessage(chatID int64, text string, markup
 }
 
 func (c *callbackPreferenceClient) EditMessage(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
+	return nil
+}
+
+func (c *callbackPreferenceClient) EditReplyMarkup(chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error {
+	return nil
+}
+
+func (c *callbackPreferenceClient) DeleteMessage(chatID int64, messageID int) error {
 	return nil
 }
 

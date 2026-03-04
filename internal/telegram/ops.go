@@ -5,9 +5,116 @@ import (
 	"fmt"
 	"strings"
 
+	botapi "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/sirupsen/logrus"
 )
+
+// Client инкапсулирует минимум операций Telegram API, которые используются проектом.
+type Client interface {
+	SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (messageID int, err error)
+	EditMessage(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error
+	EditReplyMarkup(chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error
+	DeleteMessage(chatID int64, messageID int) error
+	GetChatMember(chatID int64, userID int64) (member models.ChatMember, err error)
+}
+
+type botClient struct {
+	bot *botapi.Bot
+}
+
+func NewBotClient(bot *botapi.Bot) Client {
+	if bot == nil {
+		panic("telegram.NewBotClient: nil bot")
+	}
+	return &botClient{bot: bot}
+}
+
+func (a *botClient) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
+	msg, err := a.bot.SendMessage(context.Background(), buildSendMessageParams(chatID, text, markup))
+	if err != nil {
+		return 0, err
+	}
+	if msg == nil {
+		return 0, nil
+	}
+	return msg.ID, nil
+}
+
+func (a *botClient) EditMessage(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
+	_, err := a.bot.EditMessageText(context.Background(), buildEditMessageTextParams(chatID, messageID, text, markup))
+	return err
+}
+
+func (a *botClient) EditReplyMarkup(chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error {
+	_, err := a.bot.EditMessageReplyMarkup(context.Background(), &botapi.EditMessageReplyMarkupParams{
+		ChatID:      chatID,
+		MessageID:   messageID,
+		ReplyMarkup: markup,
+	})
+	return err
+}
+
+func (a *botClient) DeleteMessage(chatID int64, messageID int) error {
+	_, err := a.bot.DeleteMessage(context.Background(), &botapi.DeleteMessageParams{ChatID: chatID, MessageID: messageID})
+	return err
+}
+
+func (a *botClient) GetChatMember(chatID int64, userID int64) (models.ChatMember, error) {
+	cm, err := a.bot.GetChatMember(context.Background(), &botapi.GetChatMemberParams{ChatID: chatID, UserID: userID})
+	if err != nil {
+		return models.ChatMember{}, err
+	}
+	if cm == nil {
+		return models.ChatMember{}, nil
+	}
+	return *cm, nil
+}
+
+func (a *botClient) AnswerCallback(callbackID string) error {
+	return a.AnswerCallbackCtx(context.Background(), callbackID)
+}
+
+func (a *botClient) AnswerCallbackCtx(ctx context.Context, callbackID string) error {
+	if callbackID == "" {
+		return nil
+	}
+	_, err := a.bot.AnswerCallbackQuery(ctx, &botapi.AnswerCallbackQueryParams{CallbackQueryID: callbackID})
+	return err
+}
+
+// AnswerCallbackQuery оставлен для обратной совместимости с существующими вызовами.
+func (a *botClient) AnswerCallbackQuery(callbackID string, text string, showAlert bool) error {
+	return a.AnswerCallbackQueryCtx(context.Background(), callbackID, text, showAlert)
+}
+
+func (a *botClient) AnswerCallbackQueryCtx(ctx context.Context, callbackID string, text string, showAlert bool) error {
+	if callbackID == "" {
+		return nil
+	}
+	_, err := a.bot.AnswerCallbackQuery(ctx, &botapi.AnswerCallbackQueryParams{
+		CallbackQueryID: callbackID,
+		Text:            text,
+		ShowAlert:       showAlert,
+	})
+	return err
+}
+
+func buildSendMessageParams(chatID int64, text string, markup *models.InlineKeyboardMarkup) *botapi.SendMessageParams {
+	params := &botapi.SendMessageParams{ChatID: chatID, Text: text}
+	if markup != nil {
+		params.ReplyMarkup = markup
+	}
+	return params
+}
+
+func buildEditMessageTextParams(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) *botapi.EditMessageTextParams {
+	params := &botapi.EditMessageTextParams{ChatID: chatID, MessageID: messageID, Text: text}
+	if markup != nil {
+		params.ReplyMarkup = markup
+	}
+	return params
+}
 
 type Ops struct {
 	c   Client
@@ -50,6 +157,10 @@ func NewOps(c Client) *Ops {
 	return NewOpsWithLogger(c, logrus.NewEntry(logrus.StandardLogger()))
 }
 
+func NewOpsFromBot(bot *botapi.Bot) *Ops {
+	return NewOps(NewBotClient(bot))
+}
+
 func NewOpsWithLogger(c Client, l *logrus.Entry) *Ops {
 	if l == nil {
 		l = logrus.NewEntry(logrus.StandardLogger())
@@ -69,6 +180,10 @@ func (o *Ops) Send(ctx context.Context, chatID int64, text string, markup *model
 	return msgID, nil
 }
 
+func (o *Ops) SendText(ctx context.Context, chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
+	return o.Send(ctx, chatID, text, markup)
+}
+
 func (o *Ops) Edit(ctx context.Context, chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
 	err := o.c.EditMessage(chatID, messageID, text, markup)
 	if err == nil {
@@ -86,6 +201,35 @@ func (o *Ops) Edit(ctx context.Context, chatID int64, messageID int, text string
 		entry.Warn("telegram edit failed")
 	}
 	return err
+}
+
+func (o *Ops) EditText(ctx context.Context, chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
+	return o.Edit(ctx, chatID, messageID, text, markup)
+}
+
+func (o *Ops) EditReplyMarkup(ctx context.Context, chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error {
+	err := o.c.EditReplyMarkup(chatID, messageID, markup)
+	if err != nil {
+		o.log.WithContext(ctx).WithError(err).WithFields(logrus.Fields{"chat_id": chatID, "message_id": messageID}).Warn("telegram edit reply markup failed")
+	}
+	return err
+}
+
+func (o *Ops) DeleteMessage(ctx context.Context, chatID int64, messageID int) error {
+	err := o.c.DeleteMessage(chatID, messageID)
+	if err != nil {
+		o.log.WithContext(ctx).WithError(err).WithFields(logrus.Fields{"chat_id": chatID, "message_id": messageID}).Warn("telegram delete failed")
+	}
+	return err
+}
+
+func (o *Ops) GetChatMember(ctx context.Context, chatID int64, userID int64) (models.ChatMember, error) {
+	member, err := o.c.GetChatMember(chatID, userID)
+	if err != nil {
+		o.log.WithContext(ctx).WithError(err).WithFields(logrus.Fields{"chat_id": chatID, "user_id": userID}).Warn("telegram get chat member failed")
+		return models.ChatMember{}, err
+	}
+	return member, nil
 }
 
 func (o *Ops) AnswerCallback(ctx context.Context, callbackID string, args ...any) error {
