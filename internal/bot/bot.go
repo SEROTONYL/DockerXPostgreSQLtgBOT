@@ -31,6 +31,26 @@ type purgeMetricsProvider interface {
 	GetPurgeMetrics() jobs.PurgeMetrics
 }
 
+// Deps содержит зависимости для создания Bot.
+type Deps struct {
+	API            *botapi.Bot
+	Ops            *telegram.Ops
+	Cfg            *config.Config
+	MemberService  *members.Service
+	MemberHandler  *members.Handler
+	EconomyService *economy.Service
+	EconomyHandler *economy.Handler
+	StreakService  *streak.Service
+	StreakHandler  *streak.Handler
+	KarmaService   *karma.Service
+	KarmaHandler   *karma.Handler
+	CasinoService  *casino.Service
+	CasinoHandler  *casino.Handler
+	AdminService   *admin.Service
+	AdminHandler   *admin.Handler
+	ChatFilter     *filters.ChatFilter
+}
+
 // Bot — главная структура бота, объединяющая все компоненты.
 type Bot struct {
 	api   *botapi.Bot
@@ -62,43 +82,26 @@ type Bot struct {
 }
 
 // New создаёт новый экземпляр бота со всеми зависимостями.
-func New(
-	api *botapi.Bot,
-	ops *telegram.Ops,
-	cfg *config.Config,
-	memberService *members.Service,
-	memberHandler *members.Handler,
-	economyService *economy.Service,
-	economyHandler *economy.Handler,
-	streakService *streak.Service,
-	streakHandler *streak.Handler,
-	karmaService *karma.Service,
-	karmaHandler *karma.Handler,
-	casinoService *casino.Service,
-	casinoHandler *casino.Handler,
-	adminService *admin.Service,
-	adminHandler *admin.Handler,
-	chatFilter *filters.ChatFilter,
-) *Bot {
+func New(d Deps) *Bot {
 	b := &Bot{
-		api:            api,
-		ops:            ops,
-		tgOps:          ops,
-		cfg:            cfg,
-		chatFilter:     chatFilter,
-		rateLimiter:    middleware.NewRateLimiter(cfg.RateLimitRequests, cfg.RateLimitWindow),
-		memberHandler:  memberHandler,
-		economyHandler: economyHandler,
-		streakHandler:  streakHandler,
-		karmaHandler:   karmaHandler,
-		casinoHandler:  casinoHandler,
-		adminHandler:   adminHandler,
-		memberService:  memberService,
-		economyService: economyService,
-		streakService:  streakService,
-		karmaService:   karmaService,
-		casinoService:  casinoService,
-		adminService:   adminService,
+		api:            d.API,
+		ops:            d.Ops,
+		tgOps:          d.Ops,
+		cfg:            d.Cfg,
+		chatFilter:     d.ChatFilter,
+		rateLimiter:    middleware.NewRateLimiter(d.Cfg.RateLimitRequests, d.Cfg.RateLimitWindow),
+		memberHandler:  d.MemberHandler,
+		economyHandler: d.EconomyHandler,
+		streakHandler:  d.StreakHandler,
+		karmaHandler:   d.KarmaHandler,
+		casinoHandler:  d.CasinoHandler,
+		adminHandler:   d.AdminHandler,
+		memberService:  d.MemberService,
+		economyService: d.EconomyService,
+		streakService:  d.StreakService,
+		karmaService:   d.KarmaService,
+		casinoService:  d.CasinoService,
+		adminService:   d.AdminService,
 		parser:         NewCommandParser(),
 		cmdRouter:      commands.NewRouter(),
 	}
