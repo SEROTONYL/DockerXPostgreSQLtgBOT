@@ -307,11 +307,29 @@ func (h *Handler) startAssignRole(ctx context.Context, chatID int64, userID int6
 		return
 	}
 	if len(users) == 0 {
-		h.sendMessage(ctx, chatID, "Все пользователи уже имеют роли")
+		h.renderNoRoleCandidatesScreen(ctx, chatID, userID, panelMsgID)
 		return
 	}
 
 	h.startUserPicker(ctx, chatID, userID, panelMsgID, StateAssignRoleSelect, UserPickerAssignWithoutRole, users)
+}
+
+func (h *Handler) renderNoRoleCandidatesScreen(ctx context.Context, chatID, userID int64, panelMsgID int) {
+	h.service.ClearState(userID)
+	if panelMsgID <= 0 {
+		panelMsgID = h.panelMessageIDFromState(userID)
+	}
+	if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "assign_no_candidates", "ℹ️ Все пользователи уже имеют роли.", h.noRoleCandidatesMarkup()); err != nil {
+		h.sendUIErrorHint(ctx, chatID, err)
+	}
+}
+
+func (h *Handler) noRoleCandidatesMarkup() models.InlineKeyboardMarkup {
+	return newInlineKeyboardMarkup(
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonDataStyled("✅ Вернуться в админку", cbAdminReturnPanel, "success"),
+		),
+	)
 }
 
 // handleAssignRoleSelect — Шаг 2: пользователь выбрал кнопку.
