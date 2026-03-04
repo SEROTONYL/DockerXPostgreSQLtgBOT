@@ -1,108 +1,116 @@
-# 🤖 Telegram Bot — Пленки
+# DockerXPostgreSQLtgBOT
 
-Бот для русскоязычного сообщества с виртуальной валютой «пленки», стрик-системой, кармой, казино и админ-панелью.
+Telegram-бот на Go с PostgreSQL для чата сообщества (экономика, стрики, карма, казино, админ-функции). Проект построен вокруг слоистой архитектуры (`cmd -> internal/app -> internal/bot|internal/commands|internal/features|internal/telegram`) и проверяет архитектурные границы отдельным скриптом импортов.
 
-## 📋 Возможности
+## Features
 
-- **💰 Экономика** — виртуальная валюта «пленки», переводы, история транзакций
-- **🔥 Стрики** — ежедневные серии за активность (50 сообщений/день), бонусы до 70 пленок
-- **⭐ Карма** — репутация через «спасибо» в ответах, лимит 2/день
-- **🎰 Казино** — слот-машина 5×6, 20 линий, вайлды, скаттеры, динамический RTP 94-98%
-- **👑 Админ-панель** — парольная аутентификация (Argon2id), управление ролями
+Фичи в `internal/features/*`:
 
-## 🚀 Быстрый старт
+- `admin` — админ-авторизация и сервисные команды (`members_status`).
+- `economy` — баланс/переводы/транзакции.
+- `karma` — механика благодарностей и лимитов.
+- `streak` — учёт дневной активности и наград.
+- `casino` — слот-механика.
+- `members`, `debts`, `core` — есть как feature-слой/контракты, но сейчас без регистрации пользовательских команд в runtime (пустой `RegisterCommands`).
 
-### 1. Клонируйте и настройте
+## Architecture
+
+Подробные правила: [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+Кратко по слоям:
+
+- `cmd/*` — entrypoint.
+- `internal/app` — composition root (wiring модулей и зависимостей).
+- `internal/bot` + `internal/commands` — runtime обработки апдейтов и роутинг команд.
+- `internal/features/*` — бизнес-фичи.
+- `internal/telegram` — шлюз к Telegram API.
+
+Проверка архитектурных импортов запускается командой:
+
+```bash
+scripts/check_arch_imports.sh
+```
+
+или через `make arch-check` / `make ci`.
+
+## Requirements
+
+- Go `1.22` (см. `go.mod`)
+- PostgreSQL `16` (образ в `deploy/docker-compose.yml`)
+- Docker + Docker Compose (для запуска через compose)
+
+## Quickstart (Local)
+
+1) Подготовь `.env`:
 
 ```bash
 cp .env.example .env
-# Отредактируйте .env — укажите токен бота и ID чата
 ```
 
-### 2. Сгенерируйте хеш пароля админа
+2) Сгенерируй hash пароля админа и подставь в `.env` (`ADMIN_PASSWORD_HASH`):
 
 ```bash
 make hash
-# Скопируйте результат в .env → ADMIN_PASSWORD_HASH
 ```
 
-### 3. Запуск через Docker
+3) Запуск без Docker (локальные Go + Postgres):
 
 ```bash
+make run
+```
+
+4) Запуск через Docker Compose:
+
+```bash
+cp .env.example deploy/.env
+# для compose выставь DB_HOST=db (имя сервиса БД в deploy/docker-compose.yml)
 make docker-up
 ```
 
-### 4. Или запуск вручную
+## Useful commands
+
+- `make build` — сборка `./bot`
+- `make run` — сборка и запуск
+- `make test` — `go test ./...`
+- `make vet` — `go vet ./...`
+- `make arch-check` — проверка архитектурных импортов
+- `make ci` — `arch-check + vet + test`
+- `make migrate` — применить SQL-миграции из `migrations/`
+- `make docker-up` / `make docker-down` / `make docker-logs`
+
+## Development workflow
+
+1. Добавь/измени фичу в `internal/features/<name>`.
+2. Подключи модуль и регистрацию команд в `internal/app/app.go` (wiring через `commands.Router`).
+3. Проверь границы импортов и тесты:
 
 ```bash
-# Нужен Go 1.22+ и PostgreSQL
-make build
-./bot
+make ci
 ```
 
-## 📝 Команды
+Архитектурные ограничения (кратко):
 
-| Команда | Описание |
-|---------|----------|
-| `!пленки` | Показать баланс |
-| `!отсыпать @user 100` | Перевести пленки |
-| `!транзакции` | История транзакций |
-| `!карма` | Моя карма |
-| `!огонек` | Прогресс стрика |
-| `!слоты` | Слот-машина (ставка 50) |
-| `!статслоты` | Статистика слотов |
+- `internal/bot` не импортирует `internal/features/*`.
+- Репозиторные слои (`internal/repo|storage|db`) не импортируют `internal/bot`/`internal/telegram`.
+- Telegram-взаимодействие идёт через `internal/telegram`.
 
-Префиксы: `!` или `.` (`.пленки` тоже работает)
+См. детали в [ARCHITECTURE.md](./ARCHITECTURE.md).
 
-## 🏗️ Структура проекта
+## Deployment
 
-```
-├── cmd/bot/main.go          — Точка входа
-├── internal/
-│   ├── app/app.go           — Инициализация и DI
-│   ├── bot/bot.go           — Ядро бота, роутер команд
-│   ├── bot/filters/         — Фильтр чатов (FLOOD_CHAT_ID)
-│   ├── bot/middleware/       — Логирование, rate-limit, recovery
-│   ├── common/              — Плюрализация, ошибки, утилиты
-│   ├── config/              — Конфигурация из .env
-│   ├── db/postgres/         — Подключение к БД
-│   ├── features/
-│   │   ├── admin/           — Админ-панель
-│   │   ├── casino/          — Слот-машина
-│   │   ├── economy/         — Пленки и переводы
-│   │   ├── karma/           — Система кармы
-│   │   ├── members/         — Участники
-│   │   └── streak/          — Стрик-система
-│   └── jobs/                — Cron-задачи
-├── migrations/              — SQL-миграции
-├── deploy/                  — Docker
-└── scripts/                 — Утилиты
+В репозитории есть Docker-артефакты:
+
+- `deploy/docker-compose.yml`
+- `deploy/Dockerfile`
+
+Отдельной production-инструкции (systemd/k8s/terraform) в репозитории сейчас нет.
+
+## Contributing
+
+Перед PR прогоняй:
+
+```bash
+make ci
 ```
 
-## ⚙️ Конфигурация
-
-Все настройки через переменные окружения (см. `.env.example`):
-
-- `TELEGRAM_BOT_TOKEN` — токен от @BotFather
-- `FLOOD_CHAT_ID` — ID единственного разрешённого чата
-- `ADMIN_PASSWORD_HASH` — хеш пароля админа (Argon2id)
-- `STREAK_MESSAGES_NEED` — сообщений для нормы (50)
-- `CASINO_SLOTS_BET` — ставка слотов (50)
-
-## 🔒 Безопасность
-
-- Бот работает ТОЛЬКО в FLOOD_CHAT_ID и DM участников
-- Пароль хранится как Argon2id хеш
-- 3 неудачных попытки = блокировка на 1 час
-- Сессии истекают через 24 часа
-- Крипто-безопасный генератор для слотов
-
-## 📦 Технологии
-
-- Go 1.22
-- PostgreSQL 16
-- github.com/go-telegram/bot
-- pgx/v5 (пул соединений)
-- robfig/cron (фоновые задачи)
-- Argon2id (хеширование паролей)
-- Docker + Docker Compose
+Это же используется в GitHub Actions (`.github/workflows/ci.yml`).
