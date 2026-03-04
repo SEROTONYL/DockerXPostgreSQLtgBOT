@@ -78,7 +78,7 @@ func NewHandler(service *Service, memberService *members.Service, economyService
 
 // HandleAdminMessage обрабатывает любое сообщение от администратора в DM.
 // Определяет текущее состояние диалога и маршрутизирует сообщение.
-func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID int64, text string) bool {
+func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID int64, messageID int, text string) bool {
 	fields := strings.Fields(strings.TrimSpace(text))
 	isLoginCommand := len(fields) > 0 && strings.EqualFold(fields[0], "/login")
 
@@ -132,18 +132,23 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 		switch state.State {
 		case StateAssignRoleSelect:
 			h.handleAssignRoleSelect(ctx, chatID, userID, text)
+			h.deleteAdminInputMessage(ctx, chatID, messageID)
 			return true
 		case StateAssignRoleText:
 			h.handleAssignRoleText(ctx, chatID, userID, text)
+			h.deleteAdminInputMessage(ctx, chatID, messageID)
 			return true
 		case StateChangeRoleSelect:
 			h.handleChangeRoleSelect(ctx, chatID, userID, text)
+			h.deleteAdminInputMessage(ctx, chatID, messageID)
 			return true
 		case StateChangeRoleText:
 			h.handleChangeRoleText(ctx, chatID, userID, text)
+			h.deleteAdminInputMessage(ctx, chatID, messageID)
 			return true
 		case StateBalanceAdjustAmount, StateBalanceDeltaName, StateBalanceDeltaAmount:
 			if h.handleBalanceAdjustManualAmount(ctx, chatID, userID, strings.TrimSpace(text)) {
+				h.deleteAdminInputMessage(ctx, chatID, messageID)
 				return true
 			}
 		}
@@ -268,19 +273,25 @@ func (h *Handler) showKeyboard(ctx context.Context, chatID int64, userID int64, 
 
 	keyboard := newInlineKeyboardMarkup(
 		newInlineKeyboardRow(
-			newInlineKeyboardButtonData("Назначить роль", cbAdminAssignRole),
-			newInlineKeyboardButtonData("Сменить роль", cbAdminChangeRole),
+			newInlineKeyboardButtonData("👤 Назначить роль", cbAdminAssignRole),
 		),
 		newInlineKeyboardRow(
-			newInlineKeyboardButtonData("💸 Изменить баланс", cbAdminBalanceAdjust),
-			newInlineKeyboardButtonData("Выдать кредит", cbAdminStub),
+			newInlineKeyboardButtonData("🔄 Сменить роль", cbAdminChangeRole),
 		),
 		newInlineKeyboardRow(
-			newInlineKeyboardButtonData("Аннулировать кредит", cbAdminStub),
+			newInlineKeyboardButtonData("💸 Баланс", cbAdminBalanceAdjust),
 		),
 		newInlineKeyboardRow(
-			newInlineKeyboardButtonData("Создать сокращение", cbAdminStub),
-			newInlineKeyboardButtonData("Удалить сокращение", cbAdminStub),
+			newInlineKeyboardButtonData("💳 Выдать кредит", cbAdminStub),
+		),
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonData("🚫 Отменить кредит", cbAdminStub),
+		),
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonData("✂️ Создать сокращ.", cbAdminStub),
+		),
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonData("🗑 Удалить сокращ.", cbAdminStub),
 		),
 	)
 
@@ -439,7 +450,7 @@ func (h *Handler) handleChangeRoleText(ctx context.Context, chatID int64, userID
 	}
 
 	h.setUndoRoleChange(userID, selected.UserID, oldRole, role)
-	h.sendRoleChangeSuccess(ctx, chatID, userID, h.panelMessageIDFromState(userID), fmt.Sprintf("✅ Роль изменена: %s → %s", selected.DisplayName(), role))
+	h.sendRoleChangeSuccess(ctx, chatID, userID, h.panelMessageIDFromState(userID), fmt.Sprintf("✅ Роль изменена: %s → %s", normalizeRoleLabel(oldRole), role))
 	h.service.ClearState(userID)
 }
 
@@ -815,8 +826,18 @@ func (h *Handler) sendRoleChangeSuccess(ctx context.Context, chatID, userID int6
 func (h *Handler) roleChangeSuccessActionsMarkup() models.InlineKeyboardMarkup {
 	return newInlineKeyboardMarkup(
 		newInlineKeyboardRow(
-			newInlineKeyboardButtonDataStyled("↩️ Отменить изменение", cbAdminUndoLast, "danger"),
-			newInlineKeyboardButtonDataStyled("✅ Вернуться в админ-панель", cbAdminReturnPanel, "success"),
+			newInlineKeyboardButtonDataStyled("↩️ Отменить", cbAdminUndoLast, "danger"),
+		),
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonDataStyled("✅ В панель", cbAdminReturnPanel, "success"),
+		),
+	)
+}
+
+func (h *Handler) roleChangeUndoDoneMarkup() models.InlineKeyboardMarkup {
+	return newInlineKeyboardMarkup(
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonDataStyled("✅ В панель", cbAdminReturnPanel, "success"),
 		),
 	)
 }
@@ -848,11 +869,27 @@ func (h *Handler) handleUndoLastRole(ctx context.Context, chatID, userID int64, 
 		return
 	}
 
-	if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "role_change_undo", fmt.Sprintf("↩️ Откат выполнен: %d %s → %s", undo.targetUserID, undo.newRole, undo.oldRole), h.roleChangeSuccessActionsMarkup()); err != nil {
+	if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "role_change_undo", fmt.Sprintf("↩️ Откат выполнен: %d %s → %s", undo.targetUserID, undo.newRole, normalizeRoleLabel(undo.oldRole)), h.roleChangeUndoDoneMarkup()); err != nil {
 		h.sendUIErrorHint(ctx, chatID, err)
 		return
 	}
 	h.service.ClearState(userID)
+}
+
+func (h *Handler) deleteAdminInputMessage(ctx context.Context, chatID int64, messageID int) {
+	if messageID <= 0 {
+		return
+	}
+	if err := h.ops.DeleteMessage(ctx, chatID, messageID); err != nil {
+		log.WithError(err).WithFields(log.Fields{"chat_id": chatID, "message_id": messageID}).Debug("не удалось удалить сообщение с вводом администратора")
+	}
+}
+
+func normalizeRoleLabel(role string) string {
+	if strings.TrimSpace(role) == "" {
+		return "—"
+	}
+	return strings.TrimSpace(role)
 }
 
 func (h *Handler) renderAdminScreen(ctx context.Context, chatID, userID int64, panelMsgID int, screenName, text string, keyboard models.InlineKeyboardMarkup) error {

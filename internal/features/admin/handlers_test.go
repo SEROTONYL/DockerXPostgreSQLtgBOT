@@ -53,6 +53,7 @@ func (f *fakeTG) EditReplyMarkup(chatID int64, messageID int, markup *models.Inl
 }
 
 func (f *fakeTG) DeleteMessage(chatID int64, messageID int) error {
+	f.calls = append(f.calls, tgCall{kind: "delete", chatID: chatID, messageID: messageID})
 	return nil
 }
 
@@ -265,7 +266,7 @@ func TestOpenAdminPanel_ShowsKeyboard(t *testing.T) {
 	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}}
 	h := newAdminHandlerForFlow(t, repo, tg)
 
-	handled := h.HandleAdminMessage(context.Background(), 77, 77, "Панель")
+	handled := h.HandleAdminMessage(context.Background(), 77, 77, 0, "Панель")
 	if !handled {
 		t.Fatalf("expected handled=true")
 	}
@@ -277,7 +278,7 @@ func TestOpenAdminPanel_ShowsKeyboard(t *testing.T) {
 	if !strings.Contains(s.text, "Админ-панель") {
 		t.Fatalf("unexpected panel text: %q", s.text)
 	}
-	if !hasButton(s.markup, "Назначить роль", cbAdminAssignRole) || !hasButton(s.markup, "Сменить роль", cbAdminChangeRole) {
+	if !hasButton(s.markup, "👤 Назначить роль", cbAdminAssignRole) || !hasButton(s.markup, "🔄 Сменить роль", cbAdminChangeRole) {
 		t.Fatalf("expected admin panel buttons")
 	}
 }
@@ -288,7 +289,7 @@ func TestHandleAdminMessage_DeniedLogin_SendsSingleMessage(t *testing.T) {
 	svc := NewService(fakeAdminRepoHandlers{hasSession: false}, repo, &config.Config{AdminIDs: []int64{}})
 	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg))
 
-	handled := h.HandleAdminMessage(context.Background(), 77, 77, "/login")
+	handled := h.HandleAdminMessage(context.Background(), 77, 77, 0, "/login")
 	if !handled {
 		t.Fatal("expected /login to be handled")
 	}
@@ -496,7 +497,7 @@ func TestChangeRole_SubmitRole_ShowsSingleSuccessScreenWithActions(t *testing.T)
 
 	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminChangeRole))
 	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, 1001)))
-	handled := h.HandleAdminMessage(context.Background(), 77, 77, "new_role")
+	handled := h.HandleAdminMessage(context.Background(), 77, 77, 0, "new_role")
 	if !handled {
 		t.Fatalf("expected handled=true")
 	}
@@ -505,11 +506,14 @@ func TestChangeRole_SubmitRole_ShowsSingleSuccessScreenWithActions(t *testing.T)
 	if success == nil || !strings.Contains(success.text, "✅ Роль изменена") {
 		t.Fatalf("expected success edit screen, got %#v", success)
 	}
-	if !hasButton(success.markup, "↩️ Отменить изменение", cbAdminUndoLast) {
+	if !hasButton(success.markup, "↩️ Отменить", cbAdminUndoLast) {
 		t.Fatalf("expected undo button in success screen")
 	}
-	if !hasButton(success.markup, "✅ Вернуться в админ-панель", cbAdminReturnPanel) {
+	if !hasButton(success.markup, "✅ В панель", cbAdminReturnPanel) {
 		t.Fatalf("expected return-to-panel button in success screen")
+	}
+	if !strings.Contains(success.text, "old_role → new_role") {
+		t.Fatalf("expected old/new role text, got %q", success.text)
 	}
 
 	for _, c := range tg.calls {
@@ -519,7 +523,29 @@ func TestChangeRole_SubmitRole_ShowsSingleSuccessScreenWithActions(t *testing.T)
 	}
 }
 
-func TestChangeRole_UndoLast_RestoresRole_AndKeepsSuccessActionsScreen(t *testing.T) {
+func TestChangeRole_SubmitRole_DeletesAdminInputMessage(t *testing.T) {
+	tg := &fakeTG{}
+	role := "old_role"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with:    []*members.Member{{UserID: 1001, Username: "u1", Role: &role}},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminChangeRole))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, 1001)))
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, 555, "new_role")
+
+	d := tg.last("delete")
+	if d == nil {
+		t.Fatalf("expected delete call for admin input message")
+	}
+	if d.chatID != 77 || d.messageID != 555 {
+		t.Fatalf("unexpected delete call: %#v", d)
+	}
+}
+
+func TestChangeRole_UndoLast_RestoresRole_AndShowsOnlyReturnButton(t *testing.T) {
 	tg := &fakeTG{}
 	adminAID := int64(77)
 	oldRole := "old_role"
@@ -531,7 +557,7 @@ func TestChangeRole_UndoLast_RestoresRole_AndKeepsSuccessActionsScreen(t *testin
 
 	_ = h.HandleAdminCallback(context.Background(), callback(adminAID, 42, adminAID, cbAdminChangeRole))
 	_ = h.HandleAdminCallback(context.Background(), callback(adminAID, 42, adminAID, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, 1001)))
-	_ = h.HandleAdminMessage(context.Background(), adminAID, adminAID, "new_role")
+	_ = h.HandleAdminMessage(context.Background(), adminAID, adminAID, 0, "new_role")
 	ok := h.HandleAdminCallback(context.Background(), callback(adminAID, 42, adminAID, cbAdminUndoLast))
 	if !ok {
 		t.Fatalf("expected undo callback handled")
@@ -545,10 +571,10 @@ func TestChangeRole_UndoLast_RestoresRole_AndKeepsSuccessActionsScreen(t *testin
 	if undoScreen == nil || !strings.Contains(undoScreen.text, "↩️ Откат выполнен") {
 		t.Fatalf("expected undo success screen by edit, got %#v", undoScreen)
 	}
-	if !hasButton(undoScreen.markup, "↩️ Отменить изменение", cbAdminUndoLast) {
-		t.Fatalf("expected undo button to remain after rollback")
+	if hasButton(undoScreen.markup, "↩️ Отменить", cbAdminUndoLast) {
+		t.Fatalf("did not expect undo button after rollback")
 	}
-	if !hasButton(undoScreen.markup, "✅ Вернуться в админ-панель", cbAdminReturnPanel) {
+	if !hasButton(undoScreen.markup, "✅ В панель", cbAdminReturnPanel) {
 		t.Fatalf("expected return-to-panel button to remain after rollback")
 	}
 }
@@ -571,11 +597,20 @@ func TestReturnPanelCallback_EditsMessageToPanel_AndClearsState(t *testing.T) {
 	if e == nil || !strings.Contains(e.text, "✅ Админ-панель открыта") {
 		t.Fatalf("expected panel edit, got %#v", e)
 	}
-	if !hasButton(e.markup, "Назначить роль", cbAdminAssignRole) || !hasButton(e.markup, "Сменить роль", cbAdminChangeRole) {
+	if !hasButton(e.markup, "👤 Назначить роль", cbAdminAssignRole) || !hasButton(e.markup, "🔄 Сменить роль", cbAdminChangeRole) {
 		t.Fatalf("expected panel keyboard after return")
 	}
 	if st := h.service.GetState(77); st != nil {
 		t.Fatalf("expected state cleared after return panel callback, got %q", st.State)
+	}
+}
+
+func TestNormalizeRoleLabel(t *testing.T) {
+	if got := normalizeRoleLabel("   "); got != "—" {
+		t.Fatalf("expected placeholder for empty role, got %q", got)
+	}
+	if got := normalizeRoleLabel(" admin "); got != "admin" {
+		t.Fatalf("expected trimmed role, got %q", got)
 	}
 }
 
@@ -596,7 +631,7 @@ func TestUndo_IsolatedPerAdmin(t *testing.T) {
 
 	_ = h.HandleAdminCallback(context.Background(), callback(adminAID, 42, adminAID, cbAdminChangeRole))
 	_ = h.HandleAdminCallback(context.Background(), callback(adminAID, 42, adminAID, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, 1001)))
-	_ = h.HandleAdminMessage(context.Background(), adminAID, adminAID, "new_role")
+	_ = h.HandleAdminMessage(context.Background(), adminAID, adminAID, 0, "new_role")
 
 	_ = h.HandleAdminCallback(context.Background(), callback(adminBID, 52, adminBID, cbAdminUndoLast))
 	if repo.members[1001] == nil || repo.members[1001].Role == nil || *repo.members[1001].Role != "new_role" {
@@ -648,7 +683,7 @@ func TestUnauthorizedUser_CannotOpenAdminPanel(t *testing.T) {
 	svc := NewService(fakeAdminRepoHandlers{hasSession: true}, repo, &config.Config{})
 	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg))
 
-	handled := h.HandleAdminMessage(context.Background(), 77, 77, "/login")
+	handled := h.HandleAdminMessage(context.Background(), 77, 77, 0, "/login")
 	if !handled {
 		t.Fatalf("expected handled=true")
 	}
@@ -678,9 +713,9 @@ func TestAdminPanel_HasBalanceAdjustButton(t *testing.T) {
 	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}}
 	h := newAdminHandlerForFlow(t, repo, tg)
 
-	_ = h.HandleAdminMessage(context.Background(), 77, 77, "Панель")
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, 0, "Панель")
 	s := tg.last("send")
-	if s == nil || !hasButton(s.markup, "💸 Изменить баланс", cbAdminBalanceAdjust) {
+	if s == nil || !hasButton(s.markup, "💸 Баланс", cbAdminBalanceAdjust) {
 		t.Fatalf("expected balance adjust button")
 	}
 }
@@ -723,13 +758,13 @@ func TestBalanceAdjust_ManualAmountValidation(t *testing.T) {
 	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickDone))
 	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalAmtManual))
 
-	if !h.HandleAdminMessage(context.Background(), 77, 77, "abc") {
+	if !h.HandleAdminMessage(context.Background(), 77, 77, 0, "abc") {
 		t.Fatalf("manual input should be handled")
 	}
 	if s := tg.last("edit"); s == nil || !strings.Contains(s.text, "Некорректная сумма") {
 		t.Fatalf("expected validation error")
 	}
-	_ = h.HandleAdminMessage(context.Background(), 77, 77, "150")
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, 0, "150")
 	if e := tg.last("edit"); e == nil || !strings.Contains(e.text, "Подтверждение") {
 		t.Fatalf("expected confirmation screen")
 	}
@@ -895,7 +930,7 @@ func TestBalanceStateCleared_AfterReturnPanel(t *testing.T) {
 	if st := h.service.GetState(77); st != nil {
 		t.Fatalf("state should be cleared")
 	}
-	if h.HandleAdminMessage(context.Background(), 77, 77, "250") {
+	if h.HandleAdminMessage(context.Background(), 77, 77, 0, "250") {
 		t.Fatalf("plain amount must not be handled after flow exit")
 	}
 }

@@ -10,7 +10,7 @@ import (
 // AdminHandler описывает обработку административных сообщений и callback-й.
 type AdminHandler interface {
 	HandleAdminCallback(ctx context.Context, cb *models.CallbackQuery) bool
-	HandleAdminMessage(ctx context.Context, chatID int64, userID int64, text string) bool
+	HandleAdminMessage(ctx context.Context, chatID int64, userID int64, messageID int, text string) bool
 }
 
 // ChatAccessFilter описывает проверку доступа апдейтов по чату.
