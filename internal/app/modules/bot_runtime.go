@@ -9,7 +9,6 @@ import (
 	"serotonyl.ru/telegram-bot/internal/bot/filters"
 	"serotonyl.ru/telegram-bot/internal/commands"
 	"serotonyl.ru/telegram-bot/internal/config"
-	"serotonyl.ru/telegram-bot/internal/features/karma"
 	"serotonyl.ru/telegram-bot/internal/jobs"
 )
 
@@ -22,30 +21,56 @@ type BotHandlers struct {
 		HandleAdminMessage(ctx context.Context, chatID int64, userID int64, text string) bool
 		HandleAdminCallback(ctx context.Context, q *models.CallbackQuery) bool
 	}
-	Economy interface{}
-	Streak  interface{}
-	Karma   interface {
+	Karma interface {
 		HandleThankYou(ctx context.Context, chatID int64, fromUserID int64, toUserID int64)
 	}
-	Casino interface{}
 }
 
-func BuildBot(cfg *config.Config, infra *Infra, tg *Telegram, cmdRouter *commands.Router, chatFilter *filters.ChatFilter, handlers BotHandlers) *bot.Bot {
+type StreakServiceAdapter struct {
+	Service interface {
+		CountMessage(ctx context.Context, userID int64, text string) error
+		CreateStreak(ctx context.Context, userID int64) error
+	}
+}
+
+func (a StreakServiceAdapter) CountMessage(ctx context.Context, userID int64, text string) {
+	if a.Service == nil {
+		return
+	}
+	_ = a.Service.CountMessage(ctx, userID, text)
+}
+
+func (a StreakServiceAdapter) CreateStreak(ctx context.Context, userID int64) error {
+	if a.Service == nil {
+		return nil
+	}
+	return a.Service.CreateStreak(ctx, userID)
+}
+
+type KarmaClassifier struct {
+	Match func(text string) bool
+}
+
+func (k KarmaClassifier) IsThankYou(text string) bool {
+	if k.Match == nil {
+		return false
+	}
+	return k.Match(text)
+}
+
+func BuildBot(cfg *config.Config, infra *Infra, tg *Telegram, cmdRouter *commands.Router, chatFilter *filters.ChatFilter, handlers BotHandlers, classifier bot.KarmaThankYouClassifier) *bot.Bot {
 	return bot.New(bot.Deps{
 		Ops:            tg.Ops,
 		CmdRouter:      cmdRouter,
 		Cfg:            cfg,
 		MemberService:  infra.MemberService,
 		EconomyService: infra.EconomyService,
-		EconomyHandler: handlers.Economy,
-		StreakService:  infra.StreakService,
-		StreakHandler:  handlers.Streak,
+		StreakService:  StreakServiceAdapter{Service: infra.StreakService},
 		KarmaService:   infra.KarmaService,
 		KarmaHandler:   handlers.Karma,
-		CasinoHandler:  handlers.Casino,
 		AdminHandler:   handlers.Admin,
 		ChatFilter:     chatFilter,
-		IsThankYou:     karma.IsThankYou,
+		ThankYou:       classifier,
 	})
 }
 
