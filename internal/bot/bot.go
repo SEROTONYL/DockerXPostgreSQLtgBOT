@@ -64,16 +64,13 @@ type Deps struct {
 	CmdRouter      *commands.Router
 	Cfg            *config.Config
 	MemberService  memberService
-	MemberHandler  any
 	EconomyService economyService
 	EconomyHandler economyHandler
 	StreakService  streakService
 	StreakHandler  streakHandler
 	KarmaService   karmaService
 	KarmaHandler   karmaHandler
-	CasinoService  any
 	CasinoHandler  casinoHandler
-	AdminService   any
 	AdminHandler   adminHandler
 	ChatFilter     *filters.ChatFilter
 	IsThankYou     func(text string) bool
@@ -110,7 +107,6 @@ type Bot struct {
 	chatFilter  *filters.ChatFilter
 	rateLimiter *middleware.RateLimiter
 
-	memberHandler  any
 	economyHandler economyHandler
 	streakHandler  streakHandler
 	karmaHandler   karmaHandler
@@ -121,8 +117,6 @@ type Bot struct {
 	economyService economyService
 	streakService  streakService
 	karmaService   karmaService
-	casinoService  any
-	adminService   any
 	isThankYou     func(text string) bool
 
 	parser    *CommandParser
@@ -142,7 +136,6 @@ func New(d Deps) *Bot {
 		cfg:            d.Cfg,
 		chatFilter:     d.ChatFilter,
 		rateLimiter:    middleware.NewRateLimiter(d.Cfg.RateLimitRequests, d.Cfg.RateLimitWindow),
-		memberHandler:  d.MemberHandler,
 		economyHandler: d.EconomyHandler,
 		streakHandler:  d.StreakHandler,
 		karmaHandler:   d.KarmaHandler,
@@ -152,8 +145,6 @@ func New(d Deps) *Bot {
 		economyService: d.EconomyService,
 		streakService:  d.StreakService,
 		karmaService:   d.KarmaService,
-		casinoService:  d.CasinoService,
-		adminService:   d.AdminService,
 		parser:         NewCommandParser(),
 		cmdRouter:      d.CmdRouter,
 		isThankYou:     d.IsThankYou,

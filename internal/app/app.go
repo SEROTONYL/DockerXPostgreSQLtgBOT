@@ -82,7 +82,6 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	log.Infof("Авторизован как @%s", me.Username)
 
 	// === 6. Обработчики ===
-	memberHandler := members.NewHandler(memberService)
 	economyHandler := economy.NewHandler(economyService, memberService, tgOps)
 	streakHandler := streak.NewHandler(streakService, tgOps, cfg)
 	karmaHandler := karma.NewHandler(karmaService, tgOps)
@@ -120,16 +119,13 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		CmdRouter:      cmdRouter,
 		Cfg:            cfg,
 		MemberService:  memberService,
-		MemberHandler:  memberHandler,
 		EconomyService: economyService,
 		EconomyHandler: economyHandler,
 		StreakService:  streakService,
 		StreakHandler:  streakHandler,
 		KarmaService:   karmaService,
 		KarmaHandler:   karmaHandler,
-		CasinoService:  casinoService,
 		CasinoHandler:  casinoHandler,
-		AdminService:   adminService,
 		AdminHandler:   adminHandler,
 		ChatFilter:     chatFilter,
 		IsThankYou:     karma.IsThankYou,
