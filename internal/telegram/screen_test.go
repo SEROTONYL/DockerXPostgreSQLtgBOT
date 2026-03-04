@@ -86,6 +86,9 @@ func TestRenderScreen_EditCantBeEditedFallbackSend(t *testing.T) {
 	if msgID == 10 {
 		t.Fatalf("msgID = %d, want new message id", msgID)
 	}
+	if client.editCalls != 1 {
+		t.Fatalf("editCalls = %d, want 1", client.editCalls)
+	}
 	if client.sendCalls != 1 {
 		t.Fatalf("sendCalls = %d, want 1", client.sendCalls)
 	}
@@ -104,6 +107,9 @@ func TestRenderScreen_EditForbiddenFallbackSend(t *testing.T) {
 	}
 	if msgID == 10 {
 		t.Fatalf("msgID = %d, want new message id", msgID)
+	}
+	if client.editCalls != 1 {
+		t.Fatalf("editCalls = %d, want 1", client.editCalls)
 	}
 	if client.sendCalls != 1 {
 		t.Fatalf("sendCalls = %d, want 1", client.sendCalls)
