@@ -509,7 +509,7 @@ func TestChangeRole_SubmitRole_ShowsSingleSuccessScreenWithActions(t *testing.T)
 	if !hasButton(success.markup, "↩️ Отменить", cbAdminUndoLast) {
 		t.Fatalf("expected undo button in success screen")
 	}
-	if !hasButton(success.markup, "✅ В панель", cbAdminReturnPanel) {
+	if !hasButton(success.markup, "🏠 Админка", cbAdminReturnPanel) {
 		t.Fatalf("expected return-to-panel button in success screen")
 	}
 	if !strings.Contains(success.text, "old_role → new_role") {
@@ -574,8 +574,41 @@ func TestChangeRole_UndoLast_RestoresRole_AndShowsOnlyReturnButton(t *testing.T)
 	if hasButton(undoScreen.markup, "↩️ Отменить", cbAdminUndoLast) {
 		t.Fatalf("did not expect undo button after rollback")
 	}
-	if !hasButton(undoScreen.markup, "✅ В панель", cbAdminReturnPanel) {
+	if !hasButton(undoScreen.markup, "🏠 Админка", cbAdminReturnPanel) {
 		t.Fatalf("expected return-to-panel button to remain after rollback")
+	}
+}
+
+func TestRoleActionKeyboard_UsesShortLabelsAndSingleColumnLayout(t *testing.T) {
+	tg := &fakeTG{}
+	role := "old_role"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with:    []*members.Member{{UserID: 1001, Username: "u1", Role: &role}},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminChangeRole))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, 1001)))
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, 0, "new_role")
+
+	success := tg.last("edit")
+	if success == nil || success.markup == nil {
+		t.Fatalf("expected success screen with keyboard")
+	}
+	if !hasButton(success.markup, "↩️ Отменить", cbAdminUndoLast) {
+		t.Fatalf("expected short undo label")
+	}
+	if !hasButton(success.markup, "🏠 Админка", cbAdminReturnPanel) {
+		t.Fatalf("expected short return label")
+	}
+	for i, row := range success.markup.InlineKeyboard {
+		if len(row) != 1 {
+			t.Fatalf("expected single button per row, row %d has %d", i, len(row))
+		}
+		if strings.TrimSpace(row[0].Text) != row[0].Text {
+			t.Fatalf("button text must be trimmed, got %q", row[0].Text)
+		}
 	}
 }
 
