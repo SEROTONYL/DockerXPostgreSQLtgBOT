@@ -101,7 +101,7 @@ make build
 
 - Go 1.22
 - PostgreSQL 16
-- go-telegram-bot-api/v5
+- github.com/go-telegram/bot
 - pgx/v5 (пул соединений)
 - robfig/cron (фоновые задачи)
 - Argon2id (хеширование паролей)
