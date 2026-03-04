@@ -91,16 +91,24 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	chatFilter := filters.NewChatFilter(cfg.FloodChatID, cfg.AdminChatID, memberService, tgClient, tgOps)
 
 	// === 7. Собираем бота ===
-	b := bot.New(
-		botAPI, tgOps, cfg,
-		memberService, memberHandler,
-		economyService, economyHandler,
-		streakService, streakHandler,
-		karmaService, karmaHandler,
-		casinoService, casinoHandler,
-		adminService, adminHandler,
-		chatFilter,
-	)
+	b := bot.New(bot.Deps{
+		API:            botAPI,
+		Ops:            tgOps,
+		Cfg:            cfg,
+		MemberService:  memberService,
+		MemberHandler:  memberHandler,
+		EconomyService: economyService,
+		EconomyHandler: economyHandler,
+		StreakService:  streakService,
+		StreakHandler:  streakHandler,
+		KarmaService:   karmaService,
+		KarmaHandler:   karmaHandler,
+		CasinoService:  casinoService,
+		CasinoHandler:  casinoHandler,
+		AdminService:   adminService,
+		AdminHandler:   adminHandler,
+		ChatFilter:     chatFilter,
+	})
 
 	// === 8. Планировщик задач ===
 	scheduler := jobs.NewScheduler(streakService, memberService, b.SendMessageToUser)
