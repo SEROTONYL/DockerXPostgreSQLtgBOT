@@ -262,7 +262,6 @@ func (h *Handler) handlePasswordInput(ctx context.Context, chatID int64, userID 
 	}
 
 	h.service.ClearState(userID)
-	h.sendMessage(ctx, chatID, "✅ Аутентификация успешна!")
 	if err := h.showKeyboard(ctx, chatID, userID, 0); err != nil {
 		h.sendUIErrorHint(ctx, chatID, err)
 	}

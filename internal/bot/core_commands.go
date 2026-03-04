@@ -18,7 +18,7 @@ func (b *Bot) registerCoreCommands() {
 		b.sendMessage(ctx, c.ChatID, "Я живой. Команды: /login <пароль> (админ), !плёнки, !карма, !слоты ...")
 	})
 	b.cmdRouter.Register("login", func(ctx context.Context, c commands.Context, args []string) {
-		if b.adminHandler == nil || c.ChatID != c.UserID {
+		if b.adminHandler == nil || !c.IsPrivate {
 			return
 		}
 		b.adminHandler.HandleAdminMessage(ctx, c.ChatID, c.UserID, 0, "/login "+strings.Join(args, " "))

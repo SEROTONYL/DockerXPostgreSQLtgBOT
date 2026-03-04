@@ -37,7 +37,7 @@ func (f *Feature) Name() string { return "admin" }
 
 func (f *Feature) RegisterCommands(r *commands.Router) {
 	r.Register("login", func(ctx context.Context, c commands.Context, args []string) {
-		if f.adminHandler == nil || c.ChatID != c.UserID {
+		if f.adminHandler == nil || !c.IsPrivate {
 			return
 		}
 		f.adminHandler.HandleAdminMessage(ctx, c.ChatID, c.UserID, 0, "/login "+strings.Join(args, " "))
