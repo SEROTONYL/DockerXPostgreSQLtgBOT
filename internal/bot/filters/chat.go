@@ -2,26 +2,24 @@ package filters
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"github.com/go-telegram/bot/models"
 	log "github.com/sirupsen/logrus"
 
+	"serotonyl.ru/telegram-bot/internal/bot"
 	"serotonyl.ru/telegram-bot/internal/telegram"
 )
-
-type MemberService interface {
-	IsMember(ctx context.Context, userID int64) (bool, error)
-	EnsureMember(ctx context.Context, userID int64, username, firstName, lastName string) error
-}
 
 type ChatFilter struct {
 	floodChatID   int64
 	adminChatID   int64
-	memberService MemberService
+	memberService bot.MemberService
 	tgOps         *telegram.Ops
 }
 
-func NewChatFilter(floodChatID int64, adminChatID int64, memberService MemberService, ops *telegram.Ops) *ChatFilter {
+func NewChatFilter(floodChatID int64, adminChatID int64, memberService bot.MemberService, ops *telegram.Ops) *ChatFilter {
 	return &ChatFilter{
 		floodChatID:   floodChatID,
 		adminChatID:   adminChatID,
@@ -86,19 +84,8 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 		return true
 	}
 
-	// 2) Личка: сначала быстро по БД
+	// 2) Личка: проверяем членство через Telegram API
 	if message.Chat.Type == models.ChatTypePrivate {
-		isMember, err := f.memberService.IsMember(ctx, userID)
-		if err != nil {
-			logger.WithError(err).Error("member check failed (db)")
-			return false
-		}
-		if isMember {
-			logger.Debug("allow: private (db member)")
-			return true
-		}
-
-		// 2.1) БД не знает пользователя: проверяем членство через Telegram API
 		cm, err := f.tgOps.GetChatMember(ctx, f.floodChatID, userID)
 		if err != nil {
 			logger.WithError(err).Error("member check failed (telegram GetChatMember)")
@@ -107,15 +94,15 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 
 		switch cm.Type {
 		case models.ChatMemberTypeOwner, models.ChatMemberTypeAdministrator, models.ChatMemberTypeMember, models.ChatMemberTypeRestricted:
-			if err := f.memberService.EnsureMember(
+			if err := f.memberService.EnsureActiveMemberSeen(
 				ctx, userID,
 				message.From.Username,
-				message.From.FirstName,
-				message.From.LastName,
+				buildDisplayName(message.From.FirstName, message.From.LastName),
+				time.Now().UTC(),
 			); err != nil {
-				logger.WithError(err).Warn("failed to backfill member to DB (access allowed despite failure)")
+				logger.WithError(err).Warn("failed to upsert active member in DB (access allowed despite failure)")
 			}
-			logger.WithField("tg_status", cm.Type).Info("allow: private (telegram member, backfilled)")
+			logger.WithField("tg_status", cm.Type).Info("allow: private (telegram member)")
 			return true
 
 		default:
@@ -130,4 +117,15 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 	// 3) Остальные чаты игнорируем
 	logger.Info("deny: not flood chat and not private")
 	return false
+}
+
+func buildDisplayName(firstName, lastName string) string {
+	name := strings.TrimSpace(firstName)
+	if ln := strings.TrimSpace(lastName); ln != "" {
+		if name != "" {
+			name += " "
+		}
+		name += ln
+	}
+	return name
 }

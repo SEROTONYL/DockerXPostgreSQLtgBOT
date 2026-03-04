@@ -58,7 +58,7 @@ func (k KarmaClassifier) IsThankYou(text string) bool {
 	return k.Match(text)
 }
 
-func BuildBot(cfg *config.Config, infra *Infra, tg *Telegram, cmdRouter *commands.Router, chatFilter *filters.ChatFilter, handlers BotHandlers, classifier bot.KarmaThankYouClassifier) *bot.Bot {
+func BuildBot(cfg *config.Config, infra *Infra, tg *Telegram, cmdRouter *commands.Router, chatFilter bot.ChatAccessFilter, handlers BotHandlers, classifier bot.KarmaThankYouClassifier) *bot.Bot {
 	return bot.New(bot.Deps{
 		Ops:            tg.Ops,
 		CmdRouter:      cmdRouter,

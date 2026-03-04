@@ -13,10 +13,13 @@ type AdminHandler interface {
 	HandleAdminMessage(ctx context.Context, chatID int64, userID int64, text string) bool
 }
 
+// ChatAccessFilter описывает проверку доступа апдейтов по чату.
+type ChatAccessFilter interface {
+	CheckAccess(ctx context.Context, message *models.Message) bool
+}
+
 // MemberService описывает операции с участниками чата, которые нужны боту.
 type MemberService interface {
-	IsMember(ctx context.Context, userID int64) (bool, error)
-	EnsureMember(ctx context.Context, userID int64, username, firstName, lastName string) error
 	EnsureActiveMemberSeen(ctx context.Context, userID int64, username, fullName string, now time.Time) error
 	UpsertActiveMember(ctx context.Context, userID int64, username, fullName string, now time.Time) error
 	MarkMemberLeft(ctx context.Context, userID int64, leftAt, purgeAt time.Time) error

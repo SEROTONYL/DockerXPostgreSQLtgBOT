@@ -14,7 +14,6 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
-	"serotonyl.ru/telegram-bot/internal/bot/filters"
 	"serotonyl.ru/telegram-bot/internal/bot/middleware"
 	"serotonyl.ru/telegram-bot/internal/config"
 )
@@ -34,7 +33,7 @@ type Deps struct {
 	KarmaService   KarmaService
 	KarmaHandler   KarmaHandler
 	AdminHandler   AdminHandler
-	ChatFilter     *filters.ChatFilter
+	ChatFilter     ChatAccessFilter
 	ThankYou       KarmaThankYouClassifier
 }
 
@@ -69,7 +68,7 @@ type Bot struct {
 	ops *telegram.Ops
 	cfg *config.Config
 
-	chatFilter  *filters.ChatFilter
+	chatFilter  ChatAccessFilter
 	rateLimiter *middleware.RateLimiter
 
 	adminHandler AdminHandler
