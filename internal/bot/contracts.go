@@ -15,6 +15,8 @@ type AdminHandler interface {
 
 // MemberService описывает операции с участниками чата, которые нужны боту.
 type MemberService interface {
+	IsMember(ctx context.Context, userID int64) (bool, error)
+	EnsureMember(ctx context.Context, userID int64, username, firstName, lastName string) error
 	EnsureActiveMemberSeen(ctx context.Context, userID int64, username, fullName string, now time.Time) error
 	UpsertActiveMember(ctx context.Context, userID int64, username, fullName string, now time.Time) error
 	MarkMemberLeft(ctx context.Context, userID int64, leftAt, purgeAt time.Time) error

@@ -6,18 +6,22 @@ import (
 	"github.com/go-telegram/bot/models"
 	log "github.com/sirupsen/logrus"
 
-	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/telegram"
 )
+
+type MemberService interface {
+	IsMember(ctx context.Context, userID int64) (bool, error)
+	EnsureMember(ctx context.Context, userID int64, username, firstName, lastName string) error
+}
 
 type ChatFilter struct {
 	floodChatID   int64
 	adminChatID   int64
-	memberService *members.Service
+	memberService MemberService
 	tgOps         *telegram.Ops
 }
 
-func NewChatFilter(floodChatID int64, adminChatID int64, memberService *members.Service, ops *telegram.Ops) *ChatFilter {
+func NewChatFilter(floodChatID int64, adminChatID int64, memberService MemberService, ops *telegram.Ops) *ChatFilter {
 	return &ChatFilter{
 		floodChatID:   floodChatID,
 		adminChatID:   adminChatID,
