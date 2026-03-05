@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 )
 
 func TestUpdatePool_ProcessesAllUpdatesAndRespectsWorkerLimit(t *testing.T) {
@@ -38,7 +38,7 @@ func TestUpdatePool_ProcessesAllUpdatesAndRespectsWorkerLimit(t *testing.T) {
 	pool.Start()
 
 	for i := 0; i < total; i++ {
-		pool.Enqueue(context.Background(), models.Update{ID: int64(i + 1)})
+		pool.Enqueue(context.Background(), models.Update{UpdateID: i + 1})
 	}
 
 	pool.Stop()
@@ -55,15 +55,15 @@ func TestUpdatePool_ProcessesAllUpdatesAndRespectsWorkerLimit(t *testing.T) {
 func TestUpdatePool_RecoversFromPanic(t *testing.T) {
 	var processed atomic.Int32
 	pool := newUpdatePool(1, 2, func(_ context.Context, update models.Update) {
-		if update.ID == 1 {
+		if update.UpdateID == 1 {
 			panic("boom")
 		}
 		processed.Add(1)
 	})
 
 	pool.Start()
-	pool.Enqueue(context.Background(), models.Update{ID: 1})
-	pool.Enqueue(context.Background(), models.Update{ID: 2})
+	pool.Enqueue(context.Background(), models.Update{UpdateID: 1})
+	pool.Enqueue(context.Background(), models.Update{UpdateID: 2})
 	pool.Stop()
 
 	if got := processed.Load(); got != 1 {
@@ -93,7 +93,7 @@ func TestUpdatePool_SequentialPerChatAndParallelAcrossChats(t *testing.T) {
 		}
 		defer inFlight.Add(-1)
 
-		switch update.ID {
+		switch update.UpdateID {
 		case 1:
 			close(firstStarted)
 			<-releaseFirst
@@ -111,7 +111,7 @@ func TestUpdatePool_SequentialPerChatAndParallelAcrossChats(t *testing.T) {
 	}
 
 	pool.Start()
-	pool.Enqueue(context.Background(), models.Update{ID: 1, Message: &models.Message{Chat: models.Chat{ID: 100}}})
+	pool.Enqueue(context.Background(), models.Update{UpdateID: 1, Message: &models.Message{Chat: models.Chat{ID: 100}}})
 
 	select {
 	case <-firstStarted:
@@ -119,8 +119,8 @@ func TestUpdatePool_SequentialPerChatAndParallelAcrossChats(t *testing.T) {
 		t.Fatal("first update did not start")
 	}
 
-	pool.Enqueue(context.Background(), models.Update{ID: 3, Message: &models.Message{Chat: models.Chat{ID: 200}}})
-	pool.Enqueue(context.Background(), models.Update{ID: 2, Message: &models.Message{Chat: models.Chat{ID: 100}}})
+	pool.Enqueue(context.Background(), models.Update{UpdateID: 3, Message: &models.Message{Chat: models.Chat{ID: 200}}})
+	pool.Enqueue(context.Background(), models.Update{UpdateID: 2, Message: &models.Message{Chat: models.Chat{ID: 100}}})
 
 	select {
 	case <-otherChatStarted:

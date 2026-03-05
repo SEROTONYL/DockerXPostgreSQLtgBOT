@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 
 	"serotonyl.ru/telegram-bot/internal/bot"
 	"serotonyl.ru/telegram-bot/internal/telegram"
@@ -23,7 +23,7 @@ func (f *fakeTG) AnswerCallbackQuery(callbackID string, text string, showAlert b
 	return nil
 }
 func (f *fakeTG) GetChatMember(chatID int64, userID int64) (member models.ChatMember, err error) {
-	return models.ChatMember{Type: models.ChatMemberTypeLeft}, nil
+	return &models.ChatMemberLeft{Status: "left"}, nil
 }
 func (f *fakeTG) EditReplyMarkup(chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error {
 	return nil

@@ -35,7 +35,7 @@ scripts/check_arch_imports.sh
 
 ## Requirements
 
-- Go `1.22` (см. `go.mod`)
+- Go `1.25.7` (см. `go.mod`, требуется библиотекой Telegram `github.com/mymmrac/telego`)
 - PostgreSQL `16` (образ в `deploy/docker-compose.yml`)
 - Docker + Docker Compose (для запуска через compose)
 
@@ -66,6 +66,13 @@ cp .env.example deploy/.env
 # для compose выставь DB_HOST=db (имя сервиса БД в deploy/docker-compose.yml)
 make docker-up
 ```
+
+
+## Telegram library
+
+- Проект использует `github.com/mymmrac/telego` (Bot API v9.5+).
+- Режим получения апдейтов остаётся прежним: long polling через `internal/telegram` runtime-адаптер.
+- Переменные окружения и базовая настройка запуска не менялись (тот же `TELEGRAM_BOT_TOKEN`).
 
 ## Useful commands
 

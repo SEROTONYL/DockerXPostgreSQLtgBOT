@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 	log "github.com/sirupsen/logrus"
 
 	"serotonyl.ru/telegram-bot/internal/features/members"
@@ -194,7 +194,7 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 	chatID := msg.Chat.ID
 	userID := q.From.ID
 	data := q.Data
-	panelMsgID := msg.ID
+	panelMsgID := msg.MessageID
 	h.attachPanelMessageID(userID, panelMsgID)
 
 	if !h.service.CanEnterAdmin(ctx, userID) {
@@ -982,7 +982,7 @@ func callbackMessage(q *models.CallbackQuery) *models.Message {
 	if q == nil {
 		return nil
 	}
-	return q.Message.Message
+	return q.Message.Message()
 }
 
 func newInlineKeyboardMarkup(rows ...[]models.InlineKeyboardButton) models.InlineKeyboardMarkup {

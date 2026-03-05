@@ -1,6 +1,6 @@
 package uiwizard
 
-import "github.com/go-telegram/bot/models"
+import models "github.com/mymmrac/telego"
 
 type Renderer interface {
 	EditMessageText(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error

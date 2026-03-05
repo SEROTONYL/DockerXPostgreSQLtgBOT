@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 
 	"serotonyl.ru/telegram-bot/internal/config"
 )
@@ -37,12 +37,9 @@ func TestBuildUpdateContext_Callback(t *testing.T) {
 	now := time.Now().UTC()
 	cfg := &config.Config{}
 	upd := models.Update{CallbackQuery: &models.CallbackQuery{
-		ID:   "cb1",
-		From: models.User{ID: 500, Username: "u500", FirstName: "Test"},
-		Message: models.MaybeInaccessibleMessage{
-			Type:    models.MaybeInaccessibleMessageTypeMessage,
-			Message: &models.Message{Chat: models.Chat{ID: 999, Type: models.ChatTypeSupergroup}},
-		},
+		ID:      "cb1",
+		From:    models.User{ID: 500, Username: "u500", FirstName: "Test"},
+		Message: &models.Message{Chat: models.Chat{ID: 999, Type: models.ChatTypeSupergroup}},
 	}}
 
 	uc := BuildUpdateContext(upd, now, cfg)
@@ -63,7 +60,7 @@ func TestBuildUpdateContext_ChatMember(t *testing.T) {
 	user := &models.User{ID: 321, Username: "member", FirstName: "Mem", LastName: "Ber"}
 	upd := models.Update{ChatMember: &models.ChatMemberUpdated{
 		Chat:          models.Chat{ID: -100123, Type: models.ChatTypeSupergroup},
-		NewChatMember: models.ChatMember{Type: models.ChatMemberTypeMember, Member: &models.ChatMemberMember{User: user}},
+		NewChatMember: &models.ChatMemberMember{Status: "member", User: *user},
 	}}
 
 	uc := BuildUpdateContext(upd, now, cfg)

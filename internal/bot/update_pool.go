@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -179,14 +179,14 @@ func updateChatID(update models.Update) (int64, bool) {
 		}
 	}
 	if update.CallbackQuery != nil {
-		if update.CallbackQuery.Message.Message != nil {
-			if update.CallbackQuery.Message.Message.Chat.ID != 0 {
-				return update.CallbackQuery.Message.Message.Chat.ID, true
+		if update.CallbackQuery.Message.Message() != nil {
+			if update.CallbackQuery.Message.Message().Chat.ID != 0 {
+				return update.CallbackQuery.Message.Message().Chat.ID, true
 			}
 		}
-		if update.CallbackQuery.Message.InaccessibleMessage != nil {
-			if update.CallbackQuery.Message.InaccessibleMessage.Chat.ID != 0 {
-				return update.CallbackQuery.Message.InaccessibleMessage.Chat.ID, true
+		if update.CallbackQuery.Message.InaccessibleMessage() != nil {
+			if update.CallbackQuery.Message.InaccessibleMessage().Chat.ID != 0 {
+				return update.CallbackQuery.Message.InaccessibleMessage().Chat.ID, true
 			}
 		}
 	}

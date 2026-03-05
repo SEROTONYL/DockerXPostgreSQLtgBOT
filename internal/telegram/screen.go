@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 )
 
 type editErrorKind string

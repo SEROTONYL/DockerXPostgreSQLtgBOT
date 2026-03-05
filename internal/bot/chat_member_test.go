@@ -3,21 +3,21 @@ package bot
 import (
 	"testing"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 )
 
 func TestClassifyMemberStatus(t *testing.T) {
 	tests := []struct {
 		name   string
-		status models.ChatMemberType
+		status string
 		want   membershipAction
 	}{
-		{name: "owner active", status: models.ChatMemberTypeOwner, want: membershipActionActive},
-		{name: "admin active", status: models.ChatMemberTypeAdministrator, want: membershipActionActive},
-		{name: "member active", status: models.ChatMemberTypeMember, want: membershipActionActive},
-		{name: "left", status: models.ChatMemberTypeLeft, want: membershipActionLeft},
-		{name: "kicked", status: models.ChatMemberTypeBanned, want: membershipActionLeft},
-		{name: "restricted treated as left", status: models.ChatMemberTypeRestricted, want: membershipActionLeft},
+		{name: "owner active", status: "creator", want: membershipActionActive},
+		{name: "admin active", status: "administrator", want: membershipActionActive},
+		{name: "member active", status: "member", want: membershipActionActive},
+		{name: "left", status: "left", want: membershipActionLeft},
+		{name: "kicked", status: "kicked", want: membershipActionLeft},
+		{name: "restricted treated as left", status: "restricted", want: membershipActionLeft},
 	}
 
 	for _, tc := range tests {
@@ -45,9 +45,9 @@ func TestExtractChatMemberUpdate(t *testing.T) {
 }
 
 func TestChatMemberUser(t *testing.T) {
-	u := &models.User{ID: 42, Username: "john", FirstName: "John", LastName: "Doe"}
+	u := models.User{ID: 42, Username: "john", FirstName: "John", LastName: "Doe"}
 
-	member := models.ChatMember{Type: models.ChatMemberTypeMember, Member: &models.ChatMemberMember{User: u}}
+	member := &models.ChatMemberMember{Status: "member", User: u}
 	got, ok := chatMemberUser(member)
 	if !ok {
 		t.Fatal("expected ok=true")

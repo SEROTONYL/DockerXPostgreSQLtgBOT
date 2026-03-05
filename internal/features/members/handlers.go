@@ -5,7 +5,7 @@ package members
 import (
 	"context"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 	log "github.com/sirupsen/logrus"
 )
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 )
 
 // AdminHandler описывает обработку административных сообщений и callback-й.
