@@ -1,15 +1,10 @@
 name: CI
 
-on:
-  pull_request:
-  push:
-    branches:
-      - main
+on: [push, pull_request]
 
 jobs:
-  test-and-arch:
+  ci:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -18,11 +13,15 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x'
-          cache: true
+          go-version-file: go.mod
 
-      - name: Download modules
-        run: go mod download
+      - name: Test
+        run: go test ./...
 
-      - name: Run CI checks
-        run: make ci
+      - name: Race
+        run: go test -race ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          args: --timeout=5m
