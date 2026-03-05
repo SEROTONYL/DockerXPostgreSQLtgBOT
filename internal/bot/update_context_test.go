@@ -74,3 +74,23 @@ func TestBuildUpdateContext_ChatMember(t *testing.T) {
 		t.Fatalf("unexpected full name: %q", uc.FullName)
 	}
 }
+
+func TestBuildUpdateContext_CallbackWithInaccessibleMessage(t *testing.T) {
+	now := time.Now().UTC()
+	cfg := &config.Config{}
+	upd := models.Update{CallbackQuery: &models.CallbackQuery{
+		ID:   "cb1",
+		From: models.User{ID: 500, Username: "u500", FirstName: "Test"},
+		Message: &models.InaccessibleMessage{
+			Chat: models.Chat{ID: -200, Type: models.ChatTypePrivate},
+		},
+	}}
+
+	uc := BuildUpdateContext(upd, now, cfg)
+	if uc.ChatID != -200 || uc.UserID != 500 {
+		t.Fatalf("unexpected ids: chat=%d user=%d", uc.ChatID, uc.UserID)
+	}
+	if !uc.IsPrivate || uc.IsGroup {
+		t.Fatalf("unexpected chat flags: private=%v group=%v", uc.IsPrivate, uc.IsGroup)
+	}
+}

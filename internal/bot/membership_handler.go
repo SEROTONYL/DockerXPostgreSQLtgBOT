@@ -102,7 +102,13 @@ func extractChatMemberUpdate(update models.Update) *models.ChatMemberUpdated {
 }
 
 func chatMemberUser(member models.ChatMember) (*models.User, bool) {
+	if member == nil {
+		return nil, false
+	}
 	u := member.MemberUser()
+	if u.ID == 0 {
+		return nil, false
+	}
 	return &u, true
 }
 

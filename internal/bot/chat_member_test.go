@@ -56,3 +56,14 @@ func TestChatMemberUser(t *testing.T) {
 		t.Fatalf("unexpected user: %+v", got)
 	}
 }
+
+func TestChatMemberUser_NilAndZeroValue(t *testing.T) {
+	if got, ok := chatMemberUser(nil); ok || got != nil {
+		t.Fatalf("expected nil,false for nil member, got user=%v ok=%v", got, ok)
+	}
+
+	member := &models.ChatMemberMember{Status: "member", User: models.User{}}
+	if got, ok := chatMemberUser(member); ok || got != nil {
+		t.Fatalf("expected nil,false for zero user, got user=%v ok=%v", got, ok)
+	}
+}

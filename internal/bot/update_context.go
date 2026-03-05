@@ -48,10 +48,12 @@ func BuildUpdateContext(update models.Update, now time.Time, cfg *config.Config)
 			uc.Username = update.CallbackQuery.From.Username
 			uc.FullName = buildDisplayName(update.CallbackQuery.From.FirstName, update.CallbackQuery.From.LastName)
 		}
-		if uc.ChatID == 0 && update.CallbackQuery.Message.Message() != nil {
-			uc.ChatID = update.CallbackQuery.Message.Message().Chat.ID
-			uc.IsPrivate = update.CallbackQuery.Message.Message().Chat.Type == models.ChatTypePrivate
-			uc.IsGroup = update.CallbackQuery.Message.Message().Chat.Type == models.ChatTypeGroup || update.CallbackQuery.Message.Message().Chat.Type == models.ChatTypeSupergroup
+		if uc.ChatID == 0 {
+			if chat, ok := callbackQueryChat(update.CallbackQuery); ok {
+				uc.ChatID = chat.ID
+				uc.IsPrivate = chat.Type == models.ChatTypePrivate
+				uc.IsGroup = chat.Type == models.ChatTypeGroup || chat.Type == models.ChatTypeSupergroup
+			}
 		}
 	}
 
@@ -92,4 +94,17 @@ func hasUserActivity(uc UpdateContext) bool {
 		return true
 	}
 	return false
+}
+
+func callbackQueryChat(q *models.CallbackQuery) (models.Chat, bool) {
+	if q == nil || q.Message == nil {
+		return models.Chat{}, false
+	}
+	if msg := q.Message.Message(); msg != nil {
+		return msg.Chat, true
+	}
+	if msg := q.Message.InaccessibleMessage(); msg != nil {
+		return msg.Chat, true
+	}
+	return models.Chat{}, false
 }

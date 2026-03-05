@@ -56,11 +56,14 @@ func (b *Bot) handleCallbackUpdate(ctx context.Context, uc UpdateContext) bool {
 	if uc.Callback == nil {
 		return false
 	}
-	if uc.Callback.Message.Message() == nil {
+	if uc.Callback.Message == nil {
 		return true
 	}
 
 	message := uc.Callback.Message.Message()
+	if message == nil {
+		return true
+	}
 	middleware.LogMessage(message)
 	if !b.chatFilter.CheckAccess(ctx, message) {
 		return true
@@ -91,6 +94,11 @@ func (b *Bot) handleMessageUpdate(ctx context.Context, uc UpdateContext) {
 
 	if message.From != nil && !b.rateLimiter.Allow(message.From.ID) {
 		log.WithField("user_id", message.From.ID).Debug("rate limited")
+		return
+	}
+
+	if message.From == nil {
+		log.WithField("chat_id", message.Chat.ID).Debug("skip update without sender")
 		return
 	}
 
