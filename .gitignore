@@ -6,6 +6,7 @@
 *.dylib
 /bot
 /telegram-bot
+/bin
 
 # Test binary
 *.test

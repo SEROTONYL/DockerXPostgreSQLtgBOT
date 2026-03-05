@@ -1,4 +1,9 @@
-.PHONY: build run test clean docker-up docker-down migrate hash deps arch-check vet ci
+.PHONY: build run test test-race lint lint-install clean docker-up docker-down migrate hash deps arch-check vet ci
+
+BIN := $(CURDIR)/bin
+GOLANGCI_LINT := $(BIN)/golangci-lint
+GOLANGCI_LINT_VERSION := v2.10.1
+GOLANGCI_LINT_VERSION_NUMBER := $(patsubst v%,%,$(GOLANGCI_LINT_VERSION))
 
 # Сборка бинарника
 build:
@@ -13,6 +18,29 @@ run: build
 # Тесты
 test:
 	go test ./...
+
+test-race:
+	go test -race ./...
+
+lint: $(GOLANGCI_LINT)
+	$(GOLANGCI_LINT) run ./...
+
+lint-install:
+	@mkdir -p $(BIN)
+	@OS=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
+	ARCH=$$(uname -m); \
+	case "$$ARCH" in \
+		x86_64) ARCH=amd64 ;; \
+		aarch64|arm64) ARCH=arm64 ;; \
+		*) echo "Unsupported architecture: $$ARCH"; exit 1 ;; \
+	esac; \
+	URL="https://github.com/golangci/golangci-lint/releases/download/$(GOLANGCI_LINT_VERSION)/golangci-lint-$(GOLANGCI_LINT_VERSION_NUMBER)-$$OS-$$ARCH.tar.gz"; \
+	echo "Installing golangci-lint $(GOLANGCI_LINT_VERSION) from $$URL"; \
+	curl -sSfL "$$URL" | tar -xz -C $(BIN) --strip-components=1 "golangci-lint-$(GOLANGCI_LINT_VERSION_NUMBER)-$$OS-$$ARCH/golangci-lint"; \
+	chmod +x $(GOLANGCI_LINT)
+
+$(GOLANGCI_LINT):
+	@$(MAKE) lint-install
 
 # Очистка
 clean:
@@ -48,7 +76,7 @@ arch-check:
 	./scripts/check_arch_imports.sh
 
 # Локальный CI прогон
-ci: arch-check vet test
+ci: test test-race lint
 
 # Статический анализ
 vet:

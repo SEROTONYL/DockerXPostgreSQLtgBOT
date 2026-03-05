@@ -16,12 +16,26 @@ jobs:
           go-version-file: go.mod
 
       - name: Test
-        run: go test ./...
+        run: make test
 
       - name: Race
-        run: go test -race ./...
+        run: make test-race
+
+      - name: Setup golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.10.1
+          install-mode: binary
+          skip-save-cache: true
+          skip-pkg-cache: true
+          skip-build-cache: true
+          args: --version
+
+      - name: Prepare repo-local golangci-lint
+        run: |
+          mkdir -p ./bin
+          cp "$(command -v golangci-lint)" ./bin/golangci-lint
+          chmod +x ./bin/golangci-lint
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          args: --timeout=5m
+        run: make lint
