@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 	log "github.com/sirupsen/logrus"
 
 	"serotonyl.ru/telegram-bot/internal/bot/middleware"
@@ -56,11 +56,11 @@ func (b *Bot) handleCallbackUpdate(ctx context.Context, uc UpdateContext) bool {
 	if uc.Callback == nil {
 		return false
 	}
-	if uc.Callback.Message.Message == nil {
+	if uc.Callback.Message.Message() == nil {
 		return true
 	}
 
-	message := uc.Callback.Message.Message
+	message := uc.Callback.Message.Message()
 	middleware.LogMessage(message)
 	if !b.chatFilter.CheckAccess(ctx, message) {
 		return true
@@ -104,7 +104,7 @@ func (b *Bot) handleMessageUpdate(ctx context.Context, uc UpdateContext) {
 	}
 
 	if uc.IsPrivate {
-		handled := b.adminHandler.HandleAdminMessage(ctx, chatID, userID, message.ID, message.Text)
+		handled := b.adminHandler.HandleAdminMessage(ctx, chatID, userID, message.MessageID, message.Text)
 		if handled {
 			return
 		}

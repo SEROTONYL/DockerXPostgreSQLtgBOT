@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 
 	"serotonyl.ru/telegram-bot/internal/bot/middleware"
 	"serotonyl.ru/telegram-bot/internal/commands"
@@ -47,7 +47,7 @@ func (f *fakeTGStatus) AnswerCallbackQuery(callbackID string, text string, showA
 	return nil
 }
 func (f *fakeTGStatus) GetChatMember(chatID int64, userID int64) (member models.ChatMember, err error) {
-	return models.ChatMember{}, nil
+	return &models.ChatMemberMember{Status: "member", User: models.User{ID: userID}}, nil
 }
 
 func (f *fakeTGStatus) EditReplyMarkup(chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error {
@@ -273,8 +273,8 @@ func TestHandleUpdate_MembershipUpdateHandledOnce(t *testing.T) {
 	registerTestCommands(b)
 
 	upsertUser := &models.User{ID: 55, Username: "u", FirstName: "U"}
-	upsertMember := models.ChatMember{Type: models.ChatMemberTypeMember, Member: &models.ChatMemberMember{User: upsertUser}}
-	oldMember := models.ChatMember{Type: models.ChatMemberTypeMember, Member: &models.ChatMemberMember{User: upsertUser}}
+	upsertMember := &models.ChatMemberMember{Status: "member", User: *upsertUser}
+	oldMember := &models.ChatMemberMember{Status: "member", User: *upsertUser}
 
 	upd := models.Update{
 		Message: &models.Message{Chat: models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, From: upsertUser, Text: "hello"},

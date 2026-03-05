@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 
 	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/telegram"

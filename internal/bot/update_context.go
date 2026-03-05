@@ -3,7 +3,7 @@ package bot
 import (
 	"time"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 
 	"serotonyl.ru/telegram-bot/internal/config"
 )
@@ -48,10 +48,10 @@ func BuildUpdateContext(update models.Update, now time.Time, cfg *config.Config)
 			uc.Username = update.CallbackQuery.From.Username
 			uc.FullName = buildDisplayName(update.CallbackQuery.From.FirstName, update.CallbackQuery.From.LastName)
 		}
-		if uc.ChatID == 0 && update.CallbackQuery.Message.Message != nil {
-			uc.ChatID = update.CallbackQuery.Message.Message.Chat.ID
-			uc.IsPrivate = update.CallbackQuery.Message.Message.Chat.Type == models.ChatTypePrivate
-			uc.IsGroup = update.CallbackQuery.Message.Message.Chat.Type == models.ChatTypeGroup || update.CallbackQuery.Message.Message.Chat.Type == models.ChatTypeSupergroup
+		if uc.ChatID == 0 && update.CallbackQuery.Message.Message() != nil {
+			uc.ChatID = update.CallbackQuery.Message.Message().Chat.ID
+			uc.IsPrivate = update.CallbackQuery.Message.Message().Chat.Type == models.ChatTypePrivate
+			uc.IsGroup = update.CallbackQuery.Message.Message().Chat.Type == models.ChatTypeGroup || update.CallbackQuery.Message.Message().Chat.Type == models.ChatTypeSupergroup
 		}
 	}
 

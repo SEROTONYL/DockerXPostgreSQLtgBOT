@@ -66,7 +66,7 @@ if [ -s "$TMP_PKGS" ]; then
       imports=$(printf '%s\n' "$line" | cut -d' ' -f2-)
       for imp in $imports; do
         case "$imp" in
-          "${MODULE_PATH}/internal/telegram"|"${MODULE_PATH}/internal/bot"|"github.com/go-telegram/bot"|"github.com/go-telegram/bot/models"|"github.com/go-telegram-bot-api/telegram-bot-api"|"github.com/go-telegram-bot-api/telegram-bot-api/v5")
+          "${MODULE_PATH}/internal/telegram"|"${MODULE_PATH}/internal/bot"|"github.com/mymmrac/telego"|"github.com/go-telegram-bot-api/telegram-bot-api"|"github.com/go-telegram-bot-api/telegram-bot-api/v5")
             printf '%s -> %s\n' "$pkg_name" "$imp" >>"$TMP_B"
             ;;
         esac

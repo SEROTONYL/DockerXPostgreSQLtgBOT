@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 )
 
 type fakeClient struct {
@@ -46,7 +46,7 @@ func (f *fakeClient) AnswerCallbackQuery(callbackID string, text string, showAle
 }
 
 func (f *fakeClient) GetChatMember(chatID int64, userID int64) (models.ChatMember, error) {
-	return models.ChatMember{}, nil
+	return nil, nil
 }
 
 func TestOpsEditOrSend_NotModified_NoFallbackSend(t *testing.T) {
@@ -165,7 +165,7 @@ func (c *callbackPreferenceClient) AnswerCallbackQuery(callbackID string, text s
 }
 
 func (c *callbackPreferenceClient) GetChatMember(chatID int64, userID int64) (models.ChatMember, error) {
-	return models.ChatMember{}, nil
+	return nil, nil
 }
 
 func TestOpsAnswerCallback_WithTextPrefersCallbackQuery(t *testing.T) {

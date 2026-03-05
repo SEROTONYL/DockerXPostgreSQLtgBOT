@@ -3,7 +3,7 @@ package modules
 import (
 	"context"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 
 	"serotonyl.ru/telegram-bot/internal/bot"
 	"serotonyl.ru/telegram-bot/internal/bot/filters"

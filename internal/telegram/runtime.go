@@ -1,7 +1,7 @@
 package telegram
 
-import botapi "github.com/go-telegram/bot"
+import botapi "github.com/mymmrac/telego"
 
 func NewRawBot(token string) (*botapi.Bot, error) {
-	return botapi.New(token)
+	return botapi.NewBot(token)
 }

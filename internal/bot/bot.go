@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 
 	"serotonyl.ru/telegram-bot/internal/commands"
 	"serotonyl.ru/telegram-bot/internal/jobs"

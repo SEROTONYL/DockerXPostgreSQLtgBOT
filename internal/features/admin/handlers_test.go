@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 
 	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/features/members"
@@ -45,7 +45,7 @@ func (f *fakeTG) AnswerCallbackQuery(callbackID string, text string, showAlert b
 }
 
 func (f *fakeTG) GetChatMember(chatID int64, userID int64) (models.ChatMember, error) {
-	return models.ChatMember{}, nil
+	return nil, nil
 }
 
 func (f *fakeTG) EditReplyMarkup(chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error {
@@ -213,13 +213,10 @@ func newAdminHandlerWithEconomy(t *testing.T, memberRepo *fakeMemberRepoHandlers
 
 func callback(chatID int64, msgID int, userID int64, data string) *models.CallbackQuery {
 	return &models.CallbackQuery{
-		ID:   "cb-1",
-		From: models.User{ID: userID},
-		Data: data,
-		Message: models.MaybeInaccessibleMessage{
-			Type:    models.MaybeInaccessibleMessageTypeMessage,
-			Message: &models.Message{ID: msgID, Chat: models.Chat{ID: chatID}},
-		},
+		ID:      "cb-1",
+		From:    models.User{ID: userID},
+		Data:    data,
+		Message: &models.Message{MessageID: msgID, Chat: models.Chat{ID: chatID}},
 	}
 }
 

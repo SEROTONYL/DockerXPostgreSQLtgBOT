@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 	log "github.com/sirupsen/logrus"
 
 	"serotonyl.ru/telegram-bot/internal/bot"
@@ -92,8 +92,10 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 			return false
 		}
 
-		switch cm.Type {
-		case models.ChatMemberTypeOwner, models.ChatMemberTypeAdministrator, models.ChatMemberTypeMember, models.ChatMemberTypeRestricted:
+		status := cm.MemberStatus()
+
+		switch status {
+		case "creator", "administrator", "member", "restricted":
 			if err := f.memberService.EnsureActiveMemberSeen(
 				ctx, userID,
 				message.From.Username,
@@ -102,11 +104,11 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 			); err != nil {
 				logger.WithError(err).Warn("failed to upsert active member in DB (access allowed despite failure)")
 			}
-			logger.WithField("tg_status", cm.Type).Info("allow: private (telegram member)")
+			logger.WithField("tg_status", status).Info("allow: private (telegram member)")
 			return true
 
 		default:
-			logger.WithField("tg_status", cm.Type).Info("deny: private (not a chat member)")
+			logger.WithField("tg_status", status).Info("deny: private (not a chat member)")
 			if _, sendErr := f.tgOps.Send(ctx, chatID, "❌ Бот работает только для участников основного чата", nil); sendErr != nil {
 				logger.WithError(sendErr).Warn("failed to send deny message")
 			}

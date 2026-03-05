@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-telegram/bot/models"
+	models "github.com/mymmrac/telego"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -18,8 +18,8 @@ func (b *Bot) handleMembershipUpdate(ctx context.Context, uc UpdateContext) bool
 		return true
 	}
 
-	oldStatus := cmu.OldChatMember.Type
-	newStatus := cmu.NewChatMember.Type
+	oldStatus := cmu.OldChatMember.MemberStatus()
+	newStatus := cmu.NewChatMember.MemberStatus()
 	user, ok := chatMemberUser(cmu.NewChatMember)
 	if !ok {
 		log.WithFields(log.Fields{"old_status": oldStatus, "new_status": newStatus, "chat_id": cmu.Chat.ID}).Warn("membership update without user payload")
@@ -80,11 +80,11 @@ const (
 	membershipActionLeft   membershipAction = "left"
 )
 
-func classifyMemberStatus(status models.ChatMemberType) membershipAction {
+func classifyMemberStatus(status string) membershipAction {
 	switch status {
-	case models.ChatMemberTypeOwner, models.ChatMemberTypeAdministrator, models.ChatMemberTypeMember:
+	case "creator", "administrator", "member":
 		return membershipActionActive
-	case models.ChatMemberTypeLeft, models.ChatMemberTypeBanned, models.ChatMemberTypeRestricted:
+	case "left", "kicked", "restricted":
 		return membershipActionLeft
 	default:
 		return membershipActionIgnore
@@ -102,34 +102,8 @@ func extractChatMemberUpdate(update models.Update) *models.ChatMemberUpdated {
 }
 
 func chatMemberUser(member models.ChatMember) (*models.User, bool) {
-	switch member.Type {
-	case models.ChatMemberTypeOwner:
-		if member.Owner != nil && member.Owner.User != nil {
-			return member.Owner.User, true
-		}
-	case models.ChatMemberTypeAdministrator:
-		if member.Administrator != nil {
-			u := member.Administrator.User
-			return &u, true
-		}
-	case models.ChatMemberTypeMember:
-		if member.Member != nil && member.Member.User != nil {
-			return member.Member.User, true
-		}
-	case models.ChatMemberTypeRestricted:
-		if member.Restricted != nil && member.Restricted.User != nil {
-			return member.Restricted.User, true
-		}
-	case models.ChatMemberTypeLeft:
-		if member.Left != nil && member.Left.User != nil {
-			return member.Left.User, true
-		}
-	case models.ChatMemberTypeBanned:
-		if member.Banned != nil && member.Banned.User != nil {
-			return member.Banned.User, true
-		}
-	}
-	return nil, false
+	u := member.MemberUser()
+	return &u, true
 }
 
 func buildDisplayName(firstName, lastName string) string {
