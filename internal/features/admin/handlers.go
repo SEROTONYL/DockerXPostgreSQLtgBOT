@@ -693,27 +693,33 @@ func formatMemberForRolePicker(user *members.Member) string {
 	if user.Role != nil && strings.TrimSpace(*user.Role) != "" {
 		role = strings.TrimSpace(*user.Role)
 	}
-	username := strings.TrimSpace(user.Username)
-	if username != "" {
-		username = strings.TrimPrefix(username, "@")
-		return fmt.Sprintf("%s • @%s", role, username)
-	}
-	return fmt.Sprintf("%s • %d", role, user.UserID)
+	return fmt.Sprintf("%s • %s", role, formatMemberIdentity(user))
 }
 
 func formatMemberForAssignPicker(user *members.Member) string {
-	username := strings.TrimSpace(user.Username)
+	return formatMemberIdentity(user)
+}
+
+func formatMemberIdentity(user *members.Member) string {
+	if user == nil {
+		return "id:0"
+	}
+
+	if user.Tag != nil && strings.TrimSpace(*user.Tag) != "" {
+		return fmt.Sprintf("%s • id:%d", strings.TrimSpace(*user.Tag), user.UserID)
+	}
+
+	username := strings.TrimSpace(strings.TrimPrefix(user.Username, "@"))
 	if username != "" {
-		username = strings.TrimPrefix(username, "@")
-		return fmt.Sprintf("@%s • %d", username, user.UserID)
+		return fmt.Sprintf("@%s • id:%d", username, user.UserID)
 	}
 
 	name := strings.TrimSpace(strings.Join([]string{strings.TrimSpace(user.FirstName), strings.TrimSpace(user.LastName)}, " "))
 	if name != "" {
-		return fmt.Sprintf("%s • %d", name, user.UserID)
+		return fmt.Sprintf("id:%d • %s", user.UserID, name)
 	}
 
-	return fmt.Sprintf("%d", user.UserID)
+	return fmt.Sprintf("id:%d", user.UserID)
 }
 
 func shortenForButton(s string, max int) string {

@@ -41,6 +41,10 @@ func (f *fakeMemberPurger) PurgeExpiredLeftMembers(ctx context.Context, now time
 	}
 	return 0, nil
 }
+func (f *fakeMemberPurger) ListActiveUserIDs(ctx context.Context) ([]int64, error) { return nil, nil }
+func (f *fakeMemberPurger) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
+	return nil
+}
 
 func TestRunPurgeTick_LoopsUntilZero(t *testing.T) {
 	purger := &fakeMemberPurger{returns: []int{500, 120, 0}}
@@ -74,6 +78,12 @@ type fakeMemberPurgerErr struct {
 
 func (f *fakeMemberPurgerErr) PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error) {
 	return 0, f.err
+}
+func (f *fakeMemberPurgerErr) ListActiveUserIDs(ctx context.Context) ([]int64, error) {
+	return nil, nil
+}
+func (f *fakeMemberPurgerErr) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
+	return nil
 }
 
 func TestRunPurgeTick_UpdatesMetricsOnSuccess(t *testing.T) {

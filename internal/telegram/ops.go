@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	botapi "github.com/mymmrac/telego"
 	models "github.com/mymmrac/telego"
@@ -240,6 +241,25 @@ func (o *Ops) GetChatMember(ctx context.Context, chatID int64, userID int64) (mo
 		return nil, err
 	}
 	return member, nil
+}
+
+func (o *Ops) ExtractMemberTag(member models.ChatMember) *string {
+	switch m := member.(type) {
+	case *models.ChatMemberMember:
+		return normalizedTag(m.Tag)
+	case *models.ChatMemberRestricted:
+		return normalizedTag(m.Tag)
+	default:
+		return nil
+	}
+}
+
+func normalizedTag(tag string) *string {
+	t := strings.TrimSpace(tag)
+	if len(t) == 0 {
+		return nil
+	}
+	return &t
 }
 
 func (o *Ops) RegisterUpdateHandler(match func(*models.Update) bool, handler func(context.Context, *models.Update)) error {

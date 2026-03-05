@@ -106,6 +106,14 @@ func (f *fakeMembersRepoStatus) CountPendingPurge(ctx context.Context, now time.
 	return f.pending, nil
 }
 
+func (f *fakeMembersRepoStatus) ListActiveUserIDs(ctx context.Context) ([]int64, error) {
+	return nil, nil
+}
+
+func (f *fakeMembersRepoStatus) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
+	return nil
+}
+
 type fakePurgeMetricsProvider struct {
 	m jobs.PurgeMetrics
 }

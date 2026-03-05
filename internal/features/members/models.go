@@ -22,6 +22,8 @@ type Member struct {
 	DeleteAfter   *time.Time `db:"delete_after"`    // Дата возможной очистки left-участника
 	LastSeenAt    *time.Time `db:"last_seen_at"`    // Последняя активность в чате
 	LastKnownName *string    `db:"last_known_name"` // Последнее известное отображаемое имя
+	Tag           *string    `db:"tag"`             // Telegram tag участника (может быть nil)
+	TagUpdatedAt  *time.Time `db:"tag_updated_at"`  // Когда тег был обновлён
 	CreatedAt     time.Time  `db:"created_at"`      // Когда запись создана в БД
 	UpdatedAt     time.Time  `db:"updated_at"`      // Последнее обновление записи
 }

@@ -9,8 +9,10 @@ import (
 	"github.com/robfig/cron/v3"
 	log "github.com/sirupsen/logrus"
 
+	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/features/streak"
+	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 const (
@@ -22,13 +24,16 @@ const (
 	cronInfoStarted      = "Scheduler started (Europe/Moscow)"
 	cronInfoStopped      = "Scheduler stopped"
 
-	purgeTickInterval  = time.Hour
-	purgeBatchLimit    = 500
-	purgeMaxIterations = 10
+	purgeTickInterval    = time.Hour
+	purgeBatchLimit      = 500
+	purgeMaxIterations   = 10
+	scanMemberTagsPeriod = 4 * time.Hour
 )
 
 type memberPurger interface {
 	PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error)
+	ListActiveUserIDs(ctx context.Context) ([]int64, error)
+	UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error
 }
 
 type PurgeMetrics struct {
@@ -79,6 +84,8 @@ type Scheduler struct {
 	streakService *streak.Service
 	memberService memberPurger
 	sendFunc      func(userID int64, text string)
+	tgOps         *telegram.Ops
+	mainGroupID   int64
 
 	purgeCancel context.CancelFunc
 	purgeWG     sync.WaitGroup
@@ -86,7 +93,7 @@ type Scheduler struct {
 }
 
 // NewScheduler creates a scheduler configured for Europe/Moscow.
-func NewScheduler(streakService *streak.Service, memberService *members.Service, sendFunc func(userID int64, text string)) *Scheduler {
+func NewScheduler(cfg *config.Config, streakService *streak.Service, memberService *members.Service, sendFunc func(userID int64, text string), tgOps *telegram.Ops) *Scheduler {
 	loc, err := time.LoadLocation("Europe/Moscow")
 	if err != nil {
 		log.WithError(err).Warn(cronWarnLoadLocation)
@@ -95,11 +102,18 @@ func NewScheduler(streakService *streak.Service, memberService *members.Service,
 
 	c := cron.New(cron.WithLocation(loc))
 
+	var mainGroupID int64
+	if cfg != nil {
+		mainGroupID = cfg.MainGroupID
+	}
+
 	return &Scheduler{
 		cron:          c,
 		streakService: streakService,
 		memberService: memberService,
 		sendFunc:      sendFunc,
+		tgOps:         tgOps,
+		mainGroupID:   mainGroupID,
 	}
 }
 
@@ -128,6 +142,12 @@ func (s *Scheduler) Start(ctx context.Context) {
 	go func() {
 		defer s.purgeWG.Done()
 		s.runPurgeWorker(purgeCtx)
+	}()
+
+	s.purgeWG.Add(1)
+	go func() {
+		defer s.purgeWG.Done()
+		s.runMemberTagScanWorker(purgeCtx)
 	}()
 }
 
@@ -167,6 +187,55 @@ func (s *Scheduler) runPurgeTick(ctx context.Context, now time.Time) {
 		s.purgeState.markError(runErr)
 	}
 	log.WithField("deleted", totalDeleted).Info("purge expired members: deleted=N")
+}
+
+func (s *Scheduler) runMemberTagScanWorker(ctx context.Context) {
+	ticker := time.NewTicker(scanMemberTagsPeriod)
+	defer ticker.Stop()
+
+	s.scanMemberTags(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.scanMemberTags(ctx)
+		}
+	}
+}
+
+func (s *Scheduler) scanMemberTags(ctx context.Context) {
+	if s.tgOps == nil || s.mainGroupID == 0 {
+		return
+	}
+
+	log.Debug("[CRON] ScanMemberTags started")
+	userIDs, err := s.memberService.ListActiveUserIDs(ctx)
+	if err != nil {
+		log.WithError(err).Warn("[CRON] ScanMemberTags: failed to list active users")
+		return
+	}
+
+	now := time.Now().UTC()
+	for _, userID := range userIDs {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		member, err := s.tgOps.GetChatMember(ctx, s.mainGroupID, userID)
+		if err != nil {
+			log.WithError(err).WithField("user_id", userID).Warn("[CRON] ScanMemberTags: getChatMember failed")
+			continue
+		}
+
+		tag := s.tgOps.ExtractMemberTag(member)
+		if err := s.memberService.UpdateMemberTag(ctx, userID, tag, now); err != nil {
+			log.WithError(err).WithField("user_id", userID).Warn("[CRON] ScanMemberTags: update tag failed")
+		}
+	}
+	log.WithField("users", len(userIDs)).Info("[CRON] ScanMemberTags completed")
 }
 
 func (s *Scheduler) GetPurgeMetrics() PurgeMetrics {
