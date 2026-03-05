@@ -73,6 +73,51 @@ func (r *Repository) ListActiveMembers(ctx context.Context) ([]*Member, error) {
 	return r.queryMembers(ctx, query, StatusActive)
 }
 
+// ListActiveUserIDs возвращает user_id всех активных участников.
+func (r *Repository) ListActiveUserIDs(ctx context.Context) ([]int64, error) {
+	query := `
+		SELECT user_id
+		FROM members
+		WHERE status = $1
+		ORDER BY user_id
+	`
+	rows, err := r.db.Query(ctx, query, StatusActive)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка выборки active user_id: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]int64, 0)
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return nil, fmt.Errorf("ошибка сканирования active user_id: %w", err)
+		}
+		out = append(out, userID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка чтения active user_id: %w", err)
+	}
+	return out, nil
+}
+
+// UpdateMemberTag обновляет tag и tag_updated_at только если tag изменился.
+func (r *Repository) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
+	query := `
+		UPDATE members
+		SET tag = $2,
+		    tag_updated_at = $3,
+		    updated_at = NOW()
+		WHERE user_id = $1
+		  AND status = $4
+		  AND tag IS DISTINCT FROM $2
+	`
+	if _, err := r.db.Exec(ctx, query, userID, tag, updatedAt.UTC(), StatusActive); err != nil {
+		return fmt.Errorf("ошибка обновления tag участника: %w", err)
+	}
+	return nil
+}
+
 // PurgeExpiredLeftMembers удаляет пользователей со статусом left, у которых истёк delete_after.
 // Удаление выполняется транзакционно и включает связанные записи из доменных таблиц.
 func (r *Repository) PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error) {
@@ -135,7 +180,7 @@ func (r *Repository) PurgeExpiredLeftMembers(ctx context.Context, now time.Time,
 func (r *Repository) GetByUserID(ctx context.Context, userID int64) (*Member, error) {
 	query := `
 		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
-		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, created_at, updated_at
+		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, tag, tag_updated_at, created_at, updated_at
 		FROM members
 		WHERE user_id = $1
 	`
@@ -143,7 +188,7 @@ func (r *Repository) GetByUserID(ctx context.Context, userID int64) (*Member, er
 	err := r.db.QueryRow(ctx, query, userID).Scan(
 		&m.ID, &m.UserID, &m.Username, &m.FirstName, &m.LastName,
 		&m.Role, &m.IsAdmin, &m.IsBanned,
-		&m.Status, &m.JoinedAt, &m.LeftAt, &m.DeleteAfter, &m.LastSeenAt, &m.LastKnownName, &m.CreatedAt, &m.UpdatedAt,
+		&m.Status, &m.JoinedAt, &m.LeftAt, &m.DeleteAfter, &m.LastSeenAt, &m.LastKnownName, &m.Tag, &m.TagUpdatedAt, &m.CreatedAt, &m.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -161,7 +206,7 @@ func (r *Repository) GetByUsername(ctx context.Context, username string) (*Membe
 	err := r.db.QueryRow(ctx, query, username, StatusActive).Scan(
 		&m.ID, &m.UserID, &m.Username, &m.FirstName, &m.LastName,
 		&m.Role, &m.IsAdmin, &m.IsBanned,
-		&m.Status, &m.JoinedAt, &m.LeftAt, &m.DeleteAfter, &m.LastSeenAt, &m.LastKnownName, &m.CreatedAt, &m.UpdatedAt,
+		&m.Status, &m.JoinedAt, &m.LeftAt, &m.DeleteAfter, &m.LastSeenAt, &m.LastKnownName, &m.Tag, &m.TagUpdatedAt, &m.CreatedAt, &m.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -281,7 +326,7 @@ func upsertActiveMemberQuery() string {
 func listActiveMembersQuery() string {
 	return `
 		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
-		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, created_at, updated_at
+		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, tag, tag_updated_at, created_at, updated_at
 		FROM members
 		WHERE status = $1
 		ORDER BY first_name
@@ -291,7 +336,7 @@ func listActiveMembersQuery() string {
 func getByUsernameQuery() string {
 	return `
 		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
-		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, created_at, updated_at
+		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, tag, tag_updated_at, created_at, updated_at
 		FROM members
 		WHERE LOWER(username) = LOWER($1) AND status = $2
 	`
@@ -300,7 +345,7 @@ func getByUsernameQuery() string {
 func usersWithoutRoleQuery() string {
 	return `
 		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
-		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, created_at, updated_at
+		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, tag, tag_updated_at, created_at, updated_at
 		FROM members
 		WHERE role IS NULL AND is_banned = FALSE AND status = $1
 		ORDER BY first_name
@@ -310,7 +355,7 @@ func usersWithoutRoleQuery() string {
 func usersWithRoleQuery() string {
 	return `
 		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
-		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, created_at, updated_at
+		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, tag, tag_updated_at, created_at, updated_at
 		FROM members
 		WHERE role IS NOT NULL AND is_banned = FALSE AND status = $1
 		ORDER BY first_name
@@ -418,7 +463,7 @@ func (r *Repository) queryMembers(ctx context.Context, query string, args ...int
 		if err := rows.Scan(
 			&m.ID, &m.UserID, &m.Username, &m.FirstName, &m.LastName,
 			&m.Role, &m.IsAdmin, &m.IsBanned,
-			&m.Status, &m.JoinedAt, &m.LeftAt, &m.DeleteAfter, &m.LastSeenAt, &m.LastKnownName, &m.CreatedAt, &m.UpdatedAt,
+			&m.Status, &m.JoinedAt, &m.LeftAt, &m.DeleteAfter, &m.LastSeenAt, &m.LastKnownName, &m.Tag, &m.TagUpdatedAt, &m.CreatedAt, &m.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("ошибка сканирования строки: %w", err)
 		}

@@ -74,6 +74,6 @@ func BuildBot(cfg *config.Config, infra *Infra, tg *Telegram, cmdRouter *command
 	})
 }
 
-func BuildScheduler(infra *Infra, b *bot.Bot) *jobs.Scheduler {
-	return jobs.NewScheduler(infra.StreakService, infra.MemberService, b.SendMessageToUser)
+func BuildScheduler(cfg *config.Config, infra *Infra, tg *Telegram, b *bot.Bot) *jobs.Scheduler {
+	return jobs.NewScheduler(cfg, infra.StreakService, infra.MemberService, b.SendMessageToUser, tg.Ops)
 }

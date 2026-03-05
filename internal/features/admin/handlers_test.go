@@ -527,26 +527,37 @@ func TestCancelAction_FromRoleInput_ReturnsToPanel(t *testing.T) {
 }
 
 func TestFormatMemberForAssignPicker(t *testing.T) {
-	withUsername := &members.Member{UserID: 1001, Username: "user"}
-	if got := formatMemberForAssignPicker(withUsername); got != "@user • 1001" {
+	tag := "TEAM-A"
+	withTag := &members.Member{UserID: 1001, Tag: &tag, Username: "user", FirstName: "Ivan"}
+	if got := formatMemberForAssignPicker(withTag); got != "TEAM-A • id:1001" {
+		t.Fatalf("unexpected assign format with tag: %q", got)
+	}
+
+	withUsername := &members.Member{UserID: 1002, Username: "user"}
+	if got := formatMemberForAssignPicker(withUsername); got != "@user • id:1002" {
 		t.Fatalf("unexpected assign format with username: %q", got)
 	}
 
-	withName := &members.Member{UserID: 1002, FirstName: "Ivan"}
-	if got := formatMemberForAssignPicker(withName); got != "Ivan • 1002" {
+	withName := &members.Member{UserID: 1003, FirstName: "Ivan"}
+	if got := formatMemberForAssignPicker(withName); got != "id:1003 • Ivan" {
 		t.Fatalf("unexpected assign format with first name: %q", got)
+	}
+
+	idOnly := &members.Member{UserID: 1004}
+	if got := formatMemberForAssignPicker(idOnly); got != "id:1004" {
+		t.Fatalf("unexpected assign format id-only: %q", got)
 	}
 }
 
 func TestFormatMemberForRolePicker(t *testing.T) {
 	role := "мяу"
 	withUsername := &members.Member{UserID: 1001, Username: "u", Role: &role}
-	if got := formatMemberForRolePicker(withUsername); got != "мяу • @u" {
+	if got := formatMemberForRolePicker(withUsername); got != "мяу • @u • id:1001" {
 		t.Fatalf("unexpected role format with username: %q", got)
 	}
 
 	withoutUsername := &members.Member{UserID: 1002, Role: &role}
-	if got := formatMemberForRolePicker(withoutUsername); got != "мяу • 1002" {
+	if got := formatMemberForRolePicker(withoutUsername); got != "мяу • id:1002" {
 		t.Fatalf("unexpected role format without username: %q", got)
 	}
 }

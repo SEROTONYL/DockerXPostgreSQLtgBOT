@@ -87,7 +87,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		Karma: karmaModule.Handler,
 	}, modules.KarmaClassifier{Match: karma.IsThankYou})
 
-	scheduler = modules.BuildScheduler(infra, b)
+	scheduler = modules.BuildScheduler(cfg, infra, tg, b)
 	b.SetPurgeMetricsProvider(scheduler)
 
 	return &App{Bot: b, Scheduler: scheduler, DB: infra.DB}, nil

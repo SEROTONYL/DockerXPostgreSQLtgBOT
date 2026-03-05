@@ -25,6 +25,8 @@ type memberRepository interface {
 	EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error
 	EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error
 	TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error
+	ListActiveUserIDs(ctx context.Context) ([]int64, error)
+	UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error
 	CountMembersByStatus(ctx context.Context) (active int, left int, err error)
 	CountPendingPurge(ctx context.Context, now time.Time) (int, error)
 }
@@ -98,6 +100,17 @@ func (s *Service) CountMembersByStatus(ctx context.Context) (active int, left in
 
 func (s *Service) CountPendingPurge(ctx context.Context, now time.Time) (int, error) {
 	return s.repo.CountPendingPurge(ctx, now)
+}
+
+func (s *Service) ListActiveUserIDs(ctx context.Context) ([]int64, error) {
+	return s.repo.ListActiveUserIDs(ctx)
+}
+
+func (s *Service) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
+	if err := s.repo.UpdateMemberTag(ctx, userID, tag, updatedAt.UTC()); err != nil {
+		return fmt.Errorf("ошибка обновления tag участника: %w", err)
+	}
+	return nil
 }
 
 // IsActiveMember проверяет активность участника.

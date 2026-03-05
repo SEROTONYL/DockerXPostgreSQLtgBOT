@@ -93,6 +93,10 @@ func (f *fakeRepo) CountMembersByStatus(ctx context.Context) (active int, left i
 func (f *fakeRepo) CountPendingPurge(ctx context.Context, now time.Time) (int, error) {
 	return f.pendingPurge, nil
 }
+func (f *fakeRepo) ListActiveUserIDs(ctx context.Context) ([]int64, error) { return nil, nil }
+func (f *fakeRepo) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
+	return nil
+}
 
 func TestServiceUpsertActiveMember(t *testing.T) {
 	repo := &fakeRepo{}

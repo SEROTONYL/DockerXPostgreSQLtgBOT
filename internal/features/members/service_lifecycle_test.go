@@ -72,6 +72,14 @@ func (f *lifecycleFakeRepo) GetByUsername(ctx context.Context, username string) 
 	return &m, nil
 }
 
+func (f *lifecycleFakeRepo) ListActiveUserIDs(ctx context.Context) ([]int64, error) {
+	return nil, nil
+}
+
+func (f *lifecycleFakeRepo) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
+	return nil
+}
+
 func TestLifecycleTransitions_RestrictedToMember_BecomesActive(t *testing.T) {
 	repo := newLifecycleFakeRepo(101)
 	svc := NewService(repo)
@@ -305,6 +313,10 @@ func (r *seenStateRepo) CountMembersByStatus(ctx context.Context) (active int, l
 }
 func (r *seenStateRepo) CountPendingPurge(ctx context.Context, now time.Time) (int, error) {
 	return 0, nil
+}
+func (r *seenStateRepo) ListActiveUserIDs(ctx context.Context) ([]int64, error) { return nil, nil }
+func (r *seenStateRepo) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
+	return nil
 }
 
 func TestEnsureMemberSeen_ThrottleBehavior(t *testing.T) {
