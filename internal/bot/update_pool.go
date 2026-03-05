@@ -179,15 +179,8 @@ func updateChatID(update models.Update) (int64, bool) {
 		}
 	}
 	if update.CallbackQuery != nil {
-		if update.CallbackQuery.Message.Message() != nil {
-			if update.CallbackQuery.Message.Message().Chat.ID != 0 {
-				return update.CallbackQuery.Message.Message().Chat.ID, true
-			}
-		}
-		if update.CallbackQuery.Message.InaccessibleMessage() != nil {
-			if update.CallbackQuery.Message.InaccessibleMessage().Chat.ID != 0 {
-				return update.CallbackQuery.Message.InaccessibleMessage().Chat.ID, true
-			}
+		if chat, ok := callbackQueryChat(update.CallbackQuery); ok && chat.ID != 0 {
+			return chat.ID, true
 		}
 	}
 

@@ -153,3 +153,15 @@ func TestUpdateChatID_ChatMemberUpdates(t *testing.T) {
 		t.Fatalf("MyChatMember chatID = (%d,%v), want (456,true)", chatID, ok)
 	}
 }
+
+func TestUpdateChatID_CallbackQueryInaccessibleAndNilMessage(t *testing.T) {
+	chatID, ok := updateChatID(models.Update{CallbackQuery: &models.CallbackQuery{Message: &models.InaccessibleMessage{Chat: models.Chat{ID: 987}}}})
+	if !ok || chatID != 987 {
+		t.Fatalf("inaccessible callback chatID = (%d,%v), want (987,true)", chatID, ok)
+	}
+
+	chatID, ok = updateChatID(models.Update{CallbackQuery: &models.CallbackQuery{}})
+	if ok || chatID != 0 {
+		t.Fatalf("callback without message chatID = (%d,%v), want (0,false)", chatID, ok)
+	}
+}

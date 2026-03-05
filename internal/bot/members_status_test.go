@@ -323,3 +323,26 @@ func TestLoginCommand_GroupChat_IgnoredWithoutSideEffects(t *testing.T) {
 		t.Fatalf("expected no admin handler calls, got %d", adminRecorder.msgCalls)
 	}
 }
+
+func TestHandleUpdate_MessageWithoutSender_DoesNotPanicOrWrite(t *testing.T) {
+	tg := &fakeTGStatus{}
+	repo := &fakeMembersRepoStatus{}
+	memberSvc := members.NewService(repo)
+	b := &Bot{
+		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		ops:           telegram.NewOps(tg),
+		memberService: memberSvc,
+		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+		cmdRouter:     commands.NewRouter(),
+	}
+	registerTestCommands(b)
+
+	upd := models.Update{Message: &models.Message{Chat: models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, Text: "hello"}}
+	b.handleUpdate(context.Background(), upd)
+
+	if repo.ensureSeenCalls != 0 || repo.ensureActiveCalls != 0 {
+		t.Fatalf("expected no member writes for message without sender, got ensureSeen=%d ensureActive=%d", repo.ensureSeenCalls, repo.ensureActiveCalls)
+	}
+}
