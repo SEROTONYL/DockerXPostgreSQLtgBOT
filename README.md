@@ -68,6 +68,18 @@ make docker-up
 ```
 
 
+## Development
+
+For reproducible local tooling, linters are installed into repo-local `./bin` (not global GOPATH/PATH).
+
+```bash
+make lint-install
+make lint
+make test
+make test-race
+make ci
+```
+
 ## Telegram library
 
 - Проект использует `github.com/mymmrac/telego` (Bot API v9.5+).
@@ -79,9 +91,12 @@ make docker-up
 - `make build` — сборка `./bot`
 - `make run` — сборка и запуск
 - `make test` — `go test ./...`
+- `make test-race` — `go test -race ./...`
+- `make lint-install` — установка/обновление `golangci-lint` в `./bin`
+- `make lint` — запуск `golangci-lint` через `./bin/golangci-lint`
 - `make vet` — `go vet ./...`
 - `make arch-check` — проверка архитектурных импортов
-- `make ci` — `arch-check + vet + test`
+- `make ci` — `test + test-race + lint`
 - `make migrate` — применить SQL-миграции из `migrations/`
 - `make docker-up` / `make docker-down` / `make docker-logs`
 
