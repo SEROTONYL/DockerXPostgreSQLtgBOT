@@ -155,10 +155,11 @@ type fakeMemberRepoHandlers struct {
 }
 
 type fakeMemberSyncRepo struct {
-	activeIDs    []int64
-	without      []*members.Member
-	updateTagErr error
-	listErr      error
+	activeIDs        []int64
+	without          []*members.Member
+	updateTagErr     error
+	listErr          error
+	updateTagBlocked bool
 }
 
 func (r *fakeMemberSyncRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
@@ -195,6 +196,10 @@ func (r *fakeMemberSyncRepo) ListActiveUserIDs(ctx context.Context) ([]int64, er
 	return r.activeIDs, nil
 }
 func (r *fakeMemberSyncRepo) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
+	if r.updateTagBlocked {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	if r.updateTagErr != nil {
 		return r.updateTagErr
 	}
@@ -539,6 +544,30 @@ func TestNoCandidates_ReturnButton_GoesBackToPanel(t *testing.T) {
 	}
 }
 
+func TestAssignRefresh_ManualTimeout_ShowsHintAndRerendersPicker(t *testing.T) {
+	tg := &fakeTG{}
+	role := "old"
+	memberRepo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		without: []*members.Member{{UserID: 1001, Username: "u1", Role: &role}},
+	}
+	syncRepo := &fakeMemberSyncRepo{activeIDs: []int64{1001}, updateTagBlocked: true}
+	h := newAdminHandlerWithRefresh(t, memberRepo, syncRepo, tg)
+	h.refreshTimeout = 5 * time.Millisecond
+
+	ok := h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAssignRefresh))
+	if !ok {
+		t.Fatalf("expected callback handled")
+	}
+	if !hasCallText(tg.calls, "send", assignRefreshFailureHint) {
+		t.Fatalf("expected user-facing refresh timeout hint")
+	}
+	e := tg.last("edit")
+	if e == nil || !strings.Contains(e.text, "Выбери участника") {
+		t.Fatalf("expected picker rerender after timeout, got %#v", e)
+	}
+}
+
 func TestAssignRefresh_SyncFailure_ShowsHintAndRerendersNoCandidates(t *testing.T) {
 	tg := &fakeTG{}
 	memberRepo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}, without: []*members.Member{}}
@@ -552,7 +581,7 @@ func TestAssignRefresh_SyncFailure_ShowsHintAndRerendersNoCandidates(t *testing.
 	if tg.count("ack") == 0 {
 		t.Fatalf("expected callback ack")
 	}
-	if !hasCallText(tg.calls, "send", "Не удалось обновить теги участников") {
+	if !hasCallText(tg.calls, "send", assignRefreshFailureHint) {
 		t.Fatalf("expected user-facing refresh failure hint")
 	}
 	e := tg.last("edit")
@@ -577,7 +606,7 @@ func TestAssignRefresh_CanceledContext_NoHintButRerender(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected callback handled")
 	}
-	if hasCallText(tg.calls, "send", "Не удалось обновить теги участников") {
+	if hasCallText(tg.calls, "send", assignRefreshFailureHint) {
 		t.Fatalf("did not expect hint when request context is canceled")
 	}
 	e := tg.last("edit")

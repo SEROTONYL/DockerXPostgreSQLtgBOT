@@ -115,6 +115,8 @@ func (s *Service) UpdateMemberTag(ctx context.Context, userID int64, tag *string
 	return nil
 }
 
+// ScanAndUpdateMemberTags вручную обновляет metadata/tag только для уже известных active-участников из БД,
+// но не предназначен для обнаружения новых участников Telegram.
 func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, mainGroupID int64, now time.Time) (int, error) {
 	if tgOps == nil || mainGroupID == 0 {
 		return 0, nil
