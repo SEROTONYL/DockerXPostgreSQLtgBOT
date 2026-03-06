@@ -21,5 +21,14 @@ jobs:
       - name: Race
         run: make test-race
 
+      # Intentionally run local Makefile target instead of golangci-lint-action.
+      # This avoids action input/version drift (e.g. v8 rejects `skip-build-cache`
+      # and requires golangci-lint version without `v` prefix).
+      - name: Install linter
+        run: make lint-install
+
+      - name: Verify linter version
+        run: ./bin/golangci-lint version
+
       - name: Lint
         run: make lint
