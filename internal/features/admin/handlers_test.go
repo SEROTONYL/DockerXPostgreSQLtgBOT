@@ -202,13 +202,13 @@ func (r *fakeMemberRepoHandlers) UpdateAdminFlag(ctx context.Context, userID int
 func newAdminHandlerForFlow(t *testing.T, memberRepo *fakeMemberRepoHandlers, tg *fakeTG) *Handler {
 	t.Helper()
 	svc := NewService(fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
-	return NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg))
+	return NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg), 0)
 }
 
 func newAdminHandlerWithEconomy(t *testing.T, memberRepo *fakeMemberRepoHandlers, tg *fakeTG, econ *fakeEconomy) *Handler {
 	t.Helper()
 	svc := NewService(fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
-	return NewHandler(svc, nil, econ, telegram.NewOps(tg))
+	return NewHandler(svc, nil, econ, telegram.NewOps(tg), 0)
 }
 
 func callback(chatID int64, msgID int, userID int64, data string) *models.CallbackQuery {
@@ -258,6 +258,60 @@ func buttonByText(markup *models.InlineKeyboardMarkup, text string) *models.Inli
 	return nil
 }
 
+func TestFormatMemberIdentityCompact(t *testing.T) {
+	tag := "Мур"
+	lastKnown := "Known Nick"
+	tests := []struct {
+		name string
+		user *members.Member
+		want string
+	}{
+		{
+			name: "tag + username",
+			user: &members.Member{UserID: 1, Tag: &tag, Username: "@kysxDDD"},
+			want: "Мур • @kysxDDD",
+		},
+		{
+			name: "tag + no username + nick",
+			user: &members.Member{UserID: 2, Tag: &tag, FirstName: "Nick", LastName: "Name"},
+			want: "Мур • Nick Name • id:2",
+		},
+		{
+			name: "tag + no username + no nick",
+			user: &members.Member{UserID: 3, Tag: &tag},
+			want: "Мур • id:3",
+		},
+		{
+			name: "no tag + username",
+			user: &members.Member{UserID: 4, Username: "user"},
+			want: "@user",
+		},
+		{
+			name: "no tag + no username + nick",
+			user: &members.Member{UserID: 5, FirstName: "OnlyNick"},
+			want: "OnlyNick • id:5",
+		},
+		{
+			name: "nil user",
+			user: nil,
+			want: "id:0",
+		},
+		{
+			name: "fallback to last known name",
+			user: &members.Member{UserID: 6, LastKnownName: &lastKnown},
+			want: "Known Nick • id:6",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatMemberIdentityCompact(tt.user); got != tt.want {
+				t.Fatalf("formatMemberIdentityCompact() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestOpenAdminPanel_ShowsKeyboard(t *testing.T) {
 	tg := &fakeTG{}
 	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}}
@@ -284,7 +338,7 @@ func TestHandleAdminMessage_DeniedLogin_SendsSingleMessage(t *testing.T) {
 	tg := &fakeTG{}
 	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{}}
 	svc := NewService(fakeAdminRepoHandlers{hasSession: false}, repo, &config.Config{AdminIDs: []int64{}})
-	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg))
+	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg), 0)
 
 	handled := h.HandleAdminMessage(context.Background(), 77, 77, 0, "/login")
 	if !handled {
@@ -382,10 +436,14 @@ func TestPickerFlow_NoCandidates_RendersPanelEdit_NoSend(t *testing.T) {
 	if e.markup == nil {
 		t.Fatalf("expected markup")
 	}
-	if len(e.markup.InlineKeyboard) != 1 || len(e.markup.InlineKeyboard[0]) != 1 {
-		t.Fatalf("expected exactly one return button row, got %#v", e.markup.InlineKeyboard)
+	if len(e.markup.InlineKeyboard) != 2 || len(e.markup.InlineKeyboard[0]) != 1 || len(e.markup.InlineKeyboard[1]) != 1 {
+		t.Fatalf("expected refresh + return rows, got %#v", e.markup.InlineKeyboard)
 	}
-	btn := e.markup.InlineKeyboard[0][0]
+	refreshBtn := e.markup.InlineKeyboard[0][0]
+	if refreshBtn.Text != "🔄 Обновить список" || refreshBtn.CallbackData != cbAssignRefresh {
+		t.Fatalf("unexpected refresh button: %#v", refreshBtn)
+	}
+	btn := e.markup.InlineKeyboard[1][0]
 	if btn.Text != "✅ Вернуться в админку" || btn.CallbackData != cbAdminReturnPanel {
 		t.Fatalf("unexpected return button: %#v", btn)
 	}
@@ -552,7 +610,7 @@ func TestFormatMemberForAssignPicker(t *testing.T) {
 func TestFormatMemberForRolePicker(t *testing.T) {
 	role := "мяу"
 	withUsername := &members.Member{UserID: 1001, Username: "u", Role: &role}
-	if got := formatMemberForRolePicker(withUsername); got != "мяу • @u • id:1001" {
+	if got := formatMemberForRolePicker(withUsername); got != "мяу • @u" {
 		t.Fatalf("unexpected role format with username: %q", got)
 	}
 
@@ -790,7 +848,7 @@ func TestUnauthorizedUser_CannotOpenAdminPanel(t *testing.T) {
 	tg := &fakeTG{}
 	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: false}}}
 	svc := NewService(fakeAdminRepoHandlers{hasSession: true}, repo, &config.Config{})
-	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg))
+	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg), 0)
 
 	handled := h.HandleAdminMessage(context.Background(), 77, 77, 0, "/login")
 	if !handled {
@@ -1126,7 +1184,7 @@ func TestHandleAdminMessage_LoginAuthFlowSuccess_ShowsPanelAndClearsState(t *tes
 		AdminIDs:          []int64{77},
 		AdminPasswordHash: "$argon2id$v=19$m=65536,t=3,p=2$VHfCcsoxysCkOC6xwArT0A$XbpCLks/kLUE2rUgd7m9gqEIft8M+LQf+2ibCRLitAU",
 	})
-	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg))
+	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg), 0)
 
 	handled := h.HandleAdminMessage(context.Background(), 77, 77, 0, "/login")
 	if !handled {

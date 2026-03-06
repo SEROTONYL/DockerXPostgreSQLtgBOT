@@ -27,7 +27,11 @@ type Module struct {
 
 // NewModule builds the admin handler and feature.
 func NewModule(deps Deps) (*Module, error) {
-	h := NewHandler(deps.Service, deps.MemberService, deps.EconomyService, deps.Ops)
+	var mainGroupID int64
+	if deps.Cfg != nil {
+		mainGroupID = deps.Cfg.MainGroupID
+	}
+	h := NewHandler(deps.Service, deps.MemberService, deps.EconomyService, deps.Ops, mainGroupID)
 	f := NewFeature(deps.Cfg, deps.Ops, h, deps.MemberService, deps.PurgeMetrics)
 	return &Module{Handler: h, Feature: f}, nil
 }

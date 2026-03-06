@@ -9,6 +9,8 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+
+	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
 const leftGracePeriod = 5 * 24 * time.Hour
@@ -111,6 +113,41 @@ func (s *Service) UpdateMemberTag(ctx context.Context, userID int64, tag *string
 		return fmt.Errorf("ошибка обновления tag участника: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, mainGroupID int64, now time.Time) (int, error) {
+	if tgOps == nil || mainGroupID == 0 {
+		return 0, nil
+	}
+
+	userIDs, err := s.ListActiveUserIDs(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	updated := 0
+	for _, userID := range userIDs {
+		select {
+		case <-ctx.Done():
+			return updated, nil
+		default:
+		}
+
+		member, err := tgOps.GetChatMember(ctx, mainGroupID, userID)
+		if err != nil {
+			log.WithError(err).WithField("user_id", userID).Warn("ScanMemberTags: getChatMember failed")
+			continue
+		}
+
+		tag := tgOps.ExtractMemberTag(member)
+		if err := s.UpdateMemberTag(ctx, userID, tag, now); err != nil {
+			log.WithError(err).WithField("user_id", userID).Warn("ScanMemberTags: update tag failed")
+			continue
+		}
+		updated++
+	}
+
+	return updated, nil
 }
 
 // IsActiveMember проверяет активность участника.
