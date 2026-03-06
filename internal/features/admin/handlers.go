@@ -33,6 +33,7 @@ const (
 	cbPickerPrev         = "prev"
 	cbPickerNext         = "next"
 	cbPickerBack         = "back"
+	cbAssignRefresh      = "admin:assign:refresh"
 	cbRoleInputBack      = "admin:role_input_back"
 	cbAdminCancelAction  = "admin:cancel_action"
 	cbAdminUndoLast      = "admin:undo_last"
@@ -53,6 +54,7 @@ type Handler struct {
 	memberService  *members.Service
 	economyService economyService
 	ops            *telegram.Ops
+	mainGroupID    int64
 	undoMu         sync.Mutex
 	lastRoleUndo   map[int64]*roleUndoData
 	wizardCtx      context.Context
@@ -66,12 +68,13 @@ type roleUndoData struct {
 }
 
 // NewHandler создаёт обработчик админ-панели.
-func NewHandler(service *Service, memberService *members.Service, economyService economyService, ops *telegram.Ops) *Handler {
+func NewHandler(service *Service, memberService *members.Service, economyService economyService, ops *telegram.Ops, mainGroupID int64) *Handler {
 	return &Handler{
 		service:        service,
 		memberService:  memberService,
 		economyService: economyService,
 		ops:            ops,
+		mainGroupID:    mainGroupID,
 		lastRoleUndo:   make(map[int64]*roleUndoData),
 	}
 }
@@ -184,7 +187,11 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 	if q == nil {
 		return false
 	}
-	h.answerCallback(ctx, q.ID, "")
+	if q.Data == cbAssignRefresh {
+		h.answerCallback(ctx, q.ID, "Обновляю список…")
+	} else {
+		h.answerCallback(ctx, q.ID, "")
+	}
 
 	msg := callbackMessage(q)
 	if msg == nil {
@@ -236,6 +243,9 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 	case cbAdminReturnPanel:
 		h.service.ClearState(userID)
 		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
+		return true
+	case cbAssignRefresh:
+		h.refreshAssignRolePicker(ctx, chatID, userID, panelMsgID)
 		return true
 	}
 
@@ -326,6 +336,9 @@ func (h *Handler) renderNoRoleCandidatesScreen(ctx context.Context, chatID, user
 
 func (h *Handler) noRoleCandidatesMarkup() models.InlineKeyboardMarkup {
 	return newInlineKeyboardMarkup(
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonData("🔄 Обновить список", cbAssignRefresh),
+		),
 		newInlineKeyboardRow(
 			newInlineKeyboardButtonDataStyled("✅ Вернуться в админку", cbAdminReturnPanel, "success"),
 		),
@@ -541,6 +554,11 @@ func (h *Handler) renderUserPickerPage(ctx context.Context, chatID, userID int64
 		newInlineKeyboardButtonData(pageLabel, pickerCallbackData(data.Mode, "page", 0)),
 		newInlineKeyboardButtonData(userPickerNextButton, pickerCallbackData(data.Mode, cbPickerNext, 0)),
 	))
+	if data.Mode == UserPickerAssignWithoutRole {
+		rows = append(rows, newInlineKeyboardRow(
+			newInlineKeyboardButtonData("🔄 Обновить список", cbAssignRefresh),
+		))
+	}
 	rows = append(rows, newInlineKeyboardRow(
 		newInlineKeyboardButtonDataStyled(userPickerBackButton, pickerCallbackData(data.Mode, cbPickerBack, 0), "danger"),
 	))
@@ -551,7 +569,7 @@ func (h *Handler) renderUserPickerPage(ctx context.Context, chatID, userID int64
 	if data.Mode == UserPickerAssignWithoutRole {
 		caption = "Выбери участника:\nФормат: @username • id, иначе Имя • id."
 	} else if data.Mode == UserPickerChangeWithRole {
-		caption = "Выбери участника:\nФормат: роль • @username, иначе роль • id."
+		caption = "Выбери участника:\nФормат: роль • тег • @username, иначе роль • тег • ник • id."
 	}
 
 	if panelMsgID <= 0 {
@@ -609,6 +627,13 @@ func (h *Handler) handleUserPickerCallback(ctx context.Context, chatID, userID i
 		}
 		h.renderChangeRoleInput(ctx, chatID, userID, selected)
 	}
+}
+
+func (h *Handler) refreshAssignRolePicker(ctx context.Context, chatID, userID int64, panelMsgID int) {
+	if h.memberService != nil && h.ops != nil && h.mainGroupID != 0 {
+		_, _ = h.memberService.ScanAndUpdateMemberTags(ctx, h.ops, h.mainGroupID, time.Now().UTC())
+	}
+	h.startAssignRole(ctx, chatID, userID, panelMsgID)
 }
 
 func (h *Handler) handleUserPickerInput(ctx context.Context, chatID, userID int64, panelMsgID int, stateName, text string) (*members.Member, bool) {
@@ -693,7 +718,7 @@ func formatMemberForRolePicker(user *members.Member) string {
 	if user.Role != nil && strings.TrimSpace(*user.Role) != "" {
 		role = strings.TrimSpace(*user.Role)
 	}
-	return fmt.Sprintf("%s • %s", role, formatMemberIdentity(user))
+	return fmt.Sprintf("%s • %s", role, formatMemberIdentityCompact(user))
 }
 
 func formatMemberForAssignPicker(user *members.Member) string {
@@ -720,6 +745,42 @@ func formatMemberIdentity(user *members.Member) string {
 	}
 
 	return fmt.Sprintf("id:%d", user.UserID)
+}
+
+func formatMemberIdentityCompact(user *members.Member) string {
+	if user == nil {
+		return "id:0"
+	}
+
+	tag := ""
+	if user.Tag != nil {
+		tag = strings.TrimSpace(*user.Tag)
+	}
+	username := strings.TrimSpace(strings.TrimPrefix(user.Username, "@"))
+	nick := strings.TrimSpace(strings.Join([]string{strings.TrimSpace(user.FirstName), strings.TrimSpace(user.LastName)}, " "))
+	if nick == "" && user.LastKnownName != nil {
+		nick = strings.TrimSpace(*user.LastKnownName)
+	}
+	id := fmt.Sprintf("id:%d", user.UserID)
+
+	if username != "" {
+		if tag != "" {
+			return fmt.Sprintf("%s • @%s", tag, username)
+		}
+		return fmt.Sprintf("@%s", username)
+	}
+
+	if tag != "" && nick != "" {
+		return fmt.Sprintf("%s • %s • %s", tag, nick, id)
+	}
+	if tag != "" {
+		return fmt.Sprintf("%s • %s", tag, id)
+	}
+	if nick != "" {
+		return fmt.Sprintf("%s • %s", nick, id)
+	}
+
+	return id
 }
 
 func shortenForButton(s string, max int) string {

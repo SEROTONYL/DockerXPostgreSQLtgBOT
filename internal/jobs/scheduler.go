@@ -32,8 +32,7 @@ const (
 
 type memberPurger interface {
 	PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error)
-	ListActiveUserIDs(ctx context.Context) ([]int64, error)
-	UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error
+	ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, mainGroupID int64, now time.Time) (int, error)
 }
 
 type PurgeMetrics struct {
@@ -210,32 +209,12 @@ func (s *Scheduler) scanMemberTags(ctx context.Context) {
 	}
 
 	log.Debug("[CRON] ScanMemberTags started")
-	userIDs, err := s.memberService.ListActiveUserIDs(ctx)
+	updated, err := s.memberService.ScanAndUpdateMemberTags(ctx, s.tgOps, s.mainGroupID, time.Now().UTC())
 	if err != nil {
-		log.WithError(err).Warn("[CRON] ScanMemberTags: failed to list active users")
+		log.WithError(err).Warn("[CRON] ScanMemberTags failed")
 		return
 	}
-
-	now := time.Now().UTC()
-	for _, userID := range userIDs {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		member, err := s.tgOps.GetChatMember(ctx, s.mainGroupID, userID)
-		if err != nil {
-			log.WithError(err).WithField("user_id", userID).Warn("[CRON] ScanMemberTags: getChatMember failed")
-			continue
-		}
-
-		tag := s.tgOps.ExtractMemberTag(member)
-		if err := s.memberService.UpdateMemberTag(ctx, userID, tag, now); err != nil {
-			log.WithError(err).WithField("user_id", userID).Warn("[CRON] ScanMemberTags: update tag failed")
-		}
-	}
-	log.WithField("users", len(userIDs)).Info("[CRON] ScanMemberTags completed")
+	log.WithField("updated", updated).Info("[CRON] ScanMemberTags completed")
 }
 
 func (s *Scheduler) GetPurgeMetrics() PurgeMetrics {

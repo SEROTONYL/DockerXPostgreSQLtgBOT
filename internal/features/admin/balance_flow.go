@@ -165,7 +165,7 @@ func (h *Handler) renderBalancePicker(chatID, userID int64) {
 		if data.SelectedUserIDs[u.UserID] {
 			mark = "☑"
 		}
-		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData(fmt.Sprintf("%s %s", mark, formatMemberForAssignPicker(u)), fmt.Sprintf("%s:%d", cbBalPickToggle, u.UserID))))
+		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData(fmt.Sprintf("%s %s", mark, shortenForButton(formatMemberIdentityCompact(u), 36)), fmt.Sprintf("%s:%d", cbBalPickToggle, u.UserID))))
 	}
 	rows = append(rows, newInlineKeyboardRow(
 		newInlineKeyboardButtonData(userPickerPrevButton, cbBalPickPrev),
@@ -179,7 +179,7 @@ func (h *Handler) renderBalancePicker(chatID, userID int64) {
 		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData("Выберите хотя бы одного", "admin:balpick:noop")))
 	}
 	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalPickBack, "danger")))
-	text := fmt.Sprintf("Выберите пользователей (только с ролью).\nВыбрано: %d", len(data.SelectedUserIDs))
+	text := fmt.Sprintf("Выберите пользователей (только с ролью).\nФормат: тег • @username, иначе тег • ник • id.\nВыбрано: %d", len(data.SelectedUserIDs))
 	h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_picker", text, newInlineKeyboardMarkup(rows...))
 }
 
