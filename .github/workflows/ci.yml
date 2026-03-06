@@ -21,24 +21,5 @@ jobs:
       - name: Race
         run: make test-race
 
-      - name: Setup golangci-lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          # v8 supports skip-save-cache/skip-build-cache; skip-pkg-cache is not a valid input.
-          # Pin to a v1.x binary so `golangci-lint --version` and CLI flags match current project usage.
-          version: v1.64.8
-          install-mode: binary
-          skip-save-cache: true
-          skip-build-cache: true
-
-      - name: Verify golangci-lint version
-        run: golangci-lint --version
-
-      - name: Prepare repo-local golangci-lint
-        run: |
-          mkdir -p ./bin
-          cp "$(command -v golangci-lint)" ./bin/golangci-lint
-          chmod +x ./bin/golangci-lint
-
       - name: Lint
-        run: golangci-lint run --timeout=5m
+        run: make lint
