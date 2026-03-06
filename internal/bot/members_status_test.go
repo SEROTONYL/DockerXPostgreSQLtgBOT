@@ -110,7 +110,7 @@ func (f *fakeMembersRepoStatus) ListActiveUserIDs(ctx context.Context) ([]int64,
 	return nil, nil
 }
 
-func (f *fakeMembersRepoStatus) ListKnownUserIDs(ctx context.Context) ([]int64, error) {
+func (f *fakeMembersRepoStatus) ListRefreshCandidateUserIDs(ctx context.Context) ([]int64, error) {
 	return nil, nil
 }
 

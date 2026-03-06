@@ -30,7 +30,7 @@ type memberRepository interface {
 	EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error
 	TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error
 	ListActiveUserIDs(ctx context.Context) ([]int64, error)
-	ListKnownUserIDs(ctx context.Context) ([]int64, error)
+	ListRefreshCandidateUserIDs(ctx context.Context) ([]int64, error)
 	UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error
 	CountMembersByStatus(ctx context.Context) (active int, left int, err error)
 	CountPendingPurge(ctx context.Context, now time.Time) (int, error)
@@ -118,10 +118,9 @@ func (s *Service) UpdateMemberTag(ctx context.Context, userID int64, tag *string
 	return nil
 }
 
-// ScanAndUpdateMemberTags вручную обновляет metadata/tag для известных участников и может
-// восстановить пропущенных active-записей только для уже известных user_id после проверки
-// текущего членства через GetChatMember. Bot API не умеет перечислять всех участников с нуля,
-// а DM-активность сама по себе не является основанием для вставки active-участника.
+// ScanAndUpdateMemberTags обновляет metadata/tag только для ограниченного набора persisted user_id:
+// active + recent non-left кандидаты. Refresh не перечисляет весь Telegram-чат, не воскрешает
+// весь исторический хвост и не использует DM-активность как основание для вставки active.
 func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, mainGroupID int64, now time.Time) (int, error) {
 	if tgOps == nil || mainGroupID == 0 {
 		return 0, nil
@@ -131,21 +130,9 @@ func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.O
 	if err != nil {
 		return 0, err
 	}
-	knownUserIDs, err := s.repo.ListKnownUserIDs(ctx)
+	refreshCandidateUserIDs, err := s.repo.ListRefreshCandidateUserIDs(ctx)
 	if err != nil {
 		return 0, err
-	}
-
-	candidateSet := make(map[int64]struct{}, len(activeUserIDs)+len(knownUserIDs))
-	for _, userID := range activeUserIDs {
-		candidateSet[userID] = struct{}{}
-	}
-	for _, userID := range knownUserIDs {
-		candidateSet[userID] = struct{}{}
-	}
-	candidateIDs := make([]int64, 0, len(candidateSet))
-	for userID := range candidateSet {
-		candidateIDs = append(candidateIDs, userID)
 	}
 
 	activeSet := make(map[int64]struct{}, len(activeUserIDs))
@@ -154,7 +141,7 @@ func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.O
 	}
 
 	updated := 0
-	for _, userID := range candidateIDs {
+	for _, userID := range refreshCandidateUserIDs {
 		select {
 		case <-ctx.Done():
 			return updated, ctx.Err()

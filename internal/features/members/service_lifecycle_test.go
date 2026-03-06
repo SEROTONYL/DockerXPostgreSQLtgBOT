@@ -76,7 +76,7 @@ func (f *lifecycleFakeRepo) ListActiveUserIDs(ctx context.Context) ([]int64, err
 	return nil, nil
 }
 
-func (f *lifecycleFakeRepo) ListKnownUserIDs(ctx context.Context) ([]int64, error) {
+func (f *lifecycleFakeRepo) ListRefreshCandidateUserIDs(ctx context.Context) ([]int64, error) {
 	return nil, nil
 }
 
@@ -318,8 +318,8 @@ func (r *seenStateRepo) CountMembersByStatus(ctx context.Context) (active int, l
 func (r *seenStateRepo) CountPendingPurge(ctx context.Context, now time.Time) (int, error) {
 	return 0, nil
 }
-func (r *seenStateRepo) ListActiveUserIDs(ctx context.Context) ([]int64, error) { return nil, nil }
-func (r *seenStateRepo) ListKnownUserIDs(ctx context.Context) ([]int64, error)  { return nil, nil }
+func (r *seenStateRepo) ListActiveUserIDs(ctx context.Context) ([]int64, error)           { return nil, nil }
+func (r *seenStateRepo) ListRefreshCandidateUserIDs(ctx context.Context) ([]int64, error) { return nil, nil }
 func (r *seenStateRepo) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
 	return nil
 }
