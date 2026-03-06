@@ -24,21 +24,22 @@ const (
 	userPickerBackButton = "⬅️ Назад"
 	userPickerPageSize   = 8
 
-	cbAdminAssignRole    = "admin:assign_role"
-	cbAdminChangeRole    = "admin:change_role"
-	cbAdminStub          = "admin:stub"
-	cbAdminBalanceAdjust = "admin:balance_adjust"
-	cbPickerPrefix       = "admin:picker:"
-	cbPickerSelect       = "select"
-	cbPickerPrev         = "prev"
-	cbPickerNext         = "next"
-	cbPickerBack         = "back"
-	cbAssignRefresh      = "admin:assign:refresh"
-	cbRoleInputBack      = "admin:role_input_back"
-	cbAdminCancelAction  = "admin:cancel_action"
-	cbAdminUndoLast      = "admin:undo_last"
-	cbAdminReturnPanel   = "admin:return_panel"
-	manualRefreshTimeout = 7 * time.Second
+	cbAdminAssignRole        = "admin:assign_role"
+	cbAdminChangeRole        = "admin:change_role"
+	cbAdminStub              = "admin:stub"
+	cbAdminBalanceAdjust     = "admin:balance_adjust"
+	cbPickerPrefix           = "admin:picker:"
+	cbPickerSelect           = "select"
+	cbPickerPrev             = "prev"
+	cbPickerNext             = "next"
+	cbPickerBack             = "back"
+	cbAssignRefresh          = "admin:assign:refresh"
+	cbRoleInputBack          = "admin:role_input_back"
+	cbAdminCancelAction      = "admin:cancel_action"
+	cbAdminUndoLast          = "admin:undo_last"
+	cbAdminReturnPanel       = "admin:return_panel"
+	manualRefreshTimeout     = 7 * time.Second
+	assignRefreshFailureHint = "⚠️ Не удалось обновить теги участников, показываю текущий список."
 )
 
 var userPickerIDPattern = regexp.MustCompile(`(?i)(?:id:|#)(\d+)`)
@@ -647,7 +648,7 @@ func (h *Handler) refreshAssignRolePicker(ctx context.Context, chatID, userID in
 				"timeout_ms": h.refreshTimeout.Milliseconds(),
 			}).Warn("assign role refresh: member tag sync failed")
 			if ctx.Err() == nil {
-				h.sendMessage(ctx, chatID, "⚠️ Не удалось обновить теги участников, показываю текущий список.")
+				h.sendMessage(ctx, chatID, assignRefreshFailureHint)
 			}
 		}
 	}

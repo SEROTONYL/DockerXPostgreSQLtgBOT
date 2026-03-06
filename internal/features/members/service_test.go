@@ -12,33 +12,35 @@ import (
 )
 
 type fakeRepo struct {
-	upsertCalled        bool
-	markLeftCalled      bool
-	isActiveCalled      bool
-	upsertUserID        int64
-	upsertUsername      string
-	upsertName          string
-	upsertJoinedAt      time.Time
-	markLeftUserID      int64
-	markLeftAt          time.Time
-	markLeftDeleteAfter time.Time
-	isActiveResult      bool
-	purgeCalled         bool
-	purgeDeleted        int
-	ensureSeenCalled    bool
-	ensureSeenUserID    int64
-	ensureSeenUsername  string
-	ensureSeenName      string
-	ensureSeenAt        time.Time
-	ensureActiveCalled  bool
-	touchCalled         bool
-	touchUserID         int64
-	touchSeenAt         time.Time
-	countActive         int
-	countLeft           int
-	pendingPurge        int
-	activeUserIDs       []int64
-	updateTagBlocked    bool
+	upsertCalled         bool
+	markLeftCalled       bool
+	isActiveCalled       bool
+	upsertUserID         int64
+	upsertUsername       string
+	upsertName           string
+	upsertJoinedAt       time.Time
+	markLeftUserID       int64
+	markLeftAt           time.Time
+	markLeftDeleteAfter  time.Time
+	isActiveResult       bool
+	purgeCalled          bool
+	purgeDeleted         int
+	ensureSeenCalled     bool
+	ensureSeenUserID     int64
+	ensureSeenUsername   string
+	ensureSeenName       string
+	ensureSeenAt         time.Time
+	ensureActiveCalled   bool
+	touchCalled          bool
+	touchUserID          int64
+	touchSeenAt          time.Time
+	countActive          int
+	countLeft            int
+	pendingPurge         int
+	activeUserIDs        []int64
+	updateTagBlocked     bool
+	updateTagErrorByUser map[int64]error
+	updateTagCalls       []int64
 }
 
 func (f *fakeRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
@@ -104,9 +106,13 @@ func (f *fakeRepo) ListActiveUserIDs(ctx context.Context) ([]int64, error) {
 	return f.activeUserIDs, nil
 }
 func (f *fakeRepo) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
+	f.updateTagCalls = append(f.updateTagCalls, userID)
 	if f.updateTagBlocked {
 		<-ctx.Done()
 		return ctx.Err()
+	}
+	if err, ok := f.updateTagErrorByUser[userID]; ok {
+		return err
 	}
 	return nil
 }
@@ -267,7 +273,53 @@ func TestScanAndUpdateMemberTags_ContextTimeoutReturnsError(t *testing.T) {
 	}
 }
 
-type fakeTelegramClient struct{}
+func TestScanAndUpdateMemberTags_CanceledContextReturnsError(t *testing.T) {
+	repo := &fakeRepo{activeUserIDs: []int64{1}, updateTagBlocked: true}
+	svc := NewService(repo)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	updated, err := svc.ScanAndUpdateMemberTags(ctx, telegram.NewOps(&fakeTelegramClient{}), 1, time.Now().UTC())
+	if err == nil {
+		t.Fatal("expected canceled error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected Canceled, got %v", err)
+	}
+	if updated != 0 {
+		t.Fatalf("expected updated=0, got %d", updated)
+	}
+}
+
+func TestScanAndUpdateMemberTags_NonContextErrorsDoNotAbortScan(t *testing.T) {
+	repo := &fakeRepo{
+		activeUserIDs:        []int64{1, 2, 3},
+		updateTagErrorByUser: map[int64]error{2: errors.New("db write failed")},
+	}
+	tg := &fakeTelegramClient{getChatMemberErrByUser: map[int64]error{1: errors.New("temporary tg error")}}
+	svc := NewService(repo)
+
+	updated, err := svc.ScanAndUpdateMemberTags(context.Background(), telegram.NewOps(tg), 1, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated != 1 {
+		t.Fatalf("expected updated=1, got %d", updated)
+	}
+	if len(tg.getChatMemberCalls) != 3 {
+		t.Fatalf("expected scan to continue for all users, calls=%v", tg.getChatMemberCalls)
+	}
+	if len(repo.updateTagCalls) != 2 {
+		t.Fatalf("expected update attempts for users with fetched telegram members, calls=%v", repo.updateTagCalls)
+	}
+}
+
+type fakeTelegramClient struct {
+	getChatMemberBlocked   bool
+	getChatMemberErrByUser map[int64]error
+	getChatMemberCalls     []int64
+}
 
 func (f *fakeTelegramClient) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (messageID int, err error) {
 	return 0, nil
@@ -280,5 +332,12 @@ func (f *fakeTelegramClient) EditReplyMarkup(chatID int64, messageID int, markup
 }
 func (f *fakeTelegramClient) DeleteMessage(chatID int64, messageID int) error { return nil }
 func (f *fakeTelegramClient) GetChatMember(chatID int64, userID int64) (models.ChatMember, error) {
+	f.getChatMemberCalls = append(f.getChatMemberCalls, userID)
+	if f.getChatMemberBlocked {
+		return nil, context.DeadlineExceeded
+	}
+	if err, ok := f.getChatMemberErrByUser[userID]; ok {
+		return nil, err
+	}
 	return &models.ChatMemberMember{User: models.User{ID: userID}}, nil
 }
