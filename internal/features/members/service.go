@@ -129,18 +129,24 @@ func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.O
 	for _, userID := range userIDs {
 		select {
 		case <-ctx.Done():
-			return updated, nil
+			return updated, ctx.Err()
 		default:
 		}
 
 		member, err := tgOps.GetChatMember(ctx, mainGroupID, userID)
 		if err != nil {
+			if ctx.Err() != nil {
+				return updated, ctx.Err()
+			}
 			log.WithError(err).WithField("user_id", userID).Warn("ScanMemberTags: getChatMember failed")
 			continue
 		}
 
 		tag := tgOps.ExtractMemberTag(member)
 		if err := s.UpdateMemberTag(ctx, userID, tag, now); err != nil {
+			if ctx.Err() != nil {
+				return updated, ctx.Err()
+			}
 			log.WithError(err).WithField("user_id", userID).Warn("ScanMemberTags: update tag failed")
 			continue
 		}
