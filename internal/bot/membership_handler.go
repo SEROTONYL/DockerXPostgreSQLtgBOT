@@ -82,9 +82,9 @@ const (
 
 func classifyMemberStatus(status string) membershipAction {
 	switch status {
-	case "creator", "administrator", "member":
+	case "creator", "administrator", "member", "restricted":
 		return membershipActionActive
-	case "left", "kicked", "restricted":
+	case "left", "kicked":
 		return membershipActionLeft
 	default:
 		return membershipActionIgnore

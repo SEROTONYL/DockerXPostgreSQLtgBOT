@@ -30,6 +30,7 @@ func TestUpsertActiveMemberQuery_ClearsLeftLifecycleFields(t *testing.T) {
 	q := upsertActiveMemberQuery()
 	checks := []string{
 		"status = $4",
+		"NOW(), $6",
 		"left_at = NULL",
 		"delete_after = NULL",
 	}
@@ -72,7 +73,8 @@ func TestEnsureMemberSeenQuery_UsesThrottleCondition(t *testing.T) {
 	checks := []string{
 		"UPDATE members",
 		"WHERE user_id = $1",
-		"last_seen_at < $4 - INTERVAL '5 minutes'",
+		"last_known_name = $4",
+		"last_seen_at < $5 - INTERVAL '5 minutes'",
 	}
 	for _, c := range checks {
 		if !strings.Contains(q, c) {
@@ -85,6 +87,7 @@ func TestEnsureActiveMemberSeenQuery_UsesThrottleCondition(t *testing.T) {
 	q := ensureActiveMemberSeenQuery()
 	checks := []string{
 		"INSERT INTO members",
+		"$5, $6",
 		"ON CONFLICT (user_id) DO UPDATE",
 		"members.last_seen_at < $5 - INTERVAL '5 minutes'",
 	}

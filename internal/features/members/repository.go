@@ -35,7 +35,7 @@ func (r *Repository) Create(ctx context.Context, m *Member) error {
 // UpsertActiveMember вставляет/обновляет участника и помечает его как active.
 func (r *Repository) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
 	query := upsertActiveMemberQuery()
-	if _, err := r.db.Exec(ctx, query, userID, username, name, StatusActive, joinedAt.UTC()); err != nil {
+	if _, err := r.db.Exec(ctx, query, userID, username, name, StatusActive, joinedAt.UTC(), name); err != nil {
 		return fmt.Errorf("ошибка upsert активного участника: %w", err)
 	}
 	return nil
@@ -97,6 +97,33 @@ func (r *Repository) ListActiveUserIDs(ctx context.Context) ([]int64, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("ошибка чтения active user_id: %w", err)
+	}
+	return out, nil
+}
+
+// ListKnownUserIDs возвращает user_id всех известных участников независимо от статуса.
+func (r *Repository) ListKnownUserIDs(ctx context.Context) ([]int64, error) {
+	query := `
+		SELECT user_id
+		FROM members
+		ORDER BY user_id
+	`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка выборки известных user_id: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]int64, 0)
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return nil, fmt.Errorf("ошибка сканирования известного user_id: %w", err)
+		}
+		out = append(out, userID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка чтения известных user_id: %w", err)
 	}
 	return out, nil
 }
@@ -254,7 +281,7 @@ func (r *Repository) TouchLastSeen(ctx context.Context, userID int64, seenAt tim
 
 func (r *Repository) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
 	query := ensureMemberSeenQuery()
-	if _, err := r.db.Exec(ctx, query, userID, username, name, seenAt.UTC()); err != nil {
+	if _, err := r.db.Exec(ctx, query, userID, username, name, name, seenAt.UTC()); err != nil {
 		return fmt.Errorf("ошибка ensure member seen: %w", err)
 	}
 	return nil
@@ -262,7 +289,7 @@ func (r *Repository) EnsureMemberSeen(ctx context.Context, userID int64, usernam
 
 func (r *Repository) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
 	query := ensureActiveMemberSeenQuery()
-	if _, err := r.db.Exec(ctx, query, userID, username, name, StatusActive, seenAt.UTC()); err != nil {
+	if _, err := r.db.Exec(ctx, query, userID, username, name, StatusActive, seenAt.UTC(), name); err != nil {
 		return fmt.Errorf("ошибка ensure active member seen: %w", err)
 	}
 	return nil
@@ -309,7 +336,7 @@ func (r *Repository) GetUsersWithRole(ctx context.Context) ([]*Member, error) {
 func upsertActiveMemberQuery() string {
 	return `
 		INSERT INTO members (user_id, username, first_name, status, joined_at, left_at, delete_after, last_seen_at, last_known_name)
-		VALUES ($1, $2, $3, $4, $5, NULL, NULL, NOW(), $3)
+		VALUES ($1, $2, $3, $4, $5, NULL, NULL, NOW(), $6)
 		ON CONFLICT (user_id) DO UPDATE
 		SET username = EXCLUDED.username,
 		    first_name = EXCLUDED.first_name,
@@ -377,9 +404,9 @@ func ensureMemberSeenQuery() string {
 		UPDATE members
 		SET username = $2,
 		    first_name = $3,
-		    last_known_name = $3,
+		    last_known_name = $4,
 		    last_seen_at = CASE
-		        WHEN last_seen_at IS NULL OR last_seen_at < $4 - INTERVAL '5 minutes' THEN $4
+		        WHEN last_seen_at IS NULL OR last_seen_at < $5 - INTERVAL '5 minutes' THEN $5
 		        ELSE last_seen_at
 		    END,
 		    updated_at = NOW()
@@ -390,7 +417,7 @@ func ensureMemberSeenQuery() string {
 func ensureActiveMemberSeenQuery() string {
 	return `
 		INSERT INTO members (user_id, username, first_name, status, joined_at, left_at, delete_after, last_seen_at, last_known_name)
-		VALUES ($1, $2, $3, $4, $5, NULL, NULL, $5, $3)
+		VALUES ($1, $2, $3, $4, $5, NULL, NULL, $5, $6)
 		ON CONFLICT (user_id) DO UPDATE
 		SET username = EXCLUDED.username,
 		    first_name = EXCLUDED.first_name,

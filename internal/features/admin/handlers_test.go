@@ -45,7 +45,7 @@ func (f *fakeTG) AnswerCallbackQuery(callbackID string, text string, showAlert b
 }
 
 func (f *fakeTG) GetChatMember(chatID int64, userID int64) (models.ChatMember, error) {
-	return nil, nil
+	return &models.ChatMemberMember{User: models.User{ID: userID}}, nil
 }
 
 func (f *fakeTG) EditReplyMarkup(chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error {
@@ -190,6 +190,12 @@ func (r *fakeMemberSyncRepo) TouchLastSeen(ctx context.Context, userID int64, se
 	return nil
 }
 func (r *fakeMemberSyncRepo) ListActiveUserIDs(ctx context.Context) ([]int64, error) {
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
+	return r.activeIDs, nil
+}
+func (r *fakeMemberSyncRepo) ListKnownUserIDs(ctx context.Context) ([]int64, error) {
 	if r.listErr != nil {
 		return nil, r.listErr
 	}

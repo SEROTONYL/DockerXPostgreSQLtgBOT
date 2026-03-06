@@ -638,8 +638,10 @@ func (h *Handler) refreshAssignRolePicker(ctx context.Context, chatID, userID in
 		refreshCtx, cancel := context.WithTimeout(ctx, h.refreshTimeout)
 		defer cancel()
 
-		// Ручное обновление синхронизирует только tag для уже известных active-участников.
-		// Новые участники должны попадать в members через membership/message path.
+		// Ручное обновление пересинхронизирует tag и может восстановить пропущенных
+		// известных участников после GetChatMember-проверки. Telegram Bot API при этом
+		// не позволяет перечислить всех участников группы с нуля, а DM сама по себе
+		// не считается основанием для вставки active-записи.
 		if _, err := h.memberService.ScanAndUpdateMemberTags(refreshCtx, h.ops, h.mainGroupID, time.Now().UTC()); err != nil {
 			log.WithError(err).WithFields(log.Fields{
 				"admin_id":   userID,

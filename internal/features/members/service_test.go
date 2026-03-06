@@ -38,9 +38,11 @@ type fakeRepo struct {
 	countLeft            int
 	pendingPurge         int
 	activeUserIDs        []int64
+	knownUserIDs         []int64
 	updateTagBlocked     bool
 	updateTagErrorByUser map[int64]error
 	updateTagCalls       []int64
+	upsertCalls          []int64
 }
 
 func (f *fakeRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
@@ -49,6 +51,7 @@ func (f *fakeRepo) UpsertActiveMember(ctx context.Context, userID int64, usernam
 	f.upsertUsername = username
 	f.upsertName = name
 	f.upsertJoinedAt = joinedAt
+	f.upsertCalls = append(f.upsertCalls, userID)
 	return nil
 }
 
@@ -104,6 +107,9 @@ func (f *fakeRepo) CountPendingPurge(ctx context.Context, now time.Time) (int, e
 }
 func (f *fakeRepo) ListActiveUserIDs(ctx context.Context) ([]int64, error) {
 	return f.activeUserIDs, nil
+}
+func (f *fakeRepo) ListKnownUserIDs(ctx context.Context) ([]int64, error) {
+	return f.knownUserIDs, nil
 }
 func (f *fakeRepo) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
 	f.updateTagCalls = append(f.updateTagCalls, userID)
@@ -256,6 +262,7 @@ func TestServiceTouchLastSeen(t *testing.T) {
 
 func TestScanAndUpdateMemberTags_ContextTimeoutReturnsError(t *testing.T) {
 	repo := &fakeRepo{activeUserIDs: []int64{1}, updateTagBlocked: true}
+	repo.knownUserIDs = []int64{1}
 	svc := NewService(repo)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -275,6 +282,7 @@ func TestScanAndUpdateMemberTags_ContextTimeoutReturnsError(t *testing.T) {
 
 func TestScanAndUpdateMemberTags_CanceledContextReturnsError(t *testing.T) {
 	repo := &fakeRepo{activeUserIDs: []int64{1}, updateTagBlocked: true}
+	repo.knownUserIDs = []int64{1}
 	svc := NewService(repo)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -295,6 +303,7 @@ func TestScanAndUpdateMemberTags_CanceledContextReturnsError(t *testing.T) {
 func TestScanAndUpdateMemberTags_NonContextErrorsDoNotAbortScan(t *testing.T) {
 	repo := &fakeRepo{
 		activeUserIDs:        []int64{1, 2, 3},
+		knownUserIDs:         []int64{1, 2, 3},
 		updateTagErrorByUser: map[int64]error{2: errors.New("db write failed")},
 	}
 	tg := &fakeTelegramClient{getChatMemberErrByUser: map[int64]error{1: errors.New("temporary tg error")}}
@@ -315,10 +324,58 @@ func TestScanAndUpdateMemberTags_NonContextErrorsDoNotAbortScan(t *testing.T) {
 	}
 }
 
+func TestScanAndUpdateMemberTags_RestoresMissingKnownMemberWhenTelegramConfirmsMembership(t *testing.T) {
+	repo := &fakeRepo{activeUserIDs: []int64{1}, knownUserIDs: []int64{1, 2}}
+	svc := NewService(repo)
+
+	updated, err := svc.ScanAndUpdateMemberTags(context.Background(), telegram.NewOps(&fakeTelegramClient{}), 1, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated != 2 {
+		t.Fatalf("expected updated=2, got %d", updated)
+	}
+	if len(repo.upsertCalls) != 1 || repo.upsertCalls[0] != 2 {
+		t.Fatalf("expected restore upsert for user 2, got %v", repo.upsertCalls)
+	}
+}
+
+func TestScanAndUpdateMemberTags_DoesNotRestoreKnownNonMemberStatus(t *testing.T) {
+	repo := &fakeRepo{activeUserIDs: []int64{}, knownUserIDs: []int64{2}}
+	tg := &fakeTelegramClient{statusByUser: map[int64]string{2: "left"}}
+	svc := NewService(repo)
+
+	updated, err := svc.ScanAndUpdateMemberTags(context.Background(), telegram.NewOps(tg), 1, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated != 0 {
+		t.Fatalf("expected updated=0, got %d", updated)
+	}
+	if len(repo.upsertCalls) != 0 {
+		t.Fatalf("expected no upserts, got %v", repo.upsertCalls)
+	}
+}
+
+func TestScanAndUpdateMemberTags_DoesNotUseUnknownIDsOutsideKnownSources(t *testing.T) {
+	repo := &fakeRepo{activeUserIDs: []int64{1}, knownUserIDs: []int64{1, 2}}
+	tg := &fakeTelegramClient{}
+	svc := NewService(repo)
+
+	_, err := svc.ScanAndUpdateMemberTags(context.Background(), telegram.NewOps(tg), 1, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tg.getChatMemberCalls) != 2 {
+		t.Fatalf("expected checks only for known candidates, got %v", tg.getChatMemberCalls)
+	}
+}
+
 type fakeTelegramClient struct {
 	getChatMemberBlocked   bool
 	getChatMemberErrByUser map[int64]error
 	getChatMemberCalls     []int64
+	statusByUser           map[int64]string
 }
 
 func (f *fakeTelegramClient) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (messageID int, err error) {
@@ -338,6 +395,14 @@ func (f *fakeTelegramClient) GetChatMember(chatID int64, userID int64) (models.C
 	}
 	if err, ok := f.getChatMemberErrByUser[userID]; ok {
 		return nil, err
+	}
+	if status, ok := f.statusByUser[userID]; ok {
+		switch status {
+		case "left":
+			return &models.ChatMemberLeft{User: models.User{ID: userID}}, nil
+		case "restricted":
+			return &models.ChatMemberRestricted{User: models.User{ID: userID}}, nil
+		}
 	}
 	return &models.ChatMemberMember{User: models.User{ID: userID}}, nil
 }
