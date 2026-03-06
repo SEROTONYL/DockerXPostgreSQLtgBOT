@@ -155,7 +155,8 @@ type fakeMemberRepoHandlers struct {
 }
 
 type fakeMemberSyncRepo struct {
-	activeIDs        []int64
+	activeIDs           []int64
+	refreshCandidateIDs []int64
 	without          []*members.Member
 	updateTagErr     error
 	listErr          error
@@ -195,9 +196,12 @@ func (r *fakeMemberSyncRepo) ListActiveUserIDs(ctx context.Context) ([]int64, er
 	}
 	return r.activeIDs, nil
 }
-func (r *fakeMemberSyncRepo) ListKnownUserIDs(ctx context.Context) ([]int64, error) {
+func (r *fakeMemberSyncRepo) ListRefreshCandidateUserIDs(ctx context.Context) ([]int64, error) {
 	if r.listErr != nil {
 		return nil, r.listErr
+	}
+	if r.refreshCandidateIDs != nil {
+		return r.refreshCandidateIDs, nil
 	}
 	return r.activeIDs, nil
 }

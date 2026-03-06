@@ -128,6 +128,30 @@ func (r *Repository) ListKnownUserIDs(ctx context.Context) ([]int64, error) {
 	return out, nil
 }
 
+// ListRefreshCandidateUserIDs возвращает bounded-набор persisted user_id для ручного refresh:
+// active + недавно виденные non-left пользователи.
+func (r *Repository) ListRefreshCandidateUserIDs(ctx context.Context) ([]int64, error) {
+	query := listRefreshCandidateUserIDsQuery()
+	rows, err := r.db.Query(ctx, query, StatusActive, StatusLeft, time.Now().UTC().Add(-30*24*time.Hour))
+	if err != nil {
+		return nil, fmt.Errorf("ошибка выборки refresh-кандидатов user_id: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]int64, 0)
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return nil, fmt.Errorf("ошибка сканирования refresh-кандидата user_id: %w", err)
+		}
+		out = append(out, userID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка чтения refresh-кандидатов user_id: %w", err)
+	}
+	return out, nil
+}
+
 // UpdateMemberTag обновляет tag и tag_updated_at только если tag изменился.
 func (r *Repository) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
 	query := `
@@ -396,6 +420,16 @@ func touchLastSeenQuery() string {
 		    updated_at = NOW()
 		WHERE user_id = $1
 		  AND (last_seen_at IS NULL OR last_seen_at < $2 - INTERVAL '5 minutes')
+	`
+}
+
+func listRefreshCandidateUserIDsQuery() string {
+	return `
+		SELECT user_id
+		FROM members
+		WHERE status = $1
+		   OR (status <> $2 AND last_seen_at IS NOT NULL AND last_seen_at > $3)
+		ORDER BY user_id
 	`
 }
 

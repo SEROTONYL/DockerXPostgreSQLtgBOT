@@ -140,3 +140,19 @@ func TestTouchLastSeenQuery_UsesThrottleCondition(t *testing.T) {
 		}
 	}
 }
+
+func TestListRefreshCandidateUserIDsQuery_IsBoundedAndExcludesLeftByDefault(t *testing.T) {
+	q := listRefreshCandidateUserIDsQuery()
+	checks := []string{
+		"WHERE status = $1",
+		"status <> $2",
+		"last_seen_at IS NOT NULL",
+		"last_seen_at > $3",
+		"ORDER BY user_id",
+	}
+	for _, c := range checks {
+		if !strings.Contains(q, c) {
+			t.Fatalf("refresh candidates query missing %q: %s", c, q)
+		}
+	}
+}
