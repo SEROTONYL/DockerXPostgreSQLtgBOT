@@ -6,8 +6,10 @@ package members
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	models "github.com/mymmrac/telego"
 	log "github.com/sirupsen/logrus"
 
 	"serotonyl.ru/telegram-bot/internal/telegram"
@@ -28,6 +30,7 @@ type memberRepository interface {
 	EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error
 	TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error
 	ListActiveUserIDs(ctx context.Context) ([]int64, error)
+	ListKnownUserIDs(ctx context.Context) ([]int64, error)
 	UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error
 	CountMembersByStatus(ctx context.Context) (active int, left int, err error)
 	CountPendingPurge(ctx context.Context, now time.Time) (int, error)
@@ -115,20 +118,43 @@ func (s *Service) UpdateMemberTag(ctx context.Context, userID int64, tag *string
 	return nil
 }
 
-// ScanAndUpdateMemberTags вручную обновляет metadata/tag только для уже известных active-участников из БД,
-// но не предназначен для обнаружения новых участников Telegram.
+// ScanAndUpdateMemberTags вручную обновляет metadata/tag для известных участников и может
+// восстановить пропущенных active-записей только для уже известных user_id после проверки
+// текущего членства через GetChatMember. Bot API не умеет перечислять всех участников с нуля,
+// а DM-активность сама по себе не является основанием для вставки active-участника.
 func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, mainGroupID int64, now time.Time) (int, error) {
 	if tgOps == nil || mainGroupID == 0 {
 		return 0, nil
 	}
 
-	userIDs, err := s.ListActiveUserIDs(ctx)
+	activeUserIDs, err := s.ListActiveUserIDs(ctx)
+	if err != nil {
+		return 0, err
+	}
+	knownUserIDs, err := s.repo.ListKnownUserIDs(ctx)
 	if err != nil {
 		return 0, err
 	}
 
+	candidateSet := make(map[int64]struct{}, len(activeUserIDs)+len(knownUserIDs))
+	for _, userID := range activeUserIDs {
+		candidateSet[userID] = struct{}{}
+	}
+	for _, userID := range knownUserIDs {
+		candidateSet[userID] = struct{}{}
+	}
+	candidateIDs := make([]int64, 0, len(candidateSet))
+	for userID := range candidateSet {
+		candidateIDs = append(candidateIDs, userID)
+	}
+
+	activeSet := make(map[int64]struct{}, len(activeUserIDs))
+	for _, userID := range activeUserIDs {
+		activeSet[userID] = struct{}{}
+	}
+
 	updated := 0
-	for _, userID := range userIDs {
+	for _, userID := range candidateIDs {
 		select {
 		case <-ctx.Done():
 			return updated, ctx.Err()
@@ -142,6 +168,25 @@ func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.O
 			}
 			log.WithError(err).WithField("user_id", userID).Warn("ScanMemberTags: getChatMember failed")
 			continue
+		}
+		if member == nil {
+			log.WithField("user_id", userID).Warn("ScanMemberTags: empty chat member payload")
+			continue
+		}
+
+		if !isMemberLikeStatus(member.MemberStatus()) {
+			continue
+		}
+
+		if _, ok := activeSet[userID]; !ok {
+			user := member.MemberUser()
+			if err := s.repo.UpsertActiveMember(ctx, userID, user.Username, userDisplayName(user), now); err != nil {
+				if ctx.Err() != nil {
+					return updated, ctx.Err()
+				}
+				log.WithError(err).WithField("user_id", userID).Warn("ScanMemberTags: restore active member failed")
+				continue
+			}
 		}
 
 		tag := tgOps.ExtractMemberTag(member)
@@ -200,4 +245,24 @@ func (s *Service) EnsureMember(ctx context.Context, userID int64, username, firs
 	}).Debug("Участник upsert как active (EnsureMember)")
 
 	return nil
+}
+
+func isMemberLikeStatus(status string) bool {
+	switch status {
+	case "creator", "administrator", "member", "restricted":
+		return true
+	default:
+		return false
+	}
+}
+
+func userDisplayName(user models.User) string {
+	name := strings.TrimSpace(user.FirstName)
+	if ln := strings.TrimSpace(user.LastName); ln != "" {
+		if name != "" {
+			name += " "
+		}
+		name += ln
+	}
+	return name
 }

@@ -110,6 +110,10 @@ func (f *fakeMembersRepoStatus) ListActiveUserIDs(ctx context.Context) ([]int64,
 	return nil, nil
 }
 
+func (f *fakeMembersRepoStatus) ListKnownUserIDs(ctx context.Context) ([]int64, error) {
+	return nil, nil
+}
+
 func (f *fakeMembersRepoStatus) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
 	return nil
 }

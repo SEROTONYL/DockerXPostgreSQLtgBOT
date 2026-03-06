@@ -17,7 +17,7 @@ func TestClassifyMemberStatus(t *testing.T) {
 		{name: "member active", status: "member", want: membershipActionActive},
 		{name: "left", status: "left", want: membershipActionLeft},
 		{name: "kicked", status: "kicked", want: membershipActionLeft},
-		{name: "restricted treated as left", status: "restricted", want: membershipActionLeft},
+		{name: "restricted treated as active", status: "restricted", want: membershipActionActive},
 	}
 
 	for _, tc := range tests {
