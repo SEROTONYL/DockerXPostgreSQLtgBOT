@@ -154,6 +154,59 @@ type fakeMemberRepoHandlers struct {
 	deltas  []*BalanceDelta
 }
 
+type fakeMemberSyncRepo struct {
+	activeIDs    []int64
+	without      []*members.Member
+	updateTagErr error
+	listErr      error
+}
+
+func (r *fakeMemberSyncRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
+	return nil
+}
+func (r *fakeMemberSyncRepo) MarkMemberLeft(ctx context.Context, userID int64, leftAt, deleteAfter time.Time) error {
+	return nil
+}
+func (r *fakeMemberSyncRepo) IsActiveMember(ctx context.Context, userID int64) (bool, error) {
+	return true, nil
+}
+func (r *fakeMemberSyncRepo) PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error) {
+	return 0, nil
+}
+func (r *fakeMemberSyncRepo) GetByUserID(ctx context.Context, userID int64) (*members.Member, error) {
+	return nil, nil
+}
+func (r *fakeMemberSyncRepo) GetByUsername(ctx context.Context, username string) (*members.Member, error) {
+	return nil, nil
+}
+func (r *fakeMemberSyncRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	return nil
+}
+func (r *fakeMemberSyncRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+	return nil
+}
+func (r *fakeMemberSyncRepo) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
+	return nil
+}
+func (r *fakeMemberSyncRepo) ListActiveUserIDs(ctx context.Context) ([]int64, error) {
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
+	return r.activeIDs, nil
+}
+func (r *fakeMemberSyncRepo) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
+	if r.updateTagErr != nil {
+		return r.updateTagErr
+	}
+	return nil
+}
+func (r *fakeMemberSyncRepo) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {
+	return 0, 0, nil
+}
+func (r *fakeMemberSyncRepo) CountPendingPurge(ctx context.Context, now time.Time) (int, error) {
+	return 0, nil
+}
+
 func (r *fakeMemberRepoHandlers) GetByUserID(ctx context.Context, userID int64) (*members.Member, error) {
 	if m, ok := r.members[userID]; ok {
 		return m, nil
@@ -209,6 +262,14 @@ func newAdminHandlerWithEconomy(t *testing.T, memberRepo *fakeMemberRepoHandlers
 	t.Helper()
 	svc := NewService(fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
 	return NewHandler(svc, nil, econ, telegram.NewOps(tg), 0)
+}
+
+func newAdminHandlerWithRefresh(t *testing.T, memberRepo *fakeMemberRepoHandlers, syncRepo *fakeMemberSyncRepo, tg *fakeTG) *Handler {
+	t.Helper()
+	svc := NewService(fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
+	h := NewHandler(svc, members.NewService(syncRepo), &fakeEconomy{}, telegram.NewOps(tg), 123)
+	h.refreshTimeout = 20 * time.Millisecond
+	return h
 }
 
 func callback(chatID int64, msgID int, userID int64, data string) *models.CallbackQuery {
@@ -475,6 +536,53 @@ func TestNoCandidates_ReturnButton_GoesBackToPanel(t *testing.T) {
 	}
 	if !hasButton(e.markup, "👤 Назначить роль", cbAdminAssignRole) || !hasButton(e.markup, "🔄 Сменить роль", cbAdminChangeRole) {
 		t.Fatalf("expected main admin panel buttons after return")
+	}
+}
+
+func TestAssignRefresh_SyncFailure_ShowsHintAndRerendersNoCandidates(t *testing.T) {
+	tg := &fakeTG{}
+	memberRepo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}, without: []*members.Member{}}
+	syncRepo := &fakeMemberSyncRepo{listErr: errors.New("list active failed")}
+	h := newAdminHandlerWithRefresh(t, memberRepo, syncRepo, tg)
+
+	ok := h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAssignRefresh))
+	if !ok {
+		t.Fatalf("expected callback handled")
+	}
+	if tg.count("ack") == 0 {
+		t.Fatalf("expected callback ack")
+	}
+	if !hasCallText(tg.calls, "send", "Не удалось обновить теги участников") {
+		t.Fatalf("expected user-facing refresh failure hint")
+	}
+	e := tg.last("edit")
+	if e == nil || !strings.Contains(e.text, "Все пользователи уже имеют роли") {
+		t.Fatalf("expected no-candidates screen rerender, got %#v", e)
+	}
+}
+
+func TestAssignRefresh_CanceledContext_NoHintButRerender(t *testing.T) {
+	tg := &fakeTG{}
+	role := "old"
+	memberRepo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		without: []*members.Member{{UserID: 1001, Username: "u1", Role: &role}},
+	}
+	syncRepo := &fakeMemberSyncRepo{activeIDs: []int64{1001}}
+	h := newAdminHandlerWithRefresh(t, memberRepo, syncRepo, tg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ok := h.HandleAdminCallback(ctx, callback(77, 42, 77, cbAssignRefresh))
+	if !ok {
+		t.Fatalf("expected callback handled")
+	}
+	if hasCallText(tg.calls, "send", "Не удалось обновить теги участников") {
+		t.Fatalf("did not expect hint when request context is canceled")
+	}
+	e := tg.last("edit")
+	if e == nil || !strings.Contains(e.text, "Выбери участника") {
+		t.Fatalf("expected picker rerender after cancellation, got %#v", e)
 	}
 }
 

@@ -38,6 +38,7 @@ const (
 	cbAdminCancelAction  = "admin:cancel_action"
 	cbAdminUndoLast      = "admin:undo_last"
 	cbAdminReturnPanel   = "admin:return_panel"
+	manualRefreshTimeout = 7 * time.Second
 )
 
 var userPickerIDPattern = regexp.MustCompile(`(?i)(?:id:|#)(\d+)`)
@@ -58,6 +59,7 @@ type Handler struct {
 	undoMu         sync.Mutex
 	lastRoleUndo   map[int64]*roleUndoData
 	wizardCtx      context.Context
+	refreshTimeout time.Duration
 }
 
 type roleUndoData struct {
@@ -76,6 +78,7 @@ func NewHandler(service *Service, memberService *members.Service, economyService
 		ops:            ops,
 		mainGroupID:    mainGroupID,
 		lastRoleUndo:   make(map[int64]*roleUndoData),
+		refreshTimeout: manualRefreshTimeout,
 	}
 }
 
@@ -631,7 +634,22 @@ func (h *Handler) handleUserPickerCallback(ctx context.Context, chatID, userID i
 
 func (h *Handler) refreshAssignRolePicker(ctx context.Context, chatID, userID int64, panelMsgID int) {
 	if h.memberService != nil && h.ops != nil && h.mainGroupID != 0 {
-		_, _ = h.memberService.ScanAndUpdateMemberTags(ctx, h.ops, h.mainGroupID, time.Now().UTC())
+		refreshCtx, cancel := context.WithTimeout(ctx, h.refreshTimeout)
+		defer cancel()
+
+		// Ручное обновление синхронизирует только tag для уже известных active-участников.
+		// Новые участники должны попадать в members через membership/message path.
+		if _, err := h.memberService.ScanAndUpdateMemberTags(refreshCtx, h.ops, h.mainGroupID, time.Now().UTC()); err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"admin_id":   userID,
+				"chat_id":    chatID,
+				"group_id":   h.mainGroupID,
+				"timeout_ms": h.refreshTimeout.Milliseconds(),
+			}).Warn("assign role refresh: member tag sync failed")
+			if ctx.Err() == nil {
+				h.sendMessage(ctx, chatID, "⚠️ Не удалось обновить теги участников, показываю текущий список.")
+			}
+		}
 	}
 	h.startAssignRole(ctx, chatID, userID, panelMsgID)
 }
