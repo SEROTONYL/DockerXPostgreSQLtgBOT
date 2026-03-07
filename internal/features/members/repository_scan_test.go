@@ -119,6 +119,42 @@ func TestScanMember_HandlesNullableFieldsUsedByUsersWithoutRoleAndUsersWithRole(
 	}
 }
 
+func TestScanMember_UsersWithRolePath_PreservesRoleAndNullableMetadata(t *testing.T) {
+	now := time.Now().UTC()
+	role := "moderator"
+	tag := "TEAM-B"
+	lastKnownName := "Fallback Name"
+	scanner := fakeMemberScanner{values: []interface{}{
+		int64(3), int64(3003), nil, nil, nil,
+		role, true, false,
+		StatusActive, nil, nil, nil, &now, lastKnownName, tag, &now, now, now,
+	}}
+
+	var m Member
+	if err := scanMember(scanner, &m); err != nil {
+		t.Fatalf("scanMember returned error: %v", err)
+	}
+
+	if m.Username != "" || m.FirstName != "" || m.LastName != "" {
+		t.Fatalf("expected nullable identity fields normalized to empty strings, got username=%q first_name=%q last_name=%q", m.Username, m.FirstName, m.LastName)
+	}
+	if m.Role == nil || *m.Role != role {
+		t.Fatalf("expected role %q, got %#v", role, m.Role)
+	}
+	if m.Tag == nil || *m.Tag != tag {
+		t.Fatalf("expected tag %q, got %#v", tag, m.Tag)
+	}
+	if m.LastKnownName == nil || *m.LastKnownName != lastKnownName {
+		t.Fatalf("expected last_known_name %q, got %#v", lastKnownName, m.LastKnownName)
+	}
+	if m.LastSeenAt == nil || !m.LastSeenAt.Equal(now) {
+		t.Fatalf("expected last_seen_at %v, got %#v", now, m.LastSeenAt)
+	}
+	if m.TagUpdatedAt == nil || !m.TagUpdatedAt.Equal(now) {
+		t.Fatalf("expected tag_updated_at %v, got %#v", now, m.TagUpdatedAt)
+	}
+}
+
 func TestNullableTextToString(t *testing.T) {
 	if got := nullableTextToString(sql.NullString{String: "abc", Valid: true}); got != "abc" {
 		t.Fatalf("expected value to pass through, got %q", got)
