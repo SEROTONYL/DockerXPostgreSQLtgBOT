@@ -530,6 +530,57 @@ func TestPickerFlow_NoCandidates_RendersPanelEdit_NoSend(t *testing.T) {
 	}
 }
 
+func TestAssignRole_PickerRenders_WhenMemberHasOnlyIDAfterNullNormalization(t *testing.T) {
+	tg := &fakeTG{}
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		without: []*members.Member{{UserID: 1001}},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	ok := h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminAssignRole))
+	if !ok {
+		t.Fatalf("expected callback handled")
+	}
+	if hasCallText(tg.calls, "send", "Ошибка получения списка пользователей") {
+		t.Fatalf("did not expect list error message")
+	}
+
+	e := tg.last("edit")
+	if e == nil || !strings.Contains(e.text, "Выбери участника") {
+		t.Fatalf("expected picker render, got %#v", e)
+	}
+	if b := buttonByText(e.markup, "id:1001"); b == nil {
+		t.Fatalf("expected id fallback button for normalized NULL identity fields")
+	}
+}
+
+func TestAssignRefresh_Success_ReopensPicker_WithNullSafeIdentityFallback(t *testing.T) {
+	tg := &fakeTG{}
+	memberRepo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		without: []*members.Member{{UserID: 1001}},
+	}
+	syncRepo := &fakeMemberSyncRepo{activeIDs: []int64{1001}}
+	h := newAdminHandlerWithRefresh(t, memberRepo, syncRepo, tg)
+
+	ok := h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAssignRefresh))
+	if !ok {
+		t.Fatalf("expected callback handled")
+	}
+	if hasCallText(tg.calls, "send", assignRefreshFailureHint) {
+		t.Fatalf("did not expect refresh failure hint on successful refresh")
+	}
+
+	e := tg.last("edit")
+	if e == nil || !strings.Contains(e.text, "Выбери участника") {
+		t.Fatalf("expected picker rerender after refresh, got %#v", e)
+	}
+	if b := buttonByText(e.markup, "id:1001"); b == nil {
+		t.Fatalf("expected id fallback button after refresh")
+	}
+}
+
 func TestNoCandidates_ReturnButton_GoesBackToPanel(t *testing.T) {
 	tg := &fakeTG{}
 	repo := &fakeMemberRepoHandlers{

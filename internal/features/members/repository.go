@@ -4,6 +4,7 @@ package members
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -11,6 +12,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type memberScanner interface {
+	Scan(dest ...interface{}) error
+}
 
 const (
 	StatusActive = "active"
@@ -236,11 +241,7 @@ func (r *Repository) GetByUserID(ctx context.Context, userID int64) (*Member, er
 		WHERE user_id = $1
 	`
 	var m Member
-	err := r.db.QueryRow(ctx, query, userID).Scan(
-		&m.ID, &m.UserID, &m.Username, &m.FirstName, &m.LastName,
-		&m.Role, &m.IsAdmin, &m.IsBanned,
-		&m.Status, &m.JoinedAt, &m.LeftAt, &m.DeleteAfter, &m.LastSeenAt, &m.LastKnownName, &m.Tag, &m.TagUpdatedAt, &m.CreatedAt, &m.UpdatedAt,
-	)
+	err := scanMember(r.db.QueryRow(ctx, query, userID), &m)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("участник не найден (user_id=%d): %w", userID, err)
@@ -254,11 +255,7 @@ func (r *Repository) GetByUserID(ctx context.Context, userID int64) (*Member, er
 func (r *Repository) GetByUsername(ctx context.Context, username string) (*Member, error) {
 	query := getByUsernameQuery()
 	var m Member
-	err := r.db.QueryRow(ctx, query, username, StatusActive).Scan(
-		&m.ID, &m.UserID, &m.Username, &m.FirstName, &m.LastName,
-		&m.Role, &m.IsAdmin, &m.IsBanned,
-		&m.Status, &m.JoinedAt, &m.LeftAt, &m.DeleteAfter, &m.LastSeenAt, &m.LastKnownName, &m.Tag, &m.TagUpdatedAt, &m.CreatedAt, &m.UpdatedAt,
-	)
+	err := scanMember(r.db.QueryRow(ctx, query, username, StatusActive), &m)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("участник не найден (username=%s): %w", username, err)
@@ -521,11 +518,7 @@ func (r *Repository) queryMembers(ctx context.Context, query string, args ...int
 	var out []*Member
 	for rows.Next() {
 		var m Member
-		if err := rows.Scan(
-			&m.ID, &m.UserID, &m.Username, &m.FirstName, &m.LastName,
-			&m.Role, &m.IsAdmin, &m.IsBanned,
-			&m.Status, &m.JoinedAt, &m.LeftAt, &m.DeleteAfter, &m.LastSeenAt, &m.LastKnownName, &m.Tag, &m.TagUpdatedAt, &m.CreatedAt, &m.UpdatedAt,
-		); err != nil {
+		if err := scanMember(rows, &m); err != nil {
 			return nil, fmt.Errorf("ошибка сканирования строки: %w", err)
 		}
 		out = append(out, &m)
@@ -536,4 +529,32 @@ func (r *Repository) queryMembers(ctx context.Context, query string, args ...int
 	}
 
 	return out, nil
+}
+
+func scanMember(src memberScanner, m *Member) error {
+	var username sql.NullString
+	var firstName sql.NullString
+	var lastName sql.NullString
+
+	err := src.Scan(
+		&m.ID, &m.UserID, &username, &firstName, &lastName,
+		&m.Role, &m.IsAdmin, &m.IsBanned,
+		&m.Status, &m.JoinedAt, &m.LeftAt, &m.DeleteAfter, &m.LastSeenAt, &m.LastKnownName, &m.Tag, &m.TagUpdatedAt, &m.CreatedAt, &m.UpdatedAt,
+	)
+	if err != nil {
+		return err
+	}
+
+	m.Username = nullableTextToString(username)
+	m.FirstName = nullableTextToString(firstName)
+	m.LastName = nullableTextToString(lastName)
+
+	return nil
+}
+
+func nullableTextToString(value sql.NullString) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
 }
