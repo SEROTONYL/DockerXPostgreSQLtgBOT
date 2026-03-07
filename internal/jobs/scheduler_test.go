@@ -47,7 +47,7 @@ func (f *fakeMemberPurger) ListActiveUserIDs(ctx context.Context) ([]int64, erro
 func (f *fakeMemberPurger) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
 	return nil
 }
-func (f *fakeMemberPurger) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, mainGroupID int64, now time.Time) (int, error) {
+func (f *fakeMemberPurger) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, memberSourceChatID int64, now time.Time) (int, error) {
 	return 0, nil
 }
 
@@ -90,7 +90,7 @@ func (f *fakeMemberPurgerErr) ListActiveUserIDs(ctx context.Context) ([]int64, e
 func (f *fakeMemberPurgerErr) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
 	return nil
 }
-func (f *fakeMemberPurgerErr) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, mainGroupID int64, now time.Time) (int, error) {
+func (f *fakeMemberPurgerErr) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, memberSourceChatID int64, now time.Time) (int, error) {
 	return 0, nil
 }
 
