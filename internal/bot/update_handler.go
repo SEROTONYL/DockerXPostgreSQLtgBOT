@@ -11,13 +11,21 @@ import (
 )
 
 func (b *Bot) shouldTouchLastSeen(uc UpdateContext) bool {
+	// MemberSeen в message-handler принадлежит только main-group message/callback потоку.
+	// Для private чатов ownership у filters.ChatFilter (membership verification + ensure).
 	if uc.IsAdminChat || uc.UserID == 0 || uc.ChatMember != nil {
 		return false
 	}
-	if uc.ChatID == b.cfg.MainGroupID && (uc.Message != nil || uc.Callback != nil) {
+	if b.isMessageIngestChat(uc.ChatID) && (uc.Message != nil || uc.Callback != nil) {
 		return true
 	}
 	return false
+}
+
+// isMessageIngestChat определяет единый source chat для message-driven ingestion:
+// из этого чата приходят события для member persistence и text-based streak counting.
+func (b *Bot) isMessageIngestChat(chatID int64) bool {
+	return chatID != 0 && chatID == b.cfg.MemberSourceChatID
 }
 
 // handleUpdate обрабатывает одно обновление от Telegram.
@@ -81,7 +89,7 @@ func (b *Bot) handleCallbackUpdate(ctx context.Context, uc UpdateContext) bool {
 }
 
 func (b *Bot) handleMessageUpdate(ctx context.Context, uc UpdateContext) {
-	if uc.Message == nil || uc.Message.Text == "" {
+	if uc.Message == nil {
 		return
 	}
 
@@ -111,34 +119,40 @@ func (b *Bot) handleMessageUpdate(ctx context.Context, uc UpdateContext) {
 		}
 	}
 
+	if message.Text == "" {
+		return
+	}
+
+	messageText := message.Text
+
 	if uc.IsPrivate {
-		handled := b.adminHandler.HandleAdminMessage(ctx, chatID, userID, message.MessageID, message.Text)
+		handled := b.adminHandler.HandleAdminMessage(ctx, chatID, userID, message.MessageID, messageText)
 		if handled {
 			return
 		}
 	}
 
 	if b.cfg.FeatureKarmaEnabled && message.ReplyToMessage != nil && message.ReplyToMessage.From != nil {
-		if b.thankYou != nil && b.thankYou.IsThankYou(message.Text) {
+		if b.thankYou != nil && b.thankYou.IsThankYou(messageText) {
 			b.karmaHandler.HandleThankYou(ctx, chatID, userID, message.ReplyToMessage.From.ID)
 			return
 		}
 	}
 
-	cmd, args, isCommand := b.parser.ParseCommand(message.Text)
+	cmd, args, isCommand := b.parser.ParseCommand(messageText)
 	log.WithFields(log.Fields{
 		"isCommand": isCommand,
 		"cmd":       cmd,
 		"args":      args,
-		"text":      message.Text,
+		"text":      messageText,
 	}).Debug("parsed command")
 
 	if isCommand {
 		b.routeCommand(ctx, uc, cmd, args)
 		return
-	} else if chatID == b.cfg.FloodChatID {
-		if b.cfg.FeatureStreaksEnabled {
-			b.streakService.CountMessage(ctx, userID, message.Text)
-		}
+	}
+
+	if b.isMessageIngestChat(chatID) && b.cfg.FeatureStreaksEnabled {
+		b.streakService.CountMessage(ctx, userID, messageText)
 	}
 }

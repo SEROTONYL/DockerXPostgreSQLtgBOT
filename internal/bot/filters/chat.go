@@ -13,18 +13,18 @@ import (
 )
 
 type ChatFilter struct {
-	floodChatID   int64
-	adminChatID   int64
-	memberService bot.MemberService
-	tgOps         *telegram.Ops
+	memberSourceChatID int64
+	adminChatID        int64
+	memberService      bot.MemberService
+	tgOps              *telegram.Ops
 }
 
-func NewChatFilter(floodChatID int64, adminChatID int64, memberService bot.MemberService, ops *telegram.Ops) *ChatFilter {
+func NewChatFilter(memberSourceChatID int64, adminChatID int64, memberService bot.MemberService, ops *telegram.Ops) *ChatFilter {
 	return &ChatFilter{
-		floodChatID:   floodChatID,
-		adminChatID:   adminChatID,
-		memberService: memberService,
-		tgOps:         ops,
+		memberSourceChatID: memberSourceChatID,
+		adminChatID:        adminChatID,
+		memberService:      memberService,
+		tgOps:              ops,
 	}
 }
 
@@ -62,31 +62,31 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 		log.WithField("component", "ChatFilter").Error("tgOps is nil")
 		return false
 	}
-	if f.floodChatID == 0 {
-		log.WithField("component", "ChatFilter").Error("floodChatID is 0 (config bug)")
+	if f.memberSourceChatID == 0 {
+		log.WithField("component", "ChatFilter").Error("memberSourceChatID is 0 (config bug)")
 		return false
 	}
 
 	userID := message.From.ID
 
 	logger := log.WithFields(log.Fields{
-		"component":     "ChatFilter",
-		"chat_id":       chatID,
-		"chat_type":     message.Chat.Type,
-		"user_id":       userID,
-		"flood_chat_id": f.floodChatID,
+		"component":             "ChatFilter",
+		"chat_id":               chatID,
+		"chat_type":             message.Chat.Type,
+		"user_id":               userID,
+		"member_source_chat_id": f.memberSourceChatID,
 	})
 
 	// 1) Разрешённые чаты
 
-	if chatID == f.floodChatID {
-		logger.Debug("allow: flood chat")
+	if chatID == f.memberSourceChatID {
+		logger.Debug("allow: member source chat")
 		return true
 	}
 
 	// 2) Личка: проверяем членство через Telegram API
 	if message.Chat.Type == models.ChatTypePrivate {
-		cm, err := f.tgOps.GetChatMember(ctx, f.floodChatID, userID)
+		cm, err := f.tgOps.GetChatMember(ctx, f.memberSourceChatID, userID)
 		if err != nil {
 			logger.WithError(err).Error("member check failed (telegram GetChatMember)")
 			return false
@@ -118,7 +118,7 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 	}
 
 	// 3) Остальные чаты игнорируем
-	logger.Info("deny: not flood chat and not private")
+	logger.Info("deny: not member source chat and not private")
 	return false
 }
 
