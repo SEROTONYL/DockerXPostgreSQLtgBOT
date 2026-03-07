@@ -183,8 +183,11 @@ func (s *Service) SendReminders(ctx context.Context, sendFunc func(userID int64,
 			streak.CurrentStreak, common.PluralizeDays(streak.CurrentStreak))
 		sendFunc(streak.UserID, msg)
 
-		// Помечаем, что напоминание отправлено
-		s.repo.MarkReminderSent(ctx, streak.UserID)
+		// Помечаем, что напоминание отправлено. Это часть идемпотентности напоминаний:
+		// если запись не удалась, возвращаем ошибку, чтобы джоба зафиксировала сбой.
+		if err := s.repo.MarkReminderSent(ctx, streak.UserID); err != nil {
+			return fmt.Errorf("mark reminder sent for user %d: %w", streak.UserID, err)
+		}
 	}
 
 	return nil

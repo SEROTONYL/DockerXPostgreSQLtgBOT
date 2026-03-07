@@ -6,22 +6,21 @@ import (
 	"strings"
 
 	botapi "github.com/mymmrac/telego"
-	models "github.com/mymmrac/telego"
 	"github.com/sirupsen/logrus"
 )
 
 // Client инкапсулирует минимум операций Telegram API, которые используются проектом.
 type Client interface {
-	SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (messageID int, err error)
-	EditMessage(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error
-	EditReplyMarkup(chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error
+	SendMessage(chatID int64, text string, markup *botapi.InlineKeyboardMarkup) (messageID int, err error)
+	EditMessage(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup) error
+	EditReplyMarkup(chatID int64, messageID int, markup *botapi.InlineKeyboardMarkup) error
 	DeleteMessage(chatID int64, messageID int) error
-	GetChatMember(chatID int64, userID int64) (member models.ChatMember, err error)
+	GetChatMember(chatID int64, userID int64) (member botapi.ChatMember, err error)
 }
 
 type updateHandler struct {
-	match   func(*models.Update) bool
-	handler func(context.Context, *models.Update)
+	match   func(*botapi.Update) bool
+	handler func(context.Context, *botapi.Update)
 }
 
 type botClient struct {
@@ -30,9 +29,9 @@ type botClient struct {
 }
 
 type updateRuntime interface {
-	RegisterUpdateHandler(match func(*models.Update) bool, handler func(context.Context, *models.Update))
+	RegisterUpdateHandler(match func(*botapi.Update) bool, handler func(context.Context, *botapi.Update))
 	Start(ctx context.Context)
-	GetMe(ctx context.Context) (*models.User, error)
+	GetMe(ctx context.Context) (*botapi.User, error)
 }
 
 func NewBotClient(bot *botapi.Bot) Client {
@@ -42,7 +41,7 @@ func NewBotClient(bot *botapi.Bot) Client {
 	return &botClient{bot: bot}
 }
 
-func (a *botClient) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
+func (a *botClient) SendMessage(chatID int64, text string, markup *botapi.InlineKeyboardMarkup) (int, error) {
 	msg, err := a.bot.SendMessage(context.Background(), buildSendMessageParams(chatID, text, markup))
 	if err != nil {
 		return 0, err
@@ -53,12 +52,12 @@ func (a *botClient) SendMessage(chatID int64, text string, markup *models.Inline
 	return msg.MessageID, nil
 }
 
-func (a *botClient) EditMessage(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
+func (a *botClient) EditMessage(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup) error {
 	_, err := a.bot.EditMessageText(context.Background(), buildEditMessageTextParams(chatID, messageID, text, markup))
 	return err
 }
 
-func (a *botClient) EditReplyMarkup(chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error {
+func (a *botClient) EditReplyMarkup(chatID int64, messageID int, markup *botapi.InlineKeyboardMarkup) error {
 	_, err := a.bot.EditMessageReplyMarkup(context.Background(), &botapi.EditMessageReplyMarkupParams{
 		ChatID:      botapi.ChatID{ID: chatID},
 		MessageID:   messageID,
@@ -71,7 +70,7 @@ func (a *botClient) DeleteMessage(chatID int64, messageID int) error {
 	return a.bot.DeleteMessage(context.Background(), &botapi.DeleteMessageParams{ChatID: botapi.ChatID{ID: chatID}, MessageID: messageID})
 }
 
-func (a *botClient) GetChatMember(chatID int64, userID int64) (models.ChatMember, error) {
+func (a *botClient) GetChatMember(chatID int64, userID int64) (botapi.ChatMember, error) {
 	cm, err := a.bot.GetChatMember(context.Background(), &botapi.GetChatMemberParams{ChatID: botapi.ChatID{ID: chatID}, UserID: userID})
 	if err != nil {
 		return nil, err
@@ -79,7 +78,7 @@ func (a *botClient) GetChatMember(chatID int64, userID int64) (models.ChatMember
 	return cm, nil
 }
 
-func (a *botClient) RegisterUpdateHandler(match func(*models.Update) bool, handler func(context.Context, *models.Update)) {
+func (a *botClient) RegisterUpdateHandler(match func(*botapi.Update) bool, handler func(context.Context, *botapi.Update)) {
 	a.handlers = append(a.handlers, updateHandler{match: match, handler: handler})
 }
 
@@ -108,7 +107,7 @@ func (a *botClient) Start(ctx context.Context) {
 	}
 }
 
-func (a *botClient) GetMe(ctx context.Context) (*models.User, error) {
+func (a *botClient) GetMe(ctx context.Context) (*botapi.User, error) {
 	return a.bot.GetMe(ctx)
 }
 
@@ -139,7 +138,7 @@ func (a *botClient) AnswerCallbackQueryCtx(ctx context.Context, callbackID strin
 	})
 }
 
-func buildSendMessageParams(chatID int64, text string, markup *models.InlineKeyboardMarkup) *botapi.SendMessageParams {
+func buildSendMessageParams(chatID int64, text string, markup *botapi.InlineKeyboardMarkup) *botapi.SendMessageParams {
 	params := &botapi.SendMessageParams{ChatID: botapi.ChatID{ID: chatID}, Text: text}
 	if markup != nil {
 		params.ReplyMarkup = markup
@@ -147,7 +146,7 @@ func buildSendMessageParams(chatID int64, text string, markup *models.InlineKeyb
 	return params
 }
 
-func buildEditMessageTextParams(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) *botapi.EditMessageTextParams {
+func buildEditMessageTextParams(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup) *botapi.EditMessageTextParams {
 	params := &botapi.EditMessageTextParams{ChatID: botapi.ChatID{ID: chatID}, MessageID: messageID, Text: text}
 	if markup != nil {
 		params.ReplyMarkup = markup
@@ -189,7 +188,7 @@ func NewOpsWithLogger(c Client, l *logrus.Entry) *Ops {
 	return &Ops{c: c, log: l.WithField("component", "telegram.ops")}
 }
 
-func (o *Ops) Send(ctx context.Context, chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
+func (o *Ops) Send(ctx context.Context, chatID int64, text string, markup *botapi.InlineKeyboardMarkup) (int, error) {
 	msgID, err := o.c.SendMessage(chatID, text, markup)
 	if err != nil {
 		o.log.WithContext(ctx).WithError(err).WithField("chat_id", chatID).Warn("telegram send failed")
@@ -197,10 +196,10 @@ func (o *Ops) Send(ctx context.Context, chatID int64, text string, markup *model
 	}
 	return msgID, nil
 }
-func (o *Ops) SendText(ctx context.Context, chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
+func (o *Ops) SendText(ctx context.Context, chatID int64, text string, markup *botapi.InlineKeyboardMarkup) (int, error) {
 	return o.Send(ctx, chatID, text, markup)
 }
-func (o *Ops) Edit(ctx context.Context, chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
+func (o *Ops) Edit(ctx context.Context, chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup) error {
 	err := o.c.EditMessage(chatID, messageID, text, markup)
 	if err == nil {
 		return nil
@@ -217,10 +216,10 @@ func (o *Ops) Edit(ctx context.Context, chatID int64, messageID int, text string
 	}
 	return err
 }
-func (o *Ops) EditText(ctx context.Context, chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
+func (o *Ops) EditText(ctx context.Context, chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup) error {
 	return o.Edit(ctx, chatID, messageID, text, markup)
 }
-func (o *Ops) EditReplyMarkup(ctx context.Context, chatID int64, messageID int, markup *models.InlineKeyboardMarkup) error {
+func (o *Ops) EditReplyMarkup(ctx context.Context, chatID int64, messageID int, markup *botapi.InlineKeyboardMarkup) error {
 	err := o.c.EditReplyMarkup(chatID, messageID, markup)
 	if err != nil {
 		o.log.WithContext(ctx).WithError(err).WithFields(logrus.Fields{"chat_id": chatID, "message_id": messageID}).Warn("telegram edit reply markup failed")
@@ -234,7 +233,7 @@ func (o *Ops) DeleteMessage(ctx context.Context, chatID int64, messageID int) er
 	}
 	return err
 }
-func (o *Ops) GetChatMember(ctx context.Context, chatID int64, userID int64) (models.ChatMember, error) {
+func (o *Ops) GetChatMember(ctx context.Context, chatID int64, userID int64) (botapi.ChatMember, error) {
 	member, err := o.c.GetChatMember(chatID, userID)
 	if err != nil {
 		o.log.WithContext(ctx).WithError(err).WithFields(logrus.Fields{"chat_id": chatID, "user_id": userID}).Warn("telegram get chat member failed")
@@ -243,11 +242,11 @@ func (o *Ops) GetChatMember(ctx context.Context, chatID int64, userID int64) (mo
 	return member, nil
 }
 
-func (o *Ops) ExtractMemberTag(member models.ChatMember) *string {
+func (o *Ops) ExtractMemberTag(member botapi.ChatMember) *string {
 	switch m := member.(type) {
-	case *models.ChatMemberMember:
+	case *botapi.ChatMemberMember:
 		return normalizedTag(m.Tag)
-	case *models.ChatMemberRestricted:
+	case *botapi.ChatMemberRestricted:
 		return normalizedTag(m.Tag)
 	default:
 		return nil
@@ -262,7 +261,7 @@ func normalizedTag(tag string) *string {
 	return &t
 }
 
-func (o *Ops) RegisterUpdateHandler(match func(*models.Update) bool, handler func(context.Context, *models.Update)) error {
+func (o *Ops) RegisterUpdateHandler(match func(*botapi.Update) bool, handler func(context.Context, *botapi.Update)) error {
 	r, ok := any(o.c).(updateRuntime)
 	if !ok {
 		return fmt.Errorf("client does not support update handlers")
@@ -278,7 +277,7 @@ func (o *Ops) Start(ctx context.Context) error {
 	r.Start(ctx)
 	return nil
 }
-func (o *Ops) GetMe(ctx context.Context) (*models.User, error) {
+func (o *Ops) GetMe(ctx context.Context) (*botapi.User, error) {
 	r, ok := any(o.c).(updateRuntime)
 	if !ok {
 		return nil, fmt.Errorf("client does not support getMe")
@@ -344,6 +343,6 @@ func (o *Ops) answerCallbackAck(ctx context.Context, callbackID string) error {
 	}
 }
 
-func (o *Ops) EditOrSend(ctx context.Context, chatID int64, messageID int, text string, keyboard models.InlineKeyboardMarkup) (int, bool, error) {
+func (o *Ops) EditOrSend(ctx context.Context, chatID int64, messageID int, text string, keyboard botapi.InlineKeyboardMarkup) (int, bool, error) {
 	return RenderScreen(ctx, o, Screen{ChatID: chatID, MessageID: messageID, Text: text, ReplyMarkup: keyboard})
 }

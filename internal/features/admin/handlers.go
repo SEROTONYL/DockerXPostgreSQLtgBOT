@@ -570,10 +570,12 @@ func (h *Handler) renderUserPickerPage(ctx context.Context, chatID, userID int64
 	keyboard := newInlineKeyboardMarkup(rows...)
 
 	caption := "Выбери участника:"
-	if data.Mode == UserPickerAssignWithoutRole {
+	switch data.Mode {
+	case UserPickerAssignWithoutRole:
 		caption = "Выбери участника:\nФормат: @username • id, иначе Имя • id."
-	} else if data.Mode == UserPickerChangeWithRole {
+	case UserPickerChangeWithRole:
 		caption = "Выбери участника:\nФормат: роль • тег • @username, иначе роль • тег • ник • id."
+	default:
 	}
 
 	if panelMsgID <= 0 {

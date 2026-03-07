@@ -80,22 +80,6 @@ func BuildUpdateContext(update models.Update, now time.Time, cfg *config.Config)
 	return uc
 }
 
-func hasUserActivity(uc UpdateContext) bool {
-	if uc.UserID == 0 {
-		return false
-	}
-	if uc.Message != nil {
-		return true
-	}
-	if uc.Callback != nil {
-		return true
-	}
-	if uc.ChatMember != nil {
-		return true
-	}
-	return false
-}
-
 func callbackQueryChat(q *models.CallbackQuery) (models.Chat, bool) {
 	if q == nil || q.Message == nil {
 		return models.Chat{}, false
