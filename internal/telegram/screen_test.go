@@ -50,6 +50,22 @@ func TestRenderScreen_EditNotModified(t *testing.T) {
 	}
 }
 
+func TestRenderScreen_EditNotModified_WithTelegramPrefix(t *testing.T) {
+	client := &fakeClient{editErr: errors.New("editMessageText: api: 400 Bad Request: message is not modified")}
+	ops := NewOps(client)
+
+	msgID, usedEdit, err := RenderScreen(context.Background(), ops, Screen{ChatID: 1, MessageID: 10, Text: "ok"})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if msgID != 10 || !usedEdit {
+		t.Fatalf("unexpected result: msgID=%d usedEdit=%v", msgID, usedEdit)
+	}
+	if client.sendCalls != 0 {
+		t.Fatalf("sendCalls = %d, want 0", client.sendCalls)
+	}
+}
+
 func TestRenderScreen_EditNotFoundFallbackSend(t *testing.T) {
 	client := &fakeClient{editErr: errors.New("Bad Request: message to edit not found")}
 	ops := NewOps(client)

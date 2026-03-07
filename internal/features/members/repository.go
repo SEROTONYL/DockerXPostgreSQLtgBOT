@@ -34,13 +34,13 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 // На конфликте по user_id обновляет имя/username и активирует участника.
 func (r *Repository) Create(ctx context.Context, m *Member) error {
 	joinedAt := time.Now().UTC()
-	return r.UpsertActiveMember(ctx, m.UserID, m.Username, m.DisplayName(), joinedAt)
+	return r.UpsertActiveMember(ctx, m.UserID, m.Username, m.DisplayName(), m.IsBot, joinedAt)
 }
 
 // UpsertActiveMember вставляет/обновляет участника и помечает его как active.
-func (r *Repository) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
+func (r *Repository) UpsertActiveMember(ctx context.Context, userID int64, username, name string, isBot bool, joinedAt time.Time) error {
 	query := upsertActiveMemberQuery()
-	if _, err := r.db.Exec(ctx, query, userID, username, name, StatusActive, joinedAt.UTC(), name); err != nil {
+	if _, err := r.db.Exec(ctx, query, userID, username, name, StatusActive, joinedAt.UTC(), name, isBot); err != nil {
 		return fmt.Errorf("ошибка upsert активного участника: %w", err)
 	}
 	return nil
@@ -159,15 +159,7 @@ func (r *Repository) ListRefreshCandidateUserIDs(ctx context.Context) ([]int64, 
 
 // UpdateMemberTag обновляет tag и tag_updated_at только если tag изменился.
 func (r *Repository) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
-	query := `
-		UPDATE members
-		SET tag = $2,
-		    tag_updated_at = $3,
-		    updated_at = NOW()
-		WHERE user_id = $1
-		  AND status = $4
-		  AND tag IS DISTINCT FROM $2
-	`
+	query := updateMemberTagQuery()
 	if _, err := r.db.Exec(ctx, query, userID, tag, updatedAt.UTC(), StatusActive); err != nil {
 		return fmt.Errorf("ошибка обновления tag участника: %w", err)
 	}
@@ -235,7 +227,7 @@ func (r *Repository) PurgeExpiredLeftMembers(ctx context.Context, now time.Time,
 // с обычными пользовательскими сценариями.
 func (r *Repository) GetByUserID(ctx context.Context, userID int64) (*Member, error) {
 	query := `
-		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
+		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_bot, is_banned,
 		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, tag, tag_updated_at, created_at, updated_at
 		FROM members
 		WHERE user_id = $1
@@ -300,17 +292,17 @@ func (r *Repository) TouchLastSeen(ctx context.Context, userID int64, seenAt tim
 	return nil
 }
 
-func (r *Repository) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+func (r *Repository) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	query := ensureMemberSeenQuery()
-	if _, err := r.db.Exec(ctx, query, userID, username, name, name, seenAt.UTC()); err != nil {
+	if _, err := r.db.Exec(ctx, query, userID, username, name, name, seenAt.UTC(), isBot); err != nil {
 		return fmt.Errorf("ошибка ensure member seen: %w", err)
 	}
 	return nil
 }
 
-func (r *Repository) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+func (r *Repository) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	query := ensureActiveMemberSeenQuery()
-	if _, err := r.db.Exec(ctx, query, userID, username, name, StatusActive, seenAt.UTC(), name); err != nil {
+	if _, err := r.db.Exec(ctx, query, userID, username, name, StatusActive, seenAt.UTC(), name, isBot); err != nil {
 		return fmt.Errorf("ошибка ensure active member seen: %w", err)
 	}
 	return nil
@@ -356,8 +348,8 @@ func (r *Repository) GetUsersWithRole(ctx context.Context) ([]*Member, error) {
 
 func upsertActiveMemberQuery() string {
 	return `
-		INSERT INTO members (user_id, username, first_name, status, joined_at, left_at, delete_after, last_seen_at, last_known_name)
-		VALUES ($1, $2, $3, $4, $5, NULL, NULL, NOW(), $6)
+		INSERT INTO members (user_id, username, first_name, status, joined_at, left_at, delete_after, last_seen_at, last_known_name, is_bot)
+		VALUES ($1, $2, $3, $4, $5, NULL, NULL, NOW(), $6, $7)
 		ON CONFLICT (user_id) DO UPDATE
 		SET username = EXCLUDED.username,
 		    first_name = EXCLUDED.first_name,
@@ -367,13 +359,14 @@ func upsertActiveMemberQuery() string {
 		    delete_after = NULL,
 		    last_seen_at = NOW(),
 		    last_known_name = EXCLUDED.last_known_name,
+		    is_bot = EXCLUDED.is_bot,
 		    updated_at = NOW()
 	`
 }
 
 func listActiveMembersQuery() string {
 	return `
-		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
+		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_bot, is_banned,
 		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, tag, tag_updated_at, created_at, updated_at
 		FROM members
 		WHERE status = $1
@@ -383,7 +376,7 @@ func listActiveMembersQuery() string {
 
 func getByUsernameQuery() string {
 	return `
-		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
+		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_bot, is_banned,
 		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, tag, tag_updated_at, created_at, updated_at
 		FROM members
 		WHERE LOWER(username) = LOWER($1) AND status = $2
@@ -392,21 +385,33 @@ func getByUsernameQuery() string {
 
 func usersWithoutRoleQuery() string {
 	return `
-		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
+		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_bot, is_banned,
 		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, tag, tag_updated_at, created_at, updated_at
 		FROM members
-		WHERE role IS NULL AND is_banned = FALSE AND status = $1
+		WHERE role IS NULL AND is_banned = FALSE AND is_bot = FALSE AND status = $1
 		ORDER BY first_name
 	`
 }
 
 func usersWithRoleQuery() string {
 	return `
-		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_banned,
+		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_bot, is_banned,
 		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, tag, tag_updated_at, created_at, updated_at
 		FROM members
-		WHERE role IS NOT NULL AND is_banned = FALSE AND status = $1
+		WHERE role IS NOT NULL AND is_banned = FALSE AND is_bot = FALSE AND status = $1
 		ORDER BY first_name
+	`
+}
+
+func updateMemberTagQuery() string {
+	return `
+		UPDATE members
+		SET tag = $2,
+		    tag_updated_at = $3,
+		    updated_at = NOW()
+		WHERE user_id = $1
+		  AND status = $4
+		  AND tag IS DISTINCT FROM $2
 	`
 }
 
@@ -424,8 +429,9 @@ func listRefreshCandidateUserIDsQuery() string {
 	return `
 		SELECT user_id
 		FROM members
-		WHERE status = $1
-		   OR (status <> $2 AND last_seen_at IS NOT NULL AND last_seen_at > $3)
+		WHERE is_bot = FALSE
+		  AND (status = $1
+		   OR (status <> $2 AND last_seen_at IS NOT NULL AND last_seen_at > $3))
 		ORDER BY user_id
 	`
 }
@@ -440,6 +446,7 @@ func ensureMemberSeenQuery() string {
 		        WHEN last_seen_at IS NULL OR last_seen_at < $5 - INTERVAL '5 minutes' THEN $5
 		        ELSE last_seen_at
 		    END,
+		    is_bot = $6,
 		    updated_at = NOW()
 		WHERE user_id = $1
 	`
@@ -447,8 +454,8 @@ func ensureMemberSeenQuery() string {
 
 func ensureActiveMemberSeenQuery() string {
 	return `
-		INSERT INTO members (user_id, username, first_name, status, joined_at, left_at, delete_after, last_seen_at, last_known_name)
-		VALUES ($1, $2, $3, $4, $5, NULL, NULL, $5, $6)
+		INSERT INTO members (user_id, username, first_name, status, joined_at, left_at, delete_after, last_seen_at, last_known_name, is_bot)
+		VALUES ($1, $2, $3, $4, $5, NULL, NULL, $5, $6, $7)
 		ON CONFLICT (user_id) DO UPDATE
 		SET username = EXCLUDED.username,
 		    first_name = EXCLUDED.first_name,
@@ -461,6 +468,7 @@ func ensureActiveMemberSeenQuery() string {
 		        ELSE members.last_seen_at
 		    END,
 		    last_known_name = EXCLUDED.last_known_name,
+		    is_bot = EXCLUDED.is_bot,
 		    updated_at = NOW()
 	`
 }
@@ -538,7 +546,7 @@ func scanMember(src memberScanner, m *Member) error {
 
 	err := src.Scan(
 		&m.ID, &m.UserID, &username, &firstName, &lastName,
-		&m.Role, &m.IsAdmin, &m.IsBanned,
+		&m.Role, &m.IsAdmin, &m.IsBot, &m.IsBanned,
 		&m.Status, &m.JoinedAt, &m.LeftAt, &m.DeleteAfter, &m.LastSeenAt, &m.LastKnownName, &m.Tag, &m.TagUpdatedAt, &m.CreatedAt, &m.UpdatedAt,
 	)
 	if err != nil {

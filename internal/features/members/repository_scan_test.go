@@ -64,7 +64,7 @@ func TestScanMember_NormalizesNullableTextFieldsToEmptyStrings(t *testing.T) {
 	now := time.Now().UTC()
 	scanner := fakeMemberScanner{values: []interface{}{
 		int64(1), int64(1001), nil, "Ivan", nil,
-		nil, false, false,
+		nil, false, false, false,
 		StatusActive, &now, nil, nil, nil, nil, nil, nil, now, now,
 	}}
 
@@ -82,6 +82,9 @@ func TestScanMember_NormalizesNullableTextFieldsToEmptyStrings(t *testing.T) {
 	if m.FirstName != "Ivan" {
 		t.Fatalf("expected first name preserved, got %q", m.FirstName)
 	}
+	if m.IsBot {
+		t.Fatalf("expected is_bot false, got true")
+	}
 }
 
 func TestScanMember_HandlesNullableFieldsUsedByUsersWithoutRoleAndUsersWithRole(t *testing.T) {
@@ -90,7 +93,7 @@ func TestScanMember_HandlesNullableFieldsUsedByUsersWithoutRoleAndUsersWithRole(
 	tag := "TEAM-A"
 	scanner := fakeMemberScanner{values: []interface{}{
 		int64(2), int64(2002), nil, nil, nil,
-		role, true, false,
+		role, true, false, false,
 		StatusActive, nil, nil, nil, &now, nil, tag, &now, now, now,
 	}}
 
@@ -126,7 +129,7 @@ func TestScanMember_UsersWithRolePath_PreservesRoleAndNullableMetadata(t *testin
 	lastKnownName := "Fallback Name"
 	scanner := fakeMemberScanner{values: []interface{}{
 		int64(3), int64(3003), nil, nil, nil,
-		role, true, false,
+		role, true, true, false,
 		StatusActive, nil, nil, nil, &now, lastKnownName, tag, &now, now, now,
 	}}
 
@@ -152,6 +155,9 @@ func TestScanMember_UsersWithRolePath_PreservesRoleAndNullableMetadata(t *testin
 	}
 	if m.TagUpdatedAt == nil || !m.TagUpdatedAt.Equal(now) {
 		t.Fatalf("expected tag_updated_at %v, got %#v", now, m.TagUpdatedAt)
+	}
+	if !m.IsBot {
+		t.Fatalf("expected is_bot true, got false")
 	}
 }
 

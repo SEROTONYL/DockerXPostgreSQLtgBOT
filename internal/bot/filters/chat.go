@@ -100,6 +100,7 @@ func (f *ChatFilter) CheckAccess(ctx context.Context, message *models.Message) b
 				ctx, userID,
 				message.From.Username,
 				buildDisplayName(message.From.FirstName, message.From.LastName),
+				message.From.IsBot,
 				time.Now().UTC(),
 			); err != nil {
 				logger.WithError(err).Warn("failed to upsert active member in DB (access allowed despite failure)")

@@ -15,6 +15,7 @@ type Member struct {
 	LastName      string     `db:"last_name"`       // Фамилия (может быть пустой)
 	Role          *string    `db:"role"`            // Роль, назначенная админом (до 64 символов, может быть nil)
 	IsAdmin       bool       `db:"is_admin"`        // Флаг администратора
+	IsBot         bool       `db:"is_bot"`          // Флаг бот-аккаунта Telegram
 	IsBanned      bool       `db:"is_banned"`       // Флаг бана
 	Status        string     `db:"status"`          // Статус участника: active/left
 	JoinedAt      *time.Time `db:"joined_at"`       // Когда вступил в чат

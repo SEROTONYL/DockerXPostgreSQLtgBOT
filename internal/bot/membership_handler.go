@@ -31,7 +31,7 @@ func (b *Bot) handleMembershipUpdate(ctx context.Context, uc UpdateContext) bool
 
 	switch classifyMemberStatus(newStatus) {
 	case membershipActionActive:
-		if err := b.memberService.UpsertActiveMember(ctx, user.ID, user.Username, name, now); err != nil {
+		if err := b.memberService.UpsertActiveMember(ctx, user.ID, user.Username, name, user.IsBot, now); err != nil {
 			log.WithError(err).WithField("user_id", user.ID).Warn("UpsertActiveMember failed")
 			return true
 		}
@@ -55,7 +55,7 @@ func (b *Bot) handleMembershipUpdate(ctx context.Context, uc UpdateContext) bool
 // handleNewMembers обрабатывает вступление новых участников.
 func (b *Bot) handleNewMembers(ctx context.Context, newMembers []models.User) {
 	for _, user := range newMembers {
-		if err := b.memberService.HandleNewMember(ctx, user.ID, user.Username, user.FirstName, user.LastName); err != nil {
+		if err := b.memberService.HandleNewMember(ctx, user.ID, user.Username, user.FirstName, user.LastName, user.IsBot); err != nil {
 			log.WithError(err).WithField("user_id", user.ID).Warn("HandleNewMember failed")
 		}
 		if err := b.economyService.CreateBalance(ctx, user.ID); err != nil {

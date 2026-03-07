@@ -69,7 +69,7 @@ func (b *Bot) handleCallbackUpdate(ctx context.Context, uc UpdateContext) bool {
 		return true
 	}
 	if b.shouldTouchLastSeen(uc) {
-		if err := b.memberService.EnsureActiveMemberSeen(ctx, uc.UserID, uc.Username, uc.FullName, uc.Now); err != nil {
+		if err := b.memberService.EnsureActiveMemberSeen(ctx, uc.UserID, uc.Username, uc.FullName, uc.Callback.From.IsBot, uc.Now); err != nil {
 			log.WithError(err).WithField("user_id", uc.UserID).Debug("EnsureActiveMemberSeen failed")
 		}
 	}
@@ -106,7 +106,7 @@ func (b *Bot) handleMessageUpdate(ctx context.Context, uc UpdateContext) {
 	userID := message.From.ID
 
 	if b.shouldTouchLastSeen(uc) {
-		if err := b.memberService.EnsureActiveMemberSeen(ctx, userID, message.From.Username, buildDisplayName(message.From.FirstName, message.From.LastName), uc.Now); err != nil {
+		if err := b.memberService.EnsureActiveMemberSeen(ctx, userID, message.From.Username, buildDisplayName(message.From.FirstName, message.From.LastName), message.From.IsBot, uc.Now); err != nil {
 			log.WithError(err).WithField("user_id", userID).Debug("EnsureActiveMemberSeen failed")
 		}
 	}

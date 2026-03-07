@@ -20,10 +20,10 @@ type ChatAccessFilter interface {
 
 // MemberService описывает операции с участниками чата, которые нужны боту.
 type MemberService interface {
-	EnsureActiveMemberSeen(ctx context.Context, userID int64, username, fullName string, now time.Time) error
-	UpsertActiveMember(ctx context.Context, userID int64, username, fullName string, now time.Time) error
+	EnsureActiveMemberSeen(ctx context.Context, userID int64, username, fullName string, isBot bool, now time.Time) error
+	UpsertActiveMember(ctx context.Context, userID int64, username, fullName string, isBot bool, now time.Time) error
 	MarkMemberLeft(ctx context.Context, userID int64, leftAt, purgeAt time.Time) error
-	HandleNewMember(ctx context.Context, userID int64, username, firstName, lastName string) error
+	HandleNewMember(ctx context.Context, userID int64, username, firstName, lastName string, isBot bool) error
 	CountMembersByStatus(ctx context.Context) (active int, left int, err error)
 	CountPendingPurge(ctx context.Context, now time.Time) (pending int, err error)
 }

@@ -26,6 +26,41 @@ func TestMemberQueries_UseActiveStatusFilter(t *testing.T) {
 	}
 }
 
+func TestUpdateMemberTagQuery_DoesNotTouchBotIdentity(t *testing.T) {
+	q := updateMemberTagQuery()
+	checks := []string{
+		"SET tag = $2",
+		"tag_updated_at = $3",
+		"status = $4",
+	}
+	for _, c := range checks {
+		if !strings.Contains(q, c) {
+			t.Fatalf("update member tag query missing %q: %s", c, q)
+		}
+	}
+	if strings.Contains(strings.ToLower(q), "is_bot") {
+		t.Fatalf("update member tag query must not update is_bot: %s", q)
+	}
+}
+
+func TestRolePickerQueries_ExcludeBots(t *testing.T) {
+	checks := []struct {
+		name  string
+		query string
+	}{
+		{name: "without role", query: usersWithoutRoleQuery()},
+		{name: "with role", query: usersWithRoleQuery()},
+		{name: "refresh candidates", query: listRefreshCandidateUserIDsQuery()},
+	}
+	for _, tc := range checks {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(tc.query, "is_bot = FALSE") {
+				t.Fatalf("query must exclude bots: %s", tc.query)
+			}
+		})
+	}
+}
+
 func TestUpsertActiveMemberQuery_ClearsLeftLifecycleFields(t *testing.T) {
 	q := upsertActiveMemberQuery()
 	checks := []string{
@@ -144,7 +179,7 @@ func TestTouchLastSeenQuery_UsesThrottleCondition(t *testing.T) {
 func TestListRefreshCandidateUserIDsQuery_IsBoundedAndExcludesLeftByDefault(t *testing.T) {
 	q := listRefreshCandidateUserIDsQuery()
 	checks := []string{
-		"WHERE status = $1",
+		"status = $1",
 		"status <> $2",
 		"last_seen_at IS NOT NULL",
 		"last_seen_at > $3",
