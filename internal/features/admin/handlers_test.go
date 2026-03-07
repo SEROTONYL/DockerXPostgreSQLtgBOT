@@ -728,6 +728,34 @@ func TestChangeRole_PickerRenders_WithIDFallback_WhenIdentityFieldsEmpty(t *test
 	}
 }
 
+func TestChangeRole_PickerRenders_WithLastKnownNameFallback_WhenIdentityFieldsEmpty(t *testing.T) {
+	tg := &fakeTG{}
+	role := "operator"
+	lastKnownName := "Ghost User"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with: []*members.Member{{
+			UserID:        1002,
+			Role:          &role,
+			LastKnownName: &lastKnownName,
+		}},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	ok := h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminChangeRole))
+	if !ok {
+		t.Fatalf("expected callback handled")
+	}
+
+	e := tg.last("edit")
+	if e == nil || !strings.Contains(e.text, "Выбери участника") {
+		t.Fatalf("expected picker render, got %#v", e)
+	}
+	if b := buttonByText(e.markup, "operator • Ghost User • id:1002"); b == nil {
+		t.Fatalf("expected change-role picker button with last_known_name fallback")
+	}
+}
+
 func TestPickerFlow_SelectUser_ShowsRolePrompt(t *testing.T) {
 	tg := &fakeTG{}
 	role := "old_role"
