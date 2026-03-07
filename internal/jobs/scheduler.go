@@ -118,22 +118,27 @@ func NewScheduler(cfg *config.Config, streakService *streak.Service, memberServi
 
 // Start launches background tasks.
 func (s *Scheduler) Start(ctx context.Context) {
-	if _, err := s.cron.AddFunc("0 0 * * *", func() {
+	const (
+		dailyResetSpec = "0 0 * * *"
+		remindersSpec  = "0 * * * *"
+	)
+
+	if _, err := s.cron.AddFunc(dailyResetSpec, func() {
 		log.Info(cronInfoDailyReset)
 		if err := s.streakService.DailyReset(ctx); err != nil {
 			log.WithError(err).Error(cronErrorDailyReset)
 		}
 	}); err != nil {
-		log.WithError(err).Error("[CRON] failed to register daily reset job")
+		log.WithError(err).WithFields(log.Fields{"spec": dailyResetSpec, "job": "daily_reset"}).Error("[CRON] failed to register job")
 	}
 
-	if _, err := s.cron.AddFunc("0 * * * *", func() {
+	if _, err := s.cron.AddFunc(remindersSpec, func() {
 		log.Debug(cronDebugReminders)
 		if err := s.streakService.SendReminders(ctx, s.sendFunc); err != nil {
 			log.WithError(err).Error(cronErrorReminders)
 		}
 	}); err != nil {
-		log.WithError(err).Error("[CRON] failed to register reminders job")
+		log.WithError(err).WithFields(log.Fields{"spec": remindersSpec, "job": "reminders"}).Error("[CRON] failed to register job")
 	}
 
 	s.cron.Start()

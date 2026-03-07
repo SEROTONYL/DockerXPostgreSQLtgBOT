@@ -68,11 +68,7 @@ func (r *Repository) AddBalance(ctx context.Context, userID int64, amount int64,
 	if err != nil {
 		return fmt.Errorf("ошибка начала транзакции: %w", err)
 	}
-	defer func() {
-		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
-			err = errors.Join(err, fmt.Errorf("ошибка отката транзакции: %w", rollbackErr))
-		}
-	}()
+	defer rollbackOnFailure(ctx, tx, &err)
 
 	if err = r.ensureBalanceRowTx(ctx, tx, userID); err != nil {
 		return err
@@ -100,6 +96,7 @@ func (r *Repository) AddBalance(ctx context.Context, userID int64, amount int64,
 	if err = tx.Commit(ctx); err != nil {
 		return fmt.Errorf("ошибка коммита транзакции: %w", err)
 	}
+	err = nil
 	return nil
 }
 
@@ -110,11 +107,7 @@ func (r *Repository) DeductBalance(ctx context.Context, userID int64, amount int
 	if err != nil {
 		return fmt.Errorf("ошибка начала транзакции: %w", err)
 	}
-	defer func() {
-		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
-			err = errors.Join(err, fmt.Errorf("ошибка отката транзакции: %w", rollbackErr))
-		}
-	}()
+	defer rollbackOnFailure(ctx, tx, &err)
 
 	if err = r.ensureBalanceRowTx(ctx, tx, userID); err != nil {
 		return err
@@ -155,6 +148,7 @@ func (r *Repository) DeductBalance(ctx context.Context, userID int64, amount int
 	if err = tx.Commit(ctx); err != nil {
 		return fmt.Errorf("ошибка коммита транзакции: %w", err)
 	}
+	err = nil
 	return nil
 }
 
@@ -165,11 +159,7 @@ func (r *Repository) Transfer(ctx context.Context, fromUserID, toUserID, amount 
 	if err != nil {
 		return fmt.Errorf("ошибка начала транзакции: %w", err)
 	}
-	defer func() {
-		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
-			err = errors.Join(err, fmt.Errorf("ошибка отката транзакции: %w", rollbackErr))
-		}
-	}()
+	defer rollbackOnFailure(ctx, tx, &err)
 
 	if err = r.ensureBalanceRowTx(ctx, tx, fromUserID); err != nil {
 		return err
@@ -223,7 +213,18 @@ func (r *Repository) Transfer(ctx context.Context, fromUserID, toUserID, amount 
 	if err = tx.Commit(ctx); err != nil {
 		return fmt.Errorf("ошибка коммита транзакции: %w", err)
 	}
+	err = nil
 	return nil
+}
+
+func rollbackOnFailure(ctx context.Context, tx pgx.Tx, errp *error) {
+	if errp == nil || *errp == nil {
+		return
+	}
+
+	if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
+		*errp = errors.Join(*errp, fmt.Errorf("ошибка отката транзакции: %w", rollbackErr))
+	}
 }
 
 func (r *Repository) ensureBalanceRowTx(ctx context.Context, tx pgx.Tx, userID int64) error {
