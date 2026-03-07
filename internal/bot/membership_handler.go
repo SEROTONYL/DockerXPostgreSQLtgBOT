@@ -14,7 +14,7 @@ func (b *Bot) handleMembershipUpdate(ctx context.Context, uc UpdateContext) bool
 	if cmu == nil {
 		return false
 	}
-	if cmu.Chat.ID != b.cfg.MainGroupID {
+	if cmu.Chat.ID != b.cfg.MemberSourceChatID {
 		return true
 	}
 

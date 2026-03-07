@@ -30,7 +30,7 @@ func NewService(repo *Repository, economyService *economy.Service, cfg *config.C
 }
 
 // CountMessage обрабатывает входящее сообщение для подсчёта стрика.
-// Вызывается для КАЖДОГО сообщения в FLOOD_CHAT_ID.
+// Вызывается для КАЖДОГО текстового non-command сообщения в member source chat.
 //
 // Алгоритм:
 //  1. Проверяем, содержит ли сообщение 3+ слов

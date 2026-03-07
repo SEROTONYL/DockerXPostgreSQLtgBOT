@@ -32,7 +32,7 @@ const (
 
 type memberPurger interface {
 	PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error)
-	ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, mainGroupID int64, now time.Time) (int, error)
+	ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, memberSourceChatID int64, now time.Time) (int, error)
 }
 
 type PurgeMetrics struct {
@@ -79,12 +79,12 @@ func (s *purgeMetricsStore) markError(err error) {
 
 // Scheduler manages background tasks.
 type Scheduler struct {
-	cron          *cron.Cron
-	streakService *streak.Service
-	memberService memberPurger
-	sendFunc      func(userID int64, text string)
-	tgOps         *telegram.Ops
-	mainGroupID   int64
+	cron               *cron.Cron
+	streakService      *streak.Service
+	memberService      memberPurger
+	sendFunc           func(userID int64, text string)
+	tgOps              *telegram.Ops
+	memberSourceChatID int64
 
 	purgeCancel context.CancelFunc
 	purgeWG     sync.WaitGroup
@@ -101,18 +101,18 @@ func NewScheduler(cfg *config.Config, streakService *streak.Service, memberServi
 
 	c := cron.New(cron.WithLocation(loc))
 
-	var mainGroupID int64
+	var memberSourceChatID int64
 	if cfg != nil {
-		mainGroupID = cfg.MainGroupID
+		memberSourceChatID = cfg.MemberSourceChatID
 	}
 
 	return &Scheduler{
-		cron:          c,
-		streakService: streakService,
-		memberService: memberService,
-		sendFunc:      sendFunc,
-		tgOps:         tgOps,
-		mainGroupID:   mainGroupID,
+		cron:               c,
+		streakService:      streakService,
+		memberService:      memberService,
+		sendFunc:           sendFunc,
+		tgOps:              tgOps,
+		memberSourceChatID: memberSourceChatID,
 	}
 }
 
@@ -213,12 +213,12 @@ func (s *Scheduler) runMemberTagScanWorker(ctx context.Context) {
 }
 
 func (s *Scheduler) scanMemberTags(ctx context.Context) {
-	if s.tgOps == nil || s.mainGroupID == 0 {
+	if s.tgOps == nil || s.memberSourceChatID == 0 {
 		return
 	}
 
 	log.Debug("[CRON] ScanMemberTags started")
-	updated, err := s.memberService.ScanAndUpdateMemberTags(ctx, s.tgOps, s.mainGroupID, time.Now().UTC())
+	updated, err := s.memberService.ScanAndUpdateMemberTags(ctx, s.tgOps, s.memberSourceChatID, time.Now().UTC())
 	if err != nil {
 		log.WithError(err).Warn("[CRON] ScanMemberTags failed")
 		return

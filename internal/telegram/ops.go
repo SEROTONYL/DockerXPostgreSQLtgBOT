@@ -83,7 +83,7 @@ func (a *botClient) RegisterUpdateHandler(match func(*botapi.Update) bool, handl
 }
 
 func (a *botClient) Start(ctx context.Context) {
-	updates, err := a.bot.UpdatesViaLongPolling(ctx, &botapi.GetUpdatesParams{Timeout: 30})
+	updates, err := a.bot.UpdatesViaLongPolling(ctx, longPollingUpdatesParams())
 	if err != nil {
 		logrus.WithError(err).Error("failed to start telegram long polling")
 		return
@@ -104,6 +104,16 @@ func (a *botClient) Start(ctx context.Context) {
 				}
 			}
 		}
+	}
+}
+
+func longPollingUpdatesParams() *botapi.GetUpdatesParams {
+	return &botapi.GetUpdatesParams{
+		Timeout: 30,
+		// Явно подписываемся на типы обновлений, которые реально используем:
+		// - message/callback_query для основного message-driven потока;
+		// - chat_member/my_chat_member для lifecycle-событий (требуют allowed_updates и прав администратора для чужих участников).
+		AllowedUpdates: []string{"message", "callback_query", "chat_member", "my_chat_member"},
 	}
 }
 

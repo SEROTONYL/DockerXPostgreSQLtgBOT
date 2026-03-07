@@ -26,11 +26,27 @@ type policyChatFilterStatus struct {
 	adminChatID int64
 }
 
+type allowMainAndFloodFilterStatus struct {
+	mainGroupID int64
+	floodChatID int64
+	adminChatID int64
+}
+
 func (f policyChatFilterStatus) CheckAccess(ctx context.Context, message *models.Message) bool {
 	if message == nil || message.From == nil {
 		return false
 	}
 	if message.Chat.ID == f.adminChatID || message.Chat.ID == f.floodChatID {
+		return true
+	}
+	return message.Chat.Type == models.ChatTypePrivate
+}
+
+func (f allowMainAndFloodFilterStatus) CheckAccess(ctx context.Context, message *models.Message) bool {
+	if message == nil || message.From == nil {
+		return false
+	}
+	if message.Chat.ID == f.adminChatID || message.Chat.ID == f.floodChatID || message.Chat.ID == f.mainGroupID {
 		return true
 	}
 	return message.Chat.Type == models.ChatTypePrivate
@@ -66,6 +82,7 @@ type fakeMembersRepoStatus struct {
 	ensureActiveCalls int
 	upsertCalls       int
 	markLeftCalls     int
+	callOrder         []string
 }
 
 func (f *fakeMembersRepoStatus) UpsertActiveMember(ctx context.Context, userID int64, username, name string, isBot bool, joinedAt time.Time) error {
@@ -94,6 +111,7 @@ func (f *fakeMembersRepoStatus) EnsureMemberSeen(ctx context.Context, userID int
 }
 func (f *fakeMembersRepoStatus) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	f.ensureActiveCalls++
+	f.callOrder = append(f.callOrder, "ensure_active")
 	return nil
 }
 func (f *fakeMembersRepoStatus) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
@@ -123,6 +141,20 @@ type fakePurgeMetricsProvider struct {
 }
 
 func (f fakePurgeMetricsProvider) GetPurgeMetrics() jobs.PurgeMetrics { return f.m }
+
+type fakeStreakServiceStatus struct {
+	calls     int
+	callOrder *[]string
+}
+
+func (s *fakeStreakServiceStatus) CountMessage(ctx context.Context, userID int64, text string) {
+	s.calls++
+	if s.callOrder != nil {
+		*s.callOrder = append(*s.callOrder, "count_message")
+	}
+}
+
+func (s *fakeStreakServiceStatus) CreateStreak(ctx context.Context, userID int64) error { return nil }
 
 func registerTestCommands(b *Bot) {
 	admin.NewFeature(&config.Config{}, b.ops, b.adminHandler, b.memberService, func() jobs.PurgeMetrics {
@@ -181,7 +213,7 @@ func TestHandleUpdate_AdminChatIgnoresNonAdminCommands(t *testing.T) {
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
 	b := &Bot{
-		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
 		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
@@ -207,7 +239,7 @@ func TestHandleUpdate_AdminChatIgnoresPlainMessages(t *testing.T) {
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
 	b := &Bot{
-		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
 		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
@@ -229,7 +261,7 @@ func TestHandleUpdate_AdminChatIgnoresPlainMessages(t *testing.T) {
 }
 
 func TestShouldTouchLastSeen_UsesUpdateTypeAndChatOnly(t *testing.T) {
-	b := &Bot{cfg: &config.Config{MainGroupID: -1001, AdminChatID: -2002}}
+	b := &Bot{cfg: &config.Config{MemberSourceChatID: -1001, AdminChatID: -2002}}
 
 	if !b.shouldTouchLastSeen(UpdateContext{ChatID: -1001, UserID: 10, Message: &models.Message{}}) {
 		t.Fatal("expected main-group message to touch last seen")
@@ -250,7 +282,7 @@ func TestHandleUpdate_DeniedByChatFilter_DoesNotWriteMemberSeen(t *testing.T) {
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
 	b := &Bot{
-		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
 		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
@@ -274,7 +306,7 @@ func TestHandleUpdate_MembershipUpdateHandledOnce(t *testing.T) {
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
 	b := &Bot{
-		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
 		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
@@ -304,6 +336,39 @@ func TestHandleUpdate_MembershipUpdateHandledOnce(t *testing.T) {
 	}
 	if repo.ensureSeenCalls != 0 || repo.ensureActiveCalls != 0 {
 		t.Fatalf("expected no regular message member writes during membership update, got ensureSeen=%d ensureActive=%d", repo.ensureSeenCalls, repo.ensureActiveCalls)
+	}
+}
+
+func TestHandleUpdate_MembershipUpdateOutsideMemberSourceChat_Ignored(t *testing.T) {
+	tg := &fakeTGStatus{}
+	repo := &fakeMembersRepoStatus{}
+	memberSvc := members.NewService(repo)
+	b := &Bot{
+		cfg:           &config.Config{MemberSourceChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		ops:           telegram.NewOps(tg),
+		memberService: memberSvc,
+		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+		cmdRouter:     commands.NewRouter(),
+	}
+
+	user := &models.User{ID: 55, Username: "u", FirstName: "U"}
+	newMember := &models.ChatMemberMember{Status: "member", User: *user}
+	oldMember := &models.ChatMemberMember{Status: "left", User: *user}
+
+	upd := models.Update{
+		MyChatMember: &models.ChatMemberUpdated{
+			Chat:          models.Chat{ID: -9999, Type: models.ChatTypeSupergroup},
+			OldChatMember: oldMember,
+			NewChatMember: newMember,
+		},
+	}
+
+	b.handleUpdate(context.Background(), upd)
+
+	if repo.upsertCalls != 0 || repo.markLeftCalls != 0 {
+		t.Fatalf("expected no membership writes outside member source chat, got upsert=%d markLeft=%d", repo.upsertCalls, repo.markLeftCalls)
 	}
 }
 
@@ -341,7 +406,7 @@ func TestHandleUpdate_MessageWithoutSender_DoesNotPanicOrWrite(t *testing.T) {
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
 	b := &Bot{
-		cfg:           &config.Config{MainGroupID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
 		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
@@ -356,5 +421,254 @@ func TestHandleUpdate_MessageWithoutSender_DoesNotPanicOrWrite(t *testing.T) {
 
 	if repo.ensureSeenCalls != 0 || repo.ensureActiveCalls != 0 {
 		t.Fatalf("expected no member writes for message without sender, got ensureSeen=%d ensureActive=%d", repo.ensureSeenCalls, repo.ensureActiveCalls)
+	}
+}
+
+func TestHandleUpdate_MainGroupHumanMessage_PersistsBeforeCountMessage(t *testing.T) {
+	tg := &fakeTGStatus{}
+	repo := &fakeMembersRepoStatus{}
+	memberSvc := members.NewService(repo)
+	streakSvc := &fakeStreakServiceStatus{callOrder: &repo.callOrder}
+	b := &Bot{
+		cfg: &config.Config{
+			MemberSourceChatID:    -1001,
+			FloodChatID:           -1001,
+			AdminChatID:           -2002,
+			RateLimitRequests:     100,
+			RateLimitWindow:       time.Minute,
+			FeatureStreaksEnabled: true,
+		},
+		ops:           telegram.NewOps(tg),
+		memberService: memberSvc,
+		streakService: streakSvc,
+		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+		cmdRouter:     commands.NewRouter(),
+	}
+
+	upd := models.Update{Message: &models.Message{Chat: models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u", FirstName: "User", IsBot: false}, Text: "hello"}}
+	b.handleUpdate(context.Background(), upd)
+
+	if repo.ensureActiveCalls != 1 {
+		t.Fatalf("expected one EnsureActiveMemberSeen call, got %d", repo.ensureActiveCalls)
+	}
+	if streakSvc.calls != 1 {
+		t.Fatalf("expected one CountMessage call, got %d", streakSvc.calls)
+	}
+	if len(repo.callOrder) != 2 {
+		t.Fatalf("expected 2 ordered calls, got %v", repo.callOrder)
+	}
+	if repo.callOrder[0] != "ensure_active" || repo.callOrder[1] != "count_message" {
+		t.Fatalf("expected member persistence before count message, got %v", repo.callOrder)
+	}
+}
+
+func TestHandleUpdate_MessageDrivenPipeline_UsesMainGroupSourceChat(t *testing.T) {
+	tg := &fakeTGStatus{}
+	repo := &fakeMembersRepoStatus{}
+	memberSvc := members.NewService(repo)
+	streakSvc := &fakeStreakServiceStatus{callOrder: &repo.callOrder}
+	b := &Bot{
+		cfg: &config.Config{
+			MemberSourceChatID:    -1001,
+			FloodChatID:           -7777,
+			AdminChatID:           -2002,
+			RateLimitRequests:     100,
+			RateLimitWindow:       time.Minute,
+			FeatureStreaksEnabled: true,
+		},
+		ops:           telegram.NewOps(tg),
+		memberService: memberSvc,
+		streakService: streakSvc,
+		chatFilter:    allowMainAndFloodFilterStatus{mainGroupID: -1001, floodChatID: -7777, adminChatID: -2002},
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+		cmdRouter:     commands.NewRouter(),
+	}
+
+	mainMsg := models.Update{Message: &models.Message{Chat: models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u", FirstName: "User"}, Text: "hello"}}
+	b.handleUpdate(context.Background(), mainMsg)
+
+	if repo.ensureActiveCalls != 1 || streakSvc.calls != 1 {
+		t.Fatalf("expected main-group message to drive both persistence and count once, got ensure=%d count=%d", repo.ensureActiveCalls, streakSvc.calls)
+	}
+
+	repo.ensureActiveCalls = 0
+	streakSvc.calls = 0
+	repo.callOrder = nil
+
+	floodMsg := models.Update{Message: &models.Message{Chat: models.Chat{ID: -7777, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u", FirstName: "User"}, Text: "hello"}}
+	b.handleUpdate(context.Background(), floodMsg)
+
+	if repo.ensureActiveCalls != 0 || streakSvc.calls != 0 {
+		t.Fatalf("expected non-main chat to not drive message-ingest pipeline, got ensure=%d count=%d", repo.ensureActiveCalls, streakSvc.calls)
+	}
+}
+
+func TestHandleUpdate_MainGroupCommand_DoesNotCountStreakMessage(t *testing.T) {
+	tg := &fakeTGStatus{}
+	repo := &fakeMembersRepoStatus{}
+	memberSvc := members.NewService(repo)
+	streakSvc := &fakeStreakServiceStatus{callOrder: &repo.callOrder}
+	b := &Bot{
+		cfg: &config.Config{
+			MemberSourceChatID:    -1001,
+			FloodChatID:           -1001,
+			AdminChatID:           -2002,
+			RateLimitRequests:     100,
+			RateLimitWindow:       time.Minute,
+			FeatureStreaksEnabled: true,
+		},
+		ops:           telegram.NewOps(tg),
+		memberService: memberSvc,
+		streakService: streakSvc,
+		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+		cmdRouter:     commands.NewRouter(),
+	}
+
+	upd := models.Update{Message: &models.Message{Chat: models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u", FirstName: "User", IsBot: false}, Text: "!пленки"}}
+	b.handleUpdate(context.Background(), upd)
+
+	if repo.ensureActiveCalls != 1 {
+		t.Fatalf("expected one EnsureActiveMemberSeen call, got %d", repo.ensureActiveCalls)
+	}
+	if streakSvc.calls != 0 {
+		t.Fatalf("expected no CountMessage call for commands, got %d", streakSvc.calls)
+	}
+}
+
+func TestHandleUpdate_MainGroupNonTextMessage_DoesNotCountStreakMessage(t *testing.T) {
+	tg := &fakeTGStatus{}
+	repo := &fakeMembersRepoStatus{}
+	memberSvc := members.NewService(repo)
+	streakSvc := &fakeStreakServiceStatus{callOrder: &repo.callOrder}
+	b := &Bot{
+		cfg: &config.Config{
+			MemberSourceChatID:    -1001,
+			FloodChatID:           -1001,
+			AdminChatID:           -2002,
+			RateLimitRequests:     100,
+			RateLimitWindow:       time.Minute,
+			FeatureStreaksEnabled: true,
+		},
+		ops:           telegram.NewOps(tg),
+		memberService: memberSvc,
+		streakService: streakSvc,
+		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+		cmdRouter:     commands.NewRouter(),
+	}
+
+	upd := models.Update{Message: &models.Message{Chat: models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u", FirstName: "User", IsBot: false}}}
+	b.handleUpdate(context.Background(), upd)
+
+	if repo.ensureActiveCalls != 1 {
+		t.Fatalf("expected non-text message to persist member once, got %d", repo.ensureActiveCalls)
+	}
+	if streakSvc.calls != 0 {
+		t.Fatalf("expected no CountMessage call for non-text messages, got %d", streakSvc.calls)
+	}
+}
+
+func TestHandleUpdate_MainGroupBotMessage_StaysExcludedFromRoleCandidates(t *testing.T) {
+	tg := &fakeTGStatus{}
+	repo := &fakeMembersRepoStatus{}
+	memberSvc := members.NewService(repo)
+	b := &Bot{
+		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		ops:           telegram.NewOps(tg),
+		memberService: memberSvc,
+		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+		cmdRouter:     commands.NewRouter(),
+	}
+
+	upd := models.Update{Message: &models.Message{Chat: models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 77, Username: "helper_bot", FirstName: "Helper", IsBot: true}, Text: "auto"}}
+	b.handleUpdate(context.Background(), upd)
+
+	if repo.ensureActiveCalls != 1 {
+		t.Fatalf("expected bot sender to be persisted once for membership state, got %d", repo.ensureActiveCalls)
+	}
+	if repo.ensureSeenCalls != 0 {
+		t.Fatalf("expected no EnsureMemberSeen calls, got %d", repo.ensureSeenCalls)
+	}
+}
+
+func TestHandleUpdate_MainGroupNonTextMessage_PersistsMemberOnce(t *testing.T) {
+	tg := &fakeTGStatus{}
+	repo := &fakeMembersRepoStatus{}
+	memberSvc := members.NewService(repo)
+	b := &Bot{
+		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		ops:           telegram.NewOps(tg),
+		memberService: memberSvc,
+		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+		cmdRouter:     commands.NewRouter(),
+	}
+
+	upd := models.Update{Message: &models.Message{Chat: models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u", FirstName: "User", IsBot: false}}}
+	b.handleUpdate(context.Background(), upd)
+
+	if repo.ensureActiveCalls != 1 {
+		t.Fatalf("expected non-text message to persist member once, got %d", repo.ensureActiveCalls)
+	}
+}
+
+func TestHandleUpdate_NonTextPrivateMessage_SkipsTextOnlyPaths(t *testing.T) {
+	tg := &fakeTGStatus{}
+	adminRecorder := &adminHandlerRecorder{}
+	repo := &fakeMembersRepoStatus{}
+	b := &Bot{
+		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		ops:           telegram.NewOps(tg),
+		memberService: members.NewService(repo),
+		adminHandler:  adminRecorder,
+		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+		cmdRouter:     commands.NewRouter(),
+	}
+	b.registerCoreCommands()
+
+	b.handleUpdate(context.Background(), models.Update{Message: &models.Message{Chat: models.Chat{ID: 42, Type: models.ChatTypePrivate}, From: &models.User{ID: 55, Username: "u", FirstName: "User"}}})
+
+	if adminRecorder.msgCalls != 0 {
+		t.Fatalf("expected non-text private message to skip admin text handler, got %d calls", adminRecorder.msgCalls)
+	}
+	if repo.ensureActiveCalls != 0 {
+		t.Fatalf("expected message handler to skip private member persistence, got %d", repo.ensureActiveCalls)
+	}
+}
+
+func TestHandleUpdate_PrivateTextMessage_GoesThroughTextOnlyPath(t *testing.T) {
+	tg := &fakeTGStatus{}
+	adminRecorder := &adminHandlerRecorder{}
+	repo := &fakeMembersRepoStatus{}
+	b := &Bot{
+		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		ops:           telegram.NewOps(tg),
+		memberService: members.NewService(repo),
+		adminHandler:  adminRecorder,
+		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+		cmdRouter:     commands.NewRouter(),
+	}
+	b.registerCoreCommands()
+
+	b.handleUpdate(context.Background(), models.Update{Message: &models.Message{Chat: models.Chat{ID: 42, Type: models.ChatTypePrivate}, From: &models.User{ID: 55, Username: "u", FirstName: "User"}, Text: "hello"}})
+
+	if adminRecorder.msgCalls != 1 {
+		t.Fatalf("expected private text message to hit admin text handler once, got %d", adminRecorder.msgCalls)
+	}
+	if repo.ensureActiveCalls != 0 {
+		t.Fatalf("expected message handler to skip private member persistence, got %d", repo.ensureActiveCalls)
 	}
 }

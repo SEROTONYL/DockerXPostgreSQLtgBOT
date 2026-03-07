@@ -54,15 +54,15 @@ type economyService interface {
 }
 
 type Handler struct {
-	service        *Service
-	memberService  *members.Service
-	economyService economyService
-	ops            *telegram.Ops
-	mainGroupID    int64
-	undoMu         sync.Mutex
-	lastRoleUndo   map[int64]*roleUndoData
-	wizardCtx      context.Context
-	refreshTimeout time.Duration
+	service            *Service
+	memberService      *members.Service
+	economyService     economyService
+	ops                *telegram.Ops
+	memberSourceChatID int64
+	undoMu             sync.Mutex
+	lastRoleUndo       map[int64]*roleUndoData
+	wizardCtx          context.Context
+	refreshTimeout     time.Duration
 }
 
 type roleUndoData struct {
@@ -73,15 +73,15 @@ type roleUndoData struct {
 }
 
 // NewHandler создаёт обработчик админ-панели.
-func NewHandler(service *Service, memberService *members.Service, economyService economyService, ops *telegram.Ops, mainGroupID int64) *Handler {
+func NewHandler(service *Service, memberService *members.Service, economyService economyService, ops *telegram.Ops, memberSourceChatID int64) *Handler {
 	return &Handler{
-		service:        service,
-		memberService:  memberService,
-		economyService: economyService,
-		ops:            ops,
-		mainGroupID:    mainGroupID,
-		lastRoleUndo:   make(map[int64]*roleUndoData),
-		refreshTimeout: manualRefreshTimeout,
+		service:            service,
+		memberService:      memberService,
+		economyService:     economyService,
+		ops:                ops,
+		memberSourceChatID: memberSourceChatID,
+		lastRoleUndo:       make(map[int64]*roleUndoData),
+		refreshTimeout:     manualRefreshTimeout,
 	}
 }
 
@@ -654,7 +654,7 @@ func (h *Handler) refreshAssignRolePicker(ctx context.Context, chatID, userID in
 	// Refresh всегда строит новый picker из свежего состояния репозитория и не должен
 	// полагаться на старый UsersSnapshot, который мог устареть.
 	h.service.ClearState(userID)
-	if h.memberService != nil && h.ops != nil && h.mainGroupID != 0 {
+	if h.memberService != nil && h.ops != nil && h.memberSourceChatID != 0 {
 		refreshCtx, cancel := context.WithTimeout(ctx, h.refreshTimeout)
 		defer cancel()
 
@@ -662,11 +662,11 @@ func (h *Handler) refreshAssignRolePicker(ctx context.Context, chatID, userID in
 		// известных участников после GetChatMember-проверки. Telegram Bot API при этом
 		// не позволяет перечислить всех участников группы с нуля, а DM сама по себе
 		// не считается основанием для вставки active-записи.
-		if _, err := h.memberService.ScanAndUpdateMemberTags(refreshCtx, h.ops, h.mainGroupID, time.Now().UTC()); err != nil {
+		if _, err := h.memberService.ScanAndUpdateMemberTags(refreshCtx, h.ops, h.memberSourceChatID, time.Now().UTC()); err != nil {
 			log.WithError(err).WithFields(log.Fields{
 				"admin_id":   userID,
 				"chat_id":    chatID,
-				"group_id":   h.mainGroupID,
+				"group_id":   h.memberSourceChatID,
 				"timeout_ms": h.refreshTimeout.Milliseconds(),
 			}).Warn("assign role refresh: member tag sync failed")
 			if ctx.Err() == nil {

@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	models "github.com/mymmrac/telego"
@@ -203,5 +204,21 @@ func TestOpsAnswerCallback_WithoutTextPrefersSimpleCallback(t *testing.T) {
 	}
 	if client.callbackQueryCalls != 0 {
 		t.Fatalf("callbackQueryCalls = %d, want 0", client.callbackQueryCalls)
+	}
+}
+
+func TestLongPollingUpdatesParams_ContainsRequiredAllowedUpdates(t *testing.T) {
+	params := longPollingUpdatesParams()
+	if params == nil {
+		t.Fatal("expected params")
+	}
+	if params.Timeout != 30 {
+		t.Fatalf("unexpected timeout: %d", params.Timeout)
+	}
+	want := []string{"message", "callback_query", "chat_member", "my_chat_member"}
+	for _, updateType := range want {
+		if !slices.Contains(params.AllowedUpdates, updateType) {
+			t.Fatalf("allowed updates missing %q: %v", updateType, params.AllowedUpdates)
+		}
 	}
 }

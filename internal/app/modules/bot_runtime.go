@@ -13,7 +13,7 @@ import (
 )
 
 func BuildChatFilter(cfg *config.Config, infra *Infra, tg *Telegram) *filters.ChatFilter {
-	return filters.NewChatFilter(cfg.FloodChatID, cfg.AdminChatID, infra.MemberService, tg.Ops)
+	return filters.NewChatFilter(cfg.MemberSourceChatID, cfg.AdminChatID, infra.MemberService, tg.Ops)
 }
 
 type BotHandlers struct {

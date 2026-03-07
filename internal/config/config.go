@@ -26,10 +26,12 @@ type Config struct {
 	AdminIDs    []int64 `envconfig:"-"` // заполним вручную
 
 	TelegramBotToken string `envconfig:"TELEGRAM_BOT_TOKEN" required:"true"`
-	// ID flood-чата для игровых/контентных механик.
-	FloodChatID int64 `envconfig:"FLOOD_CHAT_ID" required:"true"`
-	// ID основной группы — источник истины для membership lifecycle.
-	MainGroupID int64 `envconfig:"MAIN_GROUP_ID" required:"true"`
+	// ID чата-источника участников (single source of truth для membership/message-driven логики).
+	MemberSourceChatID int64 `envconfig:"MEMBER_SOURCE_CHAT_ID" default:"0"`
+	// Legacy alias (deprecated): раньше использовался как participant/source chat.
+	FloodChatID int64 `envconfig:"FLOOD_CHAT_ID" default:"0"`
+	// Legacy alias (deprecated): раньше использовался как participant/source chat.
+	MainGroupID int64 `envconfig:"MAIN_GROUP_ID" default:"0"`
 	// ID админ-чата для служебных команд (например /members_status).
 	AdminChatID int64 `envconfig:"ADMIN_CHAT_ID" required:"true"`
 
@@ -101,12 +103,15 @@ func (c *Config) DatabaseDSN() string {
 }
 
 func (c *Config) Validate() error {
-	if c.FloodChatID == 0 {
-		return fmt.Errorf("FLOOD_CHAT_ID не задан или равен 0")
+	memberSourceChatID, err := c.resolveMemberSourceChatID()
+	if err != nil {
+		return err
 	}
-	if c.MainGroupID == 0 {
-		return fmt.Errorf("MAIN_GROUP_ID не задан или равен 0")
-	}
+	// Нормализуем canonical + legacy alias-поля после успешного resolve,
+	// чтобы любые оставшиеся старые code path-и не видели нулевые chat ID.
+	c.MemberSourceChatID = memberSourceChatID
+	c.MainGroupID = memberSourceChatID
+	c.FloodChatID = memberSourceChatID
 	if c.AdminChatID == 0 {
 		return fmt.Errorf("ADMIN_CHAT_ID не задан или равен 0")
 	}
@@ -126,6 +131,34 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("некорректные DB_MIN_CONNS/DB_MAX_CONNS")
 	}
 	return nil
+}
+
+func (c *Config) resolveMemberSourceChatID() (int64, error) {
+	if c.MemberSourceChatID != 0 {
+		if c.MainGroupID != 0 && c.MainGroupID != c.MemberSourceChatID {
+			return 0, fmt.Errorf("MAIN_GROUP_ID конфликтует с MEMBER_SOURCE_CHAT_ID")
+		}
+		if c.FloodChatID != 0 && c.FloodChatID != c.MemberSourceChatID {
+			return 0, fmt.Errorf("FLOOD_CHAT_ID конфликтует с MEMBER_SOURCE_CHAT_ID")
+		}
+		return c.MemberSourceChatID, nil
+	}
+
+	if c.MainGroupID != 0 && c.FloodChatID != 0 {
+		if c.MainGroupID != c.FloodChatID {
+			return 0, fmt.Errorf("задайте MEMBER_SOURCE_CHAT_ID: MAIN_GROUP_ID и FLOOD_CHAT_ID различаются")
+		}
+		return c.MainGroupID, nil
+	}
+
+	if c.MainGroupID != 0 {
+		return c.MainGroupID, nil
+	}
+	if c.FloodChatID != 0 {
+		return c.FloodChatID, nil
+	}
+
+	return 0, fmt.Errorf("MEMBER_SOURCE_CHAT_ID не задан (и legacy MAIN_GROUP_ID/FLOOD_CHAT_ID тоже пусты)")
 }
 
 // Load читает переменные окружения и заполняет структуру Config.

@@ -123,8 +123,8 @@ func (s *Service) UpdateMemberTag(ctx context.Context, userID int64, tag *string
 // участников группы с нуля, поэтому refresh может лишь пере-проверять уже известные ID через
 // GetChatMember и чинить их persisted identity (включая is_bot). Неизвестные "тихие"
 // участники, которых мы никогда не сохраняли, не могут появиться в результате этого refresh.
-func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, mainGroupID int64, now time.Time) (int, error) {
-	if tgOps == nil || mainGroupID == 0 {
+func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, memberSourceChatID int64, now time.Time) (int, error) {
+	if tgOps == nil || memberSourceChatID == 0 {
 		return 0, nil
 	}
 
@@ -147,7 +147,7 @@ func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.O
 		default:
 		}
 
-		member, err := tgOps.GetChatMember(ctx, mainGroupID, userID)
+		member, err := tgOps.GetChatMember(ctx, memberSourceChatID, userID)
 		if err != nil {
 			if ctx.Err() != nil {
 				return updated, ctx.Err()
