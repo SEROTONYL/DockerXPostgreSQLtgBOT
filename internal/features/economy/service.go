@@ -93,7 +93,7 @@ func (s *Service) GetTransactionHistory(ctx context.Context, userID int64) (stri
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("📋 Последние %d транзакций:\n\n", len(transactions)))
+	fmt.Fprintf(&sb, "📋 Последние %d транзакций:\n\n", len(transactions))
 
 	// Формируем строки транзакций
 	var lines []string
