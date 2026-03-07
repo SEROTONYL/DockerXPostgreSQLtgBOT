@@ -552,6 +552,8 @@ func scanMember(src memberScanner, m *Member) error {
 	return nil
 }
 
+// nullableTextToString keeps repository reads stable for nullable text DB columns
+// while preserving string fields in the domain model.
 func nullableTextToString(value sql.NullString) string {
 	if !value.Valid {
 		return ""

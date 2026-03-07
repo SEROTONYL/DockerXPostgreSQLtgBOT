@@ -89,7 +89,7 @@ func TestScanMember_HandlesNullableFieldsUsedByUsersWithoutRoleAndUsersWithRole(
 	role := "captain"
 	tag := "TEAM-A"
 	scanner := fakeMemberScanner{values: []interface{}{
-		int64(2), int64(2002), "user2", nil, nil,
+		int64(2), int64(2002), nil, nil, nil,
 		role, true, false,
 		StatusActive, nil, nil, nil, &now, nil, tag, &now, now, now,
 	}}
@@ -99,6 +99,9 @@ func TestScanMember_HandlesNullableFieldsUsedByUsersWithoutRoleAndUsersWithRole(
 		t.Fatalf("scanMember returned error: %v", err)
 	}
 
+	if m.Username != "" {
+		t.Fatalf("expected empty username for NULL, got %q", m.Username)
+	}
 	if m.FirstName != "" {
 		t.Fatalf("expected empty first_name for NULL, got %q", m.FirstName)
 	}

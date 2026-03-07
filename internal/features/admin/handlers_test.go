@@ -702,6 +702,32 @@ func TestPickerFlow_Pagination_StyleRestartsOnNewPage(t *testing.T) {
 	}
 }
 
+func TestChangeRole_PickerRenders_WithIDFallback_WhenIdentityFieldsEmpty(t *testing.T) {
+	tg := &fakeTG{}
+	role := "operator"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with:    []*members.Member{{UserID: 1001, Role: &role}},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	ok := h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminChangeRole))
+	if !ok {
+		t.Fatalf("expected callback handled")
+	}
+	if hasCallText(tg.calls, "send", "Ошибка получения списка пользователей") {
+		t.Fatalf("did not expect list error message")
+	}
+
+	e := tg.last("edit")
+	if e == nil || !strings.Contains(e.text, "Выбери участника") {
+		t.Fatalf("expected picker render, got %#v", e)
+	}
+	if b := buttonByText(e.markup, "operator • id:1001"); b == nil {
+		t.Fatalf("expected change-role picker button with role and id fallback")
+	}
+}
+
 func TestPickerFlow_SelectUser_ShowsRolePrompt(t *testing.T) {
 	tg := &fakeTG{}
 	role := "old_role"
