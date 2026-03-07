@@ -22,7 +22,7 @@ func newLifecycleFakeRepo(userID int64) *lifecycleFakeRepo {
 	}
 }
 
-func (f *lifecycleFakeRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
+func (f *lifecycleFakeRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, isBot bool, joinedAt time.Time) error {
 	f.member.UserID = userID
 	f.member.Username = username
 	f.member.FirstName = name
@@ -96,7 +96,7 @@ func TestLifecycleTransitions_RestrictedToMember_BecomesActive(t *testing.T) {
 		t.Fatalf("expected left status with delete_after, got: %+v", repo.member)
 	}
 
-	if err := svc.UpsertActiveMember(context.Background(), 101, "john", "John", now.Add(5*time.Minute)); err != nil {
+	if err := svc.UpsertActiveMember(context.Background(), 101, "john", "John", false, now.Add(5*time.Minute)); err != nil {
 		t.Fatalf("upsert active: %v", err)
 	}
 
@@ -136,7 +136,7 @@ func TestLifecycleTransitions_LeftToMember_ClearsDeleteAfter(t *testing.T) {
 		t.Fatal("expected delete_after to be set")
 	}
 
-	if err := svc.UpsertActiveMember(context.Background(), 303, "jane", "Jane", now.Add(time.Hour)); err != nil {
+	if err := svc.UpsertActiveMember(context.Background(), 303, "jane", "Jane", false, now.Add(time.Hour)); err != nil {
 		t.Fatalf("upsert active: %v", err)
 	}
 
@@ -159,7 +159,7 @@ func TestRejoinWithinGrace_RestoresDataWithoutPurge(t *testing.T) {
 		t.Fatalf("mark left: %v", err)
 	}
 
-	if err := svc.UpsertActiveMember(context.Background(), 404, "neo", "Neo", now.Add(24*time.Hour)); err != nil {
+	if err := svc.UpsertActiveMember(context.Background(), 404, "neo", "Neo", false, now.Add(24*time.Hour)); err != nil {
 		t.Fatalf("upsert active: %v", err)
 	}
 
@@ -184,7 +184,7 @@ func TestRejoinWithinGrace_RestoresDataWithoutPurge(t *testing.T) {
 	}
 }
 
-func (f *lifecycleFakeRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+func (f *lifecycleFakeRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	if f.member.UserID == userID {
 		f.member.Username = username
 		f.member.FirstName = name
@@ -193,7 +193,7 @@ func (f *lifecycleFakeRepo) EnsureMemberSeen(ctx context.Context, userID int64, 
 	return nil
 }
 
-func (f *lifecycleFakeRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+func (f *lifecycleFakeRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	if f.member.UserID == 0 {
 		f.member.UserID = userID
 	}
@@ -238,7 +238,7 @@ func newSeenStateRepo() *seenStateRepo {
 	return &seenStateRepo{members: map[int64]*Member{}}
 }
 
-func (r *seenStateRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
+func (r *seenStateRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, isBot bool, joinedAt time.Time) error {
 	m := r.members[userID]
 	if m == nil {
 		m = &Member{UserID: userID}
@@ -272,7 +272,7 @@ func (r *seenStateRepo) GetByUserID(ctx context.Context, userID int64) (*Member,
 func (r *seenStateRepo) GetByUsername(ctx context.Context, username string) (*Member, error) {
 	return nil, nil
 }
-func (r *seenStateRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+func (r *seenStateRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	m := r.members[userID]
 	if m == nil {
 		return nil
@@ -285,7 +285,7 @@ func (r *seenStateRepo) EnsureMemberSeen(ctx context.Context, userID int64, user
 	}
 	return nil
 }
-func (r *seenStateRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+func (r *seenStateRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	m := r.members[userID]
 	if m == nil {
 		m = &Member{UserID: userID}
@@ -318,8 +318,10 @@ func (r *seenStateRepo) CountMembersByStatus(ctx context.Context) (active int, l
 func (r *seenStateRepo) CountPendingPurge(ctx context.Context, now time.Time) (int, error) {
 	return 0, nil
 }
-func (r *seenStateRepo) ListActiveUserIDs(ctx context.Context) ([]int64, error)           { return nil, nil }
-func (r *seenStateRepo) ListRefreshCandidateUserIDs(ctx context.Context) ([]int64, error) { return nil, nil }
+func (r *seenStateRepo) ListActiveUserIDs(ctx context.Context) ([]int64, error) { return nil, nil }
+func (r *seenStateRepo) ListRefreshCandidateUserIDs(ctx context.Context) ([]int64, error) {
+	return nil, nil
+}
 func (r *seenStateRepo) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
 	return nil
 }
@@ -330,7 +332,7 @@ func TestEnsureMemberSeen_ThrottleBehavior(t *testing.T) {
 	svc := NewService(repo)
 	base := time.Now().UTC().Truncate(time.Second)
 
-	if err := svc.EnsureMemberSeen(context.Background(), 500, "u", "User", base); err != nil {
+	if err := svc.EnsureMemberSeen(context.Background(), 500, "u", "User", false, base); err != nil {
 		t.Fatalf("first seen err: %v", err)
 	}
 	first := repo.members[500].LastSeenAt
@@ -338,7 +340,7 @@ func TestEnsureMemberSeen_ThrottleBehavior(t *testing.T) {
 		t.Fatalf("first seen mismatch: %v", first)
 	}
 
-	if err := svc.EnsureMemberSeen(context.Background(), 500, "u", "User", base.Add(time.Minute)); err != nil {
+	if err := svc.EnsureMemberSeen(context.Background(), 500, "u", "User", false, base.Add(time.Minute)); err != nil {
 		t.Fatalf("second seen err: %v", err)
 	}
 	second := repo.members[500].LastSeenAt
@@ -346,7 +348,7 @@ func TestEnsureMemberSeen_ThrottleBehavior(t *testing.T) {
 		t.Fatalf("second seen should stay base, got: %v", second)
 	}
 
-	if err := svc.EnsureMemberSeen(context.Background(), 500, "u", "User", base.Add(6*time.Minute)); err != nil {
+	if err := svc.EnsureMemberSeen(context.Background(), 500, "u", "User", false, base.Add(6*time.Minute)); err != nil {
 		t.Fatalf("third seen err: %v", err)
 	}
 	third := repo.members[500].LastSeenAt
@@ -359,7 +361,7 @@ func TestEnsureMemberSeen_PrivateNoCreateWhenMissing(t *testing.T) {
 	repo := newSeenStateRepo()
 	svc := NewService(repo)
 
-	if err := svc.EnsureMemberSeen(context.Background(), 999, "ghost", "Ghost", time.Now().UTC()); err != nil {
+	if err := svc.EnsureMemberSeen(context.Background(), 999, "ghost", "Ghost", false, time.Now().UTC()); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	if repo.members[999] != nil {

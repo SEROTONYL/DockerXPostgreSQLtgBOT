@@ -28,7 +28,7 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) HandleNewChatMembers(ctx context.Context, newMembers []models.User) {
 	for _, user := range newMembers {
 		// Регистрируем каждого нового участника
-		err := h.service.HandleNewMember(ctx, user.ID, user.Username, user.FirstName, user.LastName)
+		err := h.service.HandleNewMember(ctx, user.ID, user.Username, user.FirstName, user.LastName, user.IsBot)
 		if err != nil {
 			log.WithError(err).WithField("user_id", user.ID).Error("Ошибка регистрации нового участника")
 		}

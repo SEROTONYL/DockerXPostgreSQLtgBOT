@@ -18,7 +18,7 @@ const (
 	editErrOther        editErrorKind = "other"
 )
 
-var editNeedlesNotModified = []string{"message is not modified"}
+var editNeedlesNotModified = []string{"message is not modified", "message not modified"}
 var editNeedlesNotFound = []string{"message to edit not found", "message not found", "message_id_invalid", "message_id invalid"}
 var editNeedlesCantBeEdited = []string{"message can't be edited", "message can’t be edited"}
 var editNeedlesForbidden = []string{"bot was blocked by the user", "chat not found", "forbidden", "not enough rights", "user is deactivated"}

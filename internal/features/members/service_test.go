@@ -45,7 +45,7 @@ type fakeRepo struct {
 	upsertCalls          []int64
 }
 
-func (f *fakeRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
+func (f *fakeRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, isBot bool, joinedAt time.Time) error {
 	f.upsertCalled = true
 	f.upsertUserID = userID
 	f.upsertUsername = username
@@ -77,7 +77,7 @@ func (f *fakeRepo) GetByUserID(ctx context.Context, userID int64) (*Member, erro
 func (f *fakeRepo) GetByUsername(ctx context.Context, username string) (*Member, error) {
 	return nil, nil
 }
-func (f *fakeRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+func (f *fakeRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	f.ensureSeenCalled = true
 	f.ensureSeenUserID = userID
 	f.ensureSeenUsername = username
@@ -85,7 +85,7 @@ func (f *fakeRepo) EnsureMemberSeen(ctx context.Context, userID int64, username,
 	f.ensureSeenAt = seenAt
 	return nil
 }
-func (f *fakeRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+func (f *fakeRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	f.ensureActiveCalled = true
 	f.ensureSeenUserID = userID
 	f.ensureSeenUsername = username
@@ -128,7 +128,7 @@ func TestServiceUpsertActiveMember(t *testing.T) {
 	svc := NewService(repo)
 	now := time.Now().UTC().Truncate(time.Second)
 
-	if err := svc.UpsertActiveMember(context.Background(), 42, "john", "John", now); err != nil {
+	if err := svc.UpsertActiveMember(context.Background(), 42, "john", "John", false, now); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -200,7 +200,7 @@ func TestServiceEnsureMemberSeen(t *testing.T) {
 	svc := NewService(repo)
 	now := time.Now().UTC().Truncate(time.Second)
 
-	if err := svc.EnsureMemberSeen(context.Background(), 12, "john", "John", now); err != nil {
+	if err := svc.EnsureMemberSeen(context.Background(), 12, "john", "John", false, now); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -214,7 +214,7 @@ func TestServiceEnsureActiveMemberSeen(t *testing.T) {
 	svc := NewService(repo)
 	now := time.Now().UTC().Truncate(time.Second)
 
-	if err := svc.EnsureActiveMemberSeen(context.Background(), 77, "neo", "Neo", now); err != nil {
+	if err := svc.EnsureActiveMemberSeen(context.Background(), 77, "neo", "Neo", false, now); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -333,8 +333,8 @@ func TestScanAndUpdateMemberTags_RestoresMissingKnownMemberWhenTelegramConfirmsM
 	if updated != 2 {
 		t.Fatalf("expected updated=2, got %d", updated)
 	}
-	if len(repo.upsertCalls) != 1 || repo.upsertCalls[0] != 2 {
-		t.Fatalf("expected restore upsert for user 2, got %v", repo.upsertCalls)
+	if len(repo.upsertCalls) != 2 || repo.upsertCalls[0] != 1 || repo.upsertCalls[1] != 2 {
+		t.Fatalf("expected identity upsert for all bounded member-like candidates, got %v", repo.upsertCalls)
 	}
 }
 
@@ -398,8 +398,28 @@ func TestScanAndUpdateMemberTags_DoesNotRestoreUnknownDMOnlyUserOutsideBoundedCa
 	if len(tg.getChatMemberCalls) != 1 || tg.getChatMemberCalls[0] != 10 {
 		t.Fatalf("expected only bounded candidate checks, got %v", tg.getChatMemberCalls)
 	}
-	if len(repo.upsertCalls) != 0 {
-		t.Fatalf("expected no restore upserts for unknown dm-only users, got %v", repo.upsertCalls)
+	if len(repo.upsertCalls) != 1 || repo.upsertCalls[0] != 10 {
+		t.Fatalf("expected bounded identity upsert only for known candidate 10, got %v", repo.upsertCalls)
+	}
+}
+
+func TestScanAndUpdateMemberTags_RepairsIsBotForAlreadyActivePersistedMember(t *testing.T) {
+	repo := &fakeRepo{activeUserIDs: []int64{77}, refreshCandidateIDs: []int64{77}}
+	tg := &fakeTelegramClient{memberUserByID: map[int64]models.User{77: {ID: 77, Username: "helperbot", FirstName: "Helper", IsBot: true}}}
+	svc := NewService(repo)
+
+	updated, err := svc.ScanAndUpdateMemberTags(context.Background(), telegram.NewOps(tg), 1, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated != 1 {
+		t.Fatalf("expected updated=1, got %d", updated)
+	}
+	if len(repo.upsertCalls) != 1 || repo.upsertCalls[0] != 77 {
+		t.Fatalf("expected identity upsert for active candidate, got %v", repo.upsertCalls)
+	}
+	if repo.upsertUserID != 77 || repo.upsertUsername != "helperbot" {
+		t.Fatalf("expected upsert with telegram identity, got userID=%d username=%q", repo.upsertUserID, repo.upsertUsername)
 	}
 }
 
@@ -408,6 +428,7 @@ type fakeTelegramClient struct {
 	getChatMemberErrByUser map[int64]error
 	getChatMemberCalls     []int64
 	statusByUser           map[int64]string
+	memberUserByID         map[int64]models.User
 }
 
 func (f *fakeTelegramClient) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (messageID int, err error) {
@@ -435,6 +456,9 @@ func (f *fakeTelegramClient) GetChatMember(chatID int64, userID int64) (models.C
 		case "restricted":
 			return &models.ChatMemberRestricted{User: models.User{ID: userID}}, nil
 		}
+	}
+	if u, ok := f.memberUserByID[userID]; ok {
+		return &models.ChatMemberMember{User: u}, nil
 	}
 	return &models.ChatMemberMember{User: models.User{ID: userID}}, nil
 }

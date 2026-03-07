@@ -68,7 +68,7 @@ type fakeMembersRepoStatus struct {
 	markLeftCalls     int
 }
 
-func (f *fakeMembersRepoStatus) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
+func (f *fakeMembersRepoStatus) UpsertActiveMember(ctx context.Context, userID int64, username, name string, isBot bool, joinedAt time.Time) error {
 	f.upsertCalls++
 	return nil
 }
@@ -88,11 +88,11 @@ func (f *fakeMembersRepoStatus) GetByUserID(ctx context.Context, userID int64) (
 func (f *fakeMembersRepoStatus) GetByUsername(ctx context.Context, username string) (*members.Member, error) {
 	return &members.Member{}, nil
 }
-func (f *fakeMembersRepoStatus) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+func (f *fakeMembersRepoStatus) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	f.ensureSeenCalls++
 	return nil
 }
-func (f *fakeMembersRepoStatus) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+func (f *fakeMembersRepoStatus) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	f.ensureActiveCalls++
 	return nil
 }

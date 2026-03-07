@@ -34,11 +34,11 @@ func (f *fakeTG) DeleteMessage(chatID int64, messageID int) error {
 
 type fakeMemberService struct{}
 
-func (f *fakeMemberService) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, fullName string, now time.Time) error {
+func (f *fakeMemberService) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, fullName string, isBot bool, now time.Time) error {
 	return nil
 }
 
-func (f *fakeMemberService) UpsertActiveMember(ctx context.Context, userID int64, username, fullName string, now time.Time) error {
+func (f *fakeMemberService) UpsertActiveMember(ctx context.Context, userID int64, username, fullName string, isBot bool, now time.Time) error {
 	return nil
 }
 
@@ -46,7 +46,7 @@ func (f *fakeMemberService) MarkMemberLeft(ctx context.Context, userID int64, le
 	return nil
 }
 
-func (f *fakeMemberService) HandleNewMember(ctx context.Context, userID int64, username, firstName, lastName string) error {
+func (f *fakeMemberService) HandleNewMember(ctx context.Context, userID int64, username, firstName, lastName string, isBot bool) error {
 	return nil
 }
 

@@ -25,8 +25,9 @@ type tgCall struct {
 }
 
 type fakeTG struct {
-	calls   []tgCall
-	editErr error
+	calls            []tgCall
+	editErr          error
+	chatMemberByUser map[int64]models.User
 }
 
 func (f *fakeTG) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
@@ -45,6 +46,9 @@ func (f *fakeTG) AnswerCallbackQuery(callbackID string, text string, showAlert b
 }
 
 func (f *fakeTG) GetChatMember(chatID int64, userID int64) (models.ChatMember, error) {
+	if u, ok := f.chatMemberByUser[userID]; ok {
+		return &models.ChatMemberMember{User: u}, nil
+	}
 	return &models.ChatMemberMember{User: models.User{ID: userID}}, nil
 }
 
@@ -176,9 +180,13 @@ type fakeMemberSyncRepo struct {
 	updateTagErr        error
 	listErr             error
 	updateTagBlocked    bool
+	onUpsertActive      func(userID int64, username, name string, isBot bool)
 }
 
-func (r *fakeMemberSyncRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
+func (r *fakeMemberSyncRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, isBot bool, joinedAt time.Time) error {
+	if r.onUpsertActive != nil {
+		r.onUpsertActive(userID, username, name, isBot)
+	}
 	return nil
 }
 func (r *fakeMemberSyncRepo) MarkMemberLeft(ctx context.Context, userID int64, leftAt, deleteAfter time.Time) error {
@@ -196,10 +204,10 @@ func (r *fakeMemberSyncRepo) GetByUserID(ctx context.Context, userID int64) (*me
 func (r *fakeMemberSyncRepo) GetByUsername(ctx context.Context, username string) (*members.Member, error) {
 	return nil, nil
 }
-func (r *fakeMemberSyncRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+func (r *fakeMemberSyncRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	return nil
 }
-func (r *fakeMemberSyncRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, seenAt time.Time) error {
+func (r *fakeMemberSyncRepo) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	return nil
 }
 func (r *fakeMemberSyncRepo) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
@@ -244,10 +252,22 @@ func (r *fakeMemberRepoHandlers) GetByUserID(ctx context.Context, userID int64) 
 	return nil, nil
 }
 func (r *fakeMemberRepoHandlers) GetUsersWithoutRole(ctx context.Context) ([]*members.Member, error) {
-	return r.without, nil
+	out := make([]*members.Member, 0, len(r.without))
+	for _, m := range r.without {
+		if m != nil && !m.IsBot {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 func (r *fakeMemberRepoHandlers) GetUsersWithRole(ctx context.Context) ([]*members.Member, error) {
-	return r.with, nil
+	out := make([]*members.Member, 0, len(r.with))
+	for _, m := range r.with {
+		if m != nil && !m.IsBot {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 func (r *fakeMemberRepoHandlers) UpdateRole(ctx context.Context, userID int64, role string) error {
 	for _, m := range r.with {
@@ -317,7 +337,7 @@ func hasButton(markup *models.InlineKeyboardMarkup, text, dataContains string) b
 	}
 	for _, row := range markup.InlineKeyboard {
 		for _, b := range row {
-			if b.Text == text && (dataContains == "" || strings.Contains(b.CallbackData, dataContains)) {
+			if (text == "" || b.Text == text) && (dataContains == "" || strings.Contains(b.CallbackData, dataContains)) {
 				return true
 			}
 		}
@@ -574,6 +594,112 @@ func TestAssignRole_PickerRenders_WhenMemberHasOnlyIDAfterNullNormalization(t *t
 	}
 }
 
+func TestAssignRolePicker_DoesNotRenderBots(t *testing.T) {
+	tg := &fakeTG{}
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		without: []*members.Member{{UserID: 1001, FirstName: "Human"}, {UserID: 2002, FirstName: "Bot", IsBot: true}},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminAssignRole))
+	e := tg.last("edit")
+	if e == nil || e.markup == nil {
+		t.Fatalf("expected picker edit")
+	}
+	if buttonByText(e.markup, "Bot • id:2002") != nil || buttonByText(e.markup, "id:2002") != nil {
+		t.Fatalf("bot candidate must not be rendered in assign picker")
+	}
+}
+
+func TestChangeRolePicker_DoesNotRenderBots(t *testing.T) {
+	tg := &fakeTG{}
+	role := "member"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with:    []*members.Member{{UserID: 1001, FirstName: "Human", Role: &role}, {UserID: 2002, FirstName: "Bot", Role: &role, IsBot: true}},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminChangeRole))
+	e := tg.last("edit")
+	if e == nil || e.markup == nil {
+		t.Fatalf("expected picker edit")
+	}
+	if buttonByText(e.markup, "member • Bot • id:2002") != nil || buttonByText(e.markup, "member • id:2002") != nil {
+		t.Fatalf("bot candidate must not be rendered in change-role picker")
+	}
+}
+
+func TestAssignRefresh_UsesFreshRepositorySnapshot(t *testing.T) {
+	tg := &fakeTG{}
+	memberRepo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		without: []*members.Member{{UserID: 1001, FirstName: "Old"}},
+	}
+	syncRepo := &fakeMemberSyncRepo{activeIDs: []int64{1001, 2002}}
+	h := newAdminHandlerWithRefresh(t, memberRepo, syncRepo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminAssignRole))
+	memberRepo.without = []*members.Member{{UserID: 2002, FirstName: "Fresh"}}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAssignRefresh))
+	e := tg.last("edit")
+	if e == nil || e.markup == nil {
+		t.Fatalf("expected picker rerender after refresh")
+	}
+	if !hasButton(e.markup, "", pickerCallbackData(UserPickerAssignWithoutRole, cbPickerSelect, 2002)) {
+		t.Fatalf("expected refreshed candidate from fresh repo snapshot")
+	}
+	if hasButton(e.markup, "", pickerCallbackData(UserPickerAssignWithoutRole, cbPickerSelect, 1001)) {
+		t.Fatalf("stale snapshot candidate must not be rendered after refresh")
+	}
+}
+
+func TestAssignRefresh_CorrectedBotIsHiddenFromPicker(t *testing.T) {
+	memberRepo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		without: []*members.Member{{UserID: 2002, FirstName: "LegacyBot", IsBot: false}},
+	}
+	tg := &fakeTG{chatMemberByUser: map[int64]models.User{2002: {ID: 2002, Username: "legacy_helper_bot", FirstName: "Legacy", IsBot: true}}}
+	syncRepo := &fakeMemberSyncRepo{activeIDs: []int64{2002}, refreshCandidateIDs: []int64{2002}}
+	syncRepo.onUpsertActive = func(userID int64, username, name string, isBot bool) {
+		if userID == 2002 && isBot {
+			memberRepo.without = []*members.Member{}
+		}
+	}
+	h := newAdminHandlerWithRefresh(t, memberRepo, syncRepo, tg)
+
+	ok := h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAssignRefresh))
+	if !ok {
+		t.Fatalf("expected callback handled")
+	}
+	e := tg.last("edit")
+	if e == nil {
+		t.Fatalf("expected panel edit")
+	}
+	if !strings.Contains(e.text, "Все пользователи уже имеют роли") {
+		t.Fatalf("expected no-candidates screen after bot correction, got %q", e.text)
+	}
+}
+
+func TestAssignRefresh_NotModifiedEdit_DoesNotShowUIFailure(t *testing.T) {
+	tg := &fakeTG{editErr: errors.New("editMessageText: api: 400 Bad Request: message is not modified")}
+	memberRepo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		without: []*members.Member{{UserID: 1001, FirstName: "Same"}},
+	}
+	syncRepo := &fakeMemberSyncRepo{activeIDs: []int64{1001}}
+	h := newAdminHandlerWithRefresh(t, memberRepo, syncRepo, tg)
+
+	ok := h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAssignRefresh))
+	if !ok {
+		t.Fatalf("expected callback handled")
+	}
+	if hasCallText(tg.calls, "send", "Не удалось обновить панель") || hasCallText(tg.calls, "send", "Панель устарела") {
+		t.Fatalf("not-modified must be treated as benign and not produce UI error hints")
+	}
+}
 func TestAssignRefresh_Success_ReopensPicker_WithNullSafeIdentityFallback(t *testing.T) {
 	tg := &fakeTG{}
 	memberRepo := &fakeMemberRepoHandlers{

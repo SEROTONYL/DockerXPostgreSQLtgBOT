@@ -651,6 +651,9 @@ func (h *Handler) handleUserPickerCallback(ctx context.Context, chatID, userID i
 }
 
 func (h *Handler) refreshAssignRolePicker(ctx context.Context, chatID, userID int64, panelMsgID int) {
+	// Refresh всегда строит новый picker из свежего состояния репозитория и не должен
+	// полагаться на старый UsersSnapshot, который мог устареть.
+	h.service.ClearState(userID)
 	if h.memberService != nil && h.ops != nil && h.mainGroupID != 0 {
 		refreshCtx, cancel := context.WithTimeout(ctx, h.refreshTimeout)
 		defer cancel()
@@ -1019,6 +1022,11 @@ func normalizeRoleLabel(role string) string {
 func (h *Handler) renderAdminScreen(ctx context.Context, chatID, userID int64, panelMsgID int, screenName, text string, keyboard models.InlineKeyboardMarkup) error {
 	msgID, usedEdit, err := telegram.RenderScreen(ctx, h.ops, telegram.Screen{ChatID: chatID, MessageID: panelMsgID, Text: text, ReplyMarkup: &keyboard})
 	if err != nil {
+		if telegram.IsEditNotModified(err) {
+			log.WithError(err).WithFields(log.Fields{"chat_id": chatID, "panel_message_id": panelMsgID, "screen": screenName}).Debug("admin ui edit skipped: message is not modified")
+			h.attachPanelMessageID(userID, panelMsgID)
+			return nil
+		}
 		action := "send"
 		if usedEdit {
 			action = "edit"
