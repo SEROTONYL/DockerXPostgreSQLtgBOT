@@ -29,6 +29,9 @@ func (f *fakeAdminRepo) ListBalanceDeltas(ctx context.Context, chatID int64) ([]
 func (f *fakeAdminRepo) CreateBalanceDelta(ctx context.Context, chatID int64, name string, amount int64, createdBy int64) error {
 	return nil
 }
+func (f *fakeAdminRepo) DeleteBalanceDelta(ctx context.Context, chatID int64, deltaID int64) error {
+	return nil
+}
 
 type fakeMemberRepo struct {
 	member           *members.Member
@@ -111,6 +114,9 @@ func (f *fakeAdminRepoAttempts) ListBalanceDeltas(ctx context.Context, chatID in
 	return nil, nil
 }
 func (f *fakeAdminRepoAttempts) CreateBalanceDelta(ctx context.Context, chatID int64, name string, amount int64, createdBy int64) error {
+	return nil
+}
+func (f *fakeAdminRepoAttempts) DeleteBalanceDelta(ctx context.Context, chatID int64, deltaID int64) error {
 	return nil
 }
 

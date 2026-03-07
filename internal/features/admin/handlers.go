@@ -26,7 +26,9 @@ const (
 
 	cbAdminAssignRole        = "admin:assign_role"
 	cbAdminChangeRole        = "admin:change_role"
-	cbAdminStub              = "admin:stub"
+	cbAdminCreditMenu        = "admin:credit_menu"
+	cbAdminCreditIssue       = "admin:credit_issue"
+	cbAdminCreditCancel      = "admin:credit_cancel"
 	cbAdminBalanceAdjust     = "admin:balance_adjust"
 	cbPickerPrefix           = "admin:picker:"
 	cbPickerSelect           = "select"
@@ -169,11 +171,13 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 	case "Сменить роль":
 		h.startChangeRole(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return true
-	case "Изменить баланс":
+	case "Изменить баланс", "Баланс":
 		h.startBalanceAdjustMode(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return true
-	case "Выдать кредит",
-		"Аннулировать кредит", "Создать сокращение", "Удалить сокращение":
+	case "Управление кредитами":
+		h.showCreditMenu(ctx, chatID, userID, h.panelMessageIDFromState(userID))
+		return true
+	case "Выдать кредит", "Отменить кредит":
 		h.sendMessage(ctx, chatID, "🔧 Функция в разработке")
 		return true
 	case "Админ", "Панель", "админ", "панель":
@@ -232,7 +236,13 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 	case cbAdminBalanceAdjust:
 		h.startBalanceAdjustMode(ctx, chatID, userID, panelMsgID)
 		return true
-	case cbAdminStub:
+	case cbAdminCreditMenu:
+		h.showCreditMenu(ctx, chatID, userID, panelMsgID)
+		return true
+	case cbAdminCreditIssue, cbAdminCreditCancel:
+		if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "credit_stub", "🔧 Функция в разработке", h.creditMenuMarkup()); err != nil {
+			h.sendUIErrorHint(ctx, chatID, err)
+		}
 		return true
 	case cbRoleInputBack:
 		h.handleRoleInputBack(ctx, chatID, userID, panelMsgID)
@@ -295,20 +305,25 @@ func (h *Handler) showKeyboard(ctx context.Context, chatID int64, userID int64, 
 			newInlineKeyboardButtonData("💸 Баланс", cbAdminBalanceAdjust),
 		),
 		newInlineKeyboardRow(
-			newInlineKeyboardButtonData("💳 Выдать кредит", cbAdminStub),
-		),
-		newInlineKeyboardRow(
-			newInlineKeyboardButtonData("🚫 Отменить кредит", cbAdminStub),
-		),
-		newInlineKeyboardRow(
-			newInlineKeyboardButtonData("✂️ Создать сокращ.", cbAdminStub),
-		),
-		newInlineKeyboardRow(
-			newInlineKeyboardButtonData("🗑 Удалить сокращ.", cbAdminStub),
+			newInlineKeyboardButtonData("💳 Управление кредитами", cbAdminCreditMenu),
 		),
 	)
 
 	return h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "panel", "✅ Админ-панель открыта", keyboard)
+}
+
+func (h *Handler) creditMenuMarkup() models.InlineKeyboardMarkup {
+	return newInlineKeyboardMarkup(
+		newInlineKeyboardRow(newInlineKeyboardButtonData("💳 Выдать кредит", cbAdminCreditIssue)),
+		newInlineKeyboardRow(newInlineKeyboardButtonData("🚫 Отменить кредит", cbAdminCreditCancel)),
+		newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbAdminReturnPanel, "danger")),
+	)
+}
+
+func (h *Handler) showCreditMenu(ctx context.Context, chatID int64, userID int64, panelMsgID int) {
+	if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "credit_menu", "💳 Управление кредитами", h.creditMenuMarkup()); err != nil {
+		h.sendUIErrorHint(ctx, chatID, err)
+	}
 }
 
 // --- Назначить роль (3 шага) ---

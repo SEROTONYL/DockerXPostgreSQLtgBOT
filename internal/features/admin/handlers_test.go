@@ -77,8 +77,10 @@ func (f *fakeTG) last(kind string) *tgCall {
 }
 
 type fakeAdminRepoHandlers struct {
-	hasSession bool
-	deltaStore map[int64][]*BalanceDelta
+	hasSession     bool
+	deltaStore     map[int64][]*BalanceDelta
+	nextDeltaID    int64
+	deleteDeltaErr error
 }
 
 func (r fakeAdminRepoHandlers) CreateSession(ctx context.Context, session *AdminSession) error {
@@ -108,8 +110,22 @@ func (r fakeAdminRepoHandlers) CreateBalanceDelta(ctx context.Context, chatID in
 	if r.deltaStore == nil {
 		r.deltaStore = map[int64][]*BalanceDelta{}
 	}
-	r.deltaStore[chatID] = append(r.deltaStore[chatID], &BalanceDelta{Name: name, Amount: amount, ChatID: chatID, CreatedBy: createdBy, CreatedAt: time.Now()})
+	r.nextDeltaID++
+	r.deltaStore[chatID] = append(r.deltaStore[chatID], &BalanceDelta{ID: r.nextDeltaID, Name: name, Amount: amount, ChatID: chatID, CreatedBy: createdBy, CreatedAt: time.Now()})
 	return nil
+}
+func (r fakeAdminRepoHandlers) DeleteBalanceDelta(ctx context.Context, chatID int64, deltaID int64) error {
+	if r.deleteDeltaErr != nil {
+		return r.deleteDeltaErr
+	}
+	deltas := r.deltaStore[chatID]
+	for i, d := range deltas {
+		if d.ID == deltaID {
+			r.deltaStore[chatID] = append(deltas[:i], deltas[i+1:]...)
+			return nil
+		}
+	}
+	return errors.New("not found")
 }
 
 type econCall struct {
@@ -404,8 +420,11 @@ func TestOpenAdminPanel_ShowsKeyboard(t *testing.T) {
 	if !strings.Contains(s.text, "Админ-панель") {
 		t.Fatalf("unexpected panel text: %q", s.text)
 	}
-	if !hasButton(s.markup, "👤 Назначить роль", cbAdminAssignRole) || !hasButton(s.markup, "🔄 Сменить роль", cbAdminChangeRole) {
-		t.Fatalf("expected admin panel buttons")
+	if !hasButton(s.markup, "👤 Назначить роль", cbAdminAssignRole) || !hasButton(s.markup, "🔄 Сменить роль", cbAdminChangeRole) || !hasButton(s.markup, "💸 Баланс", cbAdminBalanceAdjust) || !hasButton(s.markup, "💳 Управление кредитами", cbAdminCreditMenu) {
+		t.Fatalf("expected reduced admin panel buttons")
+	}
+	if hasButton(s.markup, "💳 Выдать кредит", cbAdminCreditIssue) || hasButton(s.markup, "🚫 Отменить кредит", cbAdminCreditCancel) || hasButton(s.markup, "✂️ Создать сокращ.", "admin:stub") || hasButton(s.markup, "🗑 Удалить сокращ.", "admin:stub") {
+		t.Fatalf("did not expect old top-level shortcuts")
 	}
 }
 
@@ -1138,6 +1157,47 @@ func TestAdminPanel_HasBalanceAdjustButton(t *testing.T) {
 	}
 }
 
+func TestAdminCreditMenu_OpenAndBack(t *testing.T) {
+	tg := &fakeTG{}
+	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminCreditMenu))
+	e := tg.last("edit")
+	if e == nil || !strings.Contains(e.text, "Управление кредитами") {
+		t.Fatalf("expected credit submenu")
+	}
+	if !hasButton(e.markup, "💳 Выдать кредит", cbAdminCreditIssue) || !hasButton(e.markup, "🚫 Отменить кредит", cbAdminCreditCancel) || !hasButton(e.markup, userPickerBackButton, cbAdminReturnPanel) {
+		t.Fatalf("expected credit submenu buttons")
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminReturnPanel))
+	back := tg.last("edit")
+	if back == nil || !strings.Contains(back.text, "Админ-панель") {
+		t.Fatalf("expected return to panel")
+	}
+	if !hasButton(back.markup, "💳 Управление кредитами", cbAdminCreditMenu) {
+		t.Fatalf("expected main panel after back")
+	}
+}
+
+func TestBalanceAdjust_HasDeleteDeltaButton(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}, with: []*members.Member{{UserID: 1001, Username: "u", Role: &role}}}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, fmt.Sprintf("%s:%d", cbBalPickToggle, int64(1001))))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickDone))
+
+	e := tg.last("edit")
+	if e == nil || !hasButton(e.markup, "🗑 Удалить дельту", cbBalAmtDeleteDelta) {
+		t.Fatalf("expected delete delta button in balance flow")
+	}
+}
+
 func TestBalanceAdjust_MultiSelectPersistsAcrossPages(t *testing.T) {
 	tg := &fakeTG{}
 	role := "role"
@@ -1407,6 +1467,9 @@ func (r *fakeAdminRepoAuth) ListBalanceDeltas(ctx context.Context, chatID int64)
 	return nil, nil
 }
 func (r *fakeAdminRepoAuth) CreateBalanceDelta(ctx context.Context, chatID int64, name string, amount int64, createdBy int64) error {
+	return nil
+}
+func (r *fakeAdminRepoAuth) DeleteBalanceDelta(ctx context.Context, chatID int64, deltaID int64) error {
 	return nil
 }
 

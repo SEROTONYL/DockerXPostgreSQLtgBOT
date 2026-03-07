@@ -39,6 +39,7 @@ type adminRepo interface {
 	GetRecentAttempts(ctx context.Context, userID int64, period time.Duration) (int, error)
 	ListBalanceDeltas(ctx context.Context, chatID int64) ([]*BalanceDelta, error)
 	CreateBalanceDelta(ctx context.Context, chatID int64, name string, amount int64, createdBy int64) error
+	DeleteBalanceDelta(ctx context.Context, chatID int64, deltaID int64) error
 }
 
 type memberRepo interface {
