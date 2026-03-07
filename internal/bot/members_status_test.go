@@ -22,36 +22,19 @@ type fakeTGStatus struct {
 }
 
 type policyChatFilterStatus struct {
-	floodChatID int64
-	adminChatID int64
-}
-
-type allowMainAndFloodFilterStatus struct {
-	mainGroupID int64
-	floodChatID int64
-	adminChatID int64
+	memberSourceChatID int64
+	adminChatID        int64
 }
 
 func (f policyChatFilterStatus) CheckAccess(ctx context.Context, message *models.Message) bool {
 	if message == nil || message.From == nil {
 		return false
 	}
-	if message.Chat.ID == f.adminChatID || message.Chat.ID == f.floodChatID {
+	if message.Chat.ID == f.adminChatID || message.Chat.ID == f.memberSourceChatID {
 		return true
 	}
 	return message.Chat.Type == models.ChatTypePrivate
 }
-
-func (f allowMainAndFloodFilterStatus) CheckAccess(ctx context.Context, message *models.Message) bool {
-	if message == nil || message.From == nil {
-		return false
-	}
-	if message.Chat.ID == f.adminChatID || message.Chat.ID == f.floodChatID || message.Chat.ID == f.mainGroupID {
-		return true
-	}
-	return message.Chat.Type == models.ChatTypePrivate
-}
-
 func (f *fakeTGStatus) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
 	f.sent = append(f.sent, text)
 	return len(f.sent), nil
@@ -213,10 +196,10 @@ func TestHandleUpdate_AdminChatIgnoresNonAdminCommands(t *testing.T) {
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
 	b := &Bot{
-		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -239,10 +222,10 @@ func TestHandleUpdate_AdminChatIgnoresPlainMessages(t *testing.T) {
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
 	b := &Bot{
-		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -264,10 +247,10 @@ func TestShouldTouchLastSeen_UsesUpdateTypeAndChatOnly(t *testing.T) {
 	b := &Bot{cfg: &config.Config{MemberSourceChatID: -1001, AdminChatID: -2002}}
 
 	if !b.shouldTouchLastSeen(UpdateContext{ChatID: -1001, UserID: 10, Message: &models.Message{}}) {
-		t.Fatal("expected main-group message to touch last seen")
+		t.Fatal("expected member-source-chat message to touch last seen")
 	}
 	if !b.shouldTouchLastSeen(UpdateContext{ChatID: -1001, UserID: 10, Callback: &models.CallbackQuery{}}) {
-		t.Fatal("expected main-group callback to touch last seen")
+		t.Fatal("expected member-source-chat callback to touch last seen")
 	}
 	if b.shouldTouchLastSeen(UpdateContext{ChatID: 10, UserID: 10, IsPrivate: true, Message: &models.Message{}}) {
 		t.Fatal("expected private chat to not touch last seen in strict mode")
@@ -282,17 +265,17 @@ func TestHandleUpdate_DeniedByChatFilter_DoesNotWriteMemberSeen(t *testing.T) {
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
 	b := &Bot{
-		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
 	}
 	registerTestCommands(b)
 
-	// Чат не flood/admin и не private -> ChatFilter должен отклонить апдейт.
+	// Чат не member-source/admin и не private -> ChatFilter должен отклонить апдейт.
 	upd := models.Update{Message: &models.Message{Chat: models.Chat{ID: -3003, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u"}, Text: "!пленки"}}
 	b.handleUpdate(context.Background(), upd)
 
@@ -306,10 +289,10 @@ func TestHandleUpdate_MembershipUpdateHandledOnce(t *testing.T) {
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
 	b := &Bot{
-		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -347,7 +330,7 @@ func TestHandleUpdate_MembershipUpdateOutsideMemberSourceChat_Ignored(t *testing
 		cfg:           &config.Config{MemberSourceChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -406,10 +389,10 @@ func TestHandleUpdate_MessageWithoutSender_DoesNotPanicOrWrite(t *testing.T) {
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
 	b := &Bot{
-		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -424,7 +407,7 @@ func TestHandleUpdate_MessageWithoutSender_DoesNotPanicOrWrite(t *testing.T) {
 	}
 }
 
-func TestHandleUpdate_MainGroupHumanMessage_PersistsBeforeCountMessage(t *testing.T) {
+func TestHandleUpdate_MemberSourceChatHumanMessage_PersistsBeforeCountMessage(t *testing.T) {
 	tg := &fakeTGStatus{}
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
@@ -432,7 +415,6 @@ func TestHandleUpdate_MainGroupHumanMessage_PersistsBeforeCountMessage(t *testin
 	b := &Bot{
 		cfg: &config.Config{
 			MemberSourceChatID:    -1001,
-			FloodChatID:           -1001,
 			AdminChatID:           -2002,
 			RateLimitRequests:     100,
 			RateLimitWindow:       time.Minute,
@@ -441,7 +423,7 @@ func TestHandleUpdate_MainGroupHumanMessage_PersistsBeforeCountMessage(t *testin
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
 		streakService: streakSvc,
-		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -464,7 +446,7 @@ func TestHandleUpdate_MainGroupHumanMessage_PersistsBeforeCountMessage(t *testin
 	}
 }
 
-func TestHandleUpdate_MessageDrivenPipeline_UsesMainGroupSourceChat(t *testing.T) {
+func TestHandleUpdate_MessageDrivenPipeline_UsesMemberSourceChat(t *testing.T) {
 	tg := &fakeTGStatus{}
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
@@ -472,7 +454,6 @@ func TestHandleUpdate_MessageDrivenPipeline_UsesMainGroupSourceChat(t *testing.T
 	b := &Bot{
 		cfg: &config.Config{
 			MemberSourceChatID:    -1001,
-			FloodChatID:           -7777,
 			AdminChatID:           -2002,
 			RateLimitRequests:     100,
 			RateLimitWindow:       time.Minute,
@@ -481,32 +462,32 @@ func TestHandleUpdate_MessageDrivenPipeline_UsesMainGroupSourceChat(t *testing.T
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
 		streakService: streakSvc,
-		chatFilter:    allowMainAndFloodFilterStatus{mainGroupID: -1001, floodChatID: -7777, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
 	}
 
-	mainMsg := models.Update{Message: &models.Message{Chat: models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u", FirstName: "User"}, Text: "hello"}}
-	b.handleUpdate(context.Background(), mainMsg)
+	memberSourceMsg := models.Update{Message: &models.Message{Chat: models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u", FirstName: "User"}, Text: "hello"}}
+	b.handleUpdate(context.Background(), memberSourceMsg)
 
 	if repo.ensureActiveCalls != 1 || streakSvc.calls != 1 {
-		t.Fatalf("expected main-group message to drive both persistence and count once, got ensure=%d count=%d", repo.ensureActiveCalls, streakSvc.calls)
+		t.Fatalf("expected member-source-chat message to drive both persistence and count once, got ensure=%d count=%d", repo.ensureActiveCalls, streakSvc.calls)
 	}
 
 	repo.ensureActiveCalls = 0
 	streakSvc.calls = 0
 	repo.callOrder = nil
 
-	floodMsg := models.Update{Message: &models.Message{Chat: models.Chat{ID: -7777, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u", FirstName: "User"}, Text: "hello"}}
-	b.handleUpdate(context.Background(), floodMsg)
+	otherChatMsg := models.Update{Message: &models.Message{Chat: models.Chat{ID: -7777, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u", FirstName: "User"}, Text: "hello"}}
+	b.handleUpdate(context.Background(), otherChatMsg)
 
 	if repo.ensureActiveCalls != 0 || streakSvc.calls != 0 {
-		t.Fatalf("expected non-main chat to not drive message-ingest pipeline, got ensure=%d count=%d", repo.ensureActiveCalls, streakSvc.calls)
+		t.Fatalf("expected non-member-source chat to not drive message-ingest pipeline, got ensure=%d count=%d", repo.ensureActiveCalls, streakSvc.calls)
 	}
 }
 
-func TestHandleUpdate_MainGroupCommand_DoesNotCountStreakMessage(t *testing.T) {
+func TestHandleUpdate_MemberSourceChatCommand_DoesNotCountStreakMessage(t *testing.T) {
 	tg := &fakeTGStatus{}
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
@@ -514,7 +495,6 @@ func TestHandleUpdate_MainGroupCommand_DoesNotCountStreakMessage(t *testing.T) {
 	b := &Bot{
 		cfg: &config.Config{
 			MemberSourceChatID:    -1001,
-			FloodChatID:           -1001,
 			AdminChatID:           -2002,
 			RateLimitRequests:     100,
 			RateLimitWindow:       time.Minute,
@@ -523,7 +503,7 @@ func TestHandleUpdate_MainGroupCommand_DoesNotCountStreakMessage(t *testing.T) {
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
 		streakService: streakSvc,
-		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -540,7 +520,7 @@ func TestHandleUpdate_MainGroupCommand_DoesNotCountStreakMessage(t *testing.T) {
 	}
 }
 
-func TestHandleUpdate_MainGroupNonTextMessage_DoesNotCountStreakMessage(t *testing.T) {
+func TestHandleUpdate_MemberSourceChatNonTextMessage_DoesNotCountStreakMessage(t *testing.T) {
 	tg := &fakeTGStatus{}
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
@@ -548,7 +528,6 @@ func TestHandleUpdate_MainGroupNonTextMessage_DoesNotCountStreakMessage(t *testi
 	b := &Bot{
 		cfg: &config.Config{
 			MemberSourceChatID:    -1001,
-			FloodChatID:           -1001,
 			AdminChatID:           -2002,
 			RateLimitRequests:     100,
 			RateLimitWindow:       time.Minute,
@@ -557,7 +536,7 @@ func TestHandleUpdate_MainGroupNonTextMessage_DoesNotCountStreakMessage(t *testi
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
 		streakService: streakSvc,
-		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -574,15 +553,15 @@ func TestHandleUpdate_MainGroupNonTextMessage_DoesNotCountStreakMessage(t *testi
 	}
 }
 
-func TestHandleUpdate_MainGroupBotMessage_StaysExcludedFromRoleCandidates(t *testing.T) {
+func TestHandleUpdate_MemberSourceChatBotMessage_StaysExcludedFromRoleCandidates(t *testing.T) {
 	tg := &fakeTGStatus{}
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
 	b := &Bot{
-		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -599,15 +578,15 @@ func TestHandleUpdate_MainGroupBotMessage_StaysExcludedFromRoleCandidates(t *tes
 	}
 }
 
-func TestHandleUpdate_MainGroupNonTextMessage_PersistsMemberOnce(t *testing.T) {
+func TestHandleUpdate_MemberSourceChatNonTextMessage_PersistsMemberOnce(t *testing.T) {
 	tg := &fakeTGStatus{}
 	repo := &fakeMembersRepoStatus{}
 	memberSvc := members.NewService(repo)
 	b := &Bot{
-		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: memberSvc,
-		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -626,11 +605,11 @@ func TestHandleUpdate_NonTextPrivateMessage_SkipsTextOnlyPaths(t *testing.T) {
 	adminRecorder := &adminHandlerRecorder{}
 	repo := &fakeMembersRepoStatus{}
 	b := &Bot{
-		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: members.NewService(repo),
 		adminHandler:  adminRecorder,
-		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),
@@ -652,11 +631,11 @@ func TestHandleUpdate_PrivateTextMessage_GoesThroughTextOnlyPath(t *testing.T) {
 	adminRecorder := &adminHandlerRecorder{}
 	repo := &fakeMembersRepoStatus{}
 	b := &Bot{
-		cfg:           &config.Config{MemberSourceChatID: -1001, FloodChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
+		cfg:           &config.Config{MemberSourceChatID: -1001, AdminChatID: -2002, RateLimitRequests: 100, RateLimitWindow: time.Minute},
 		ops:           telegram.NewOps(tg),
 		memberService: members.NewService(repo),
 		adminHandler:  adminRecorder,
-		chatFilter:    policyChatFilterStatus{floodChatID: -1001, adminChatID: -2002},
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
 		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
 		parser:        NewCommandParser(),
 		cmdRouter:     commands.NewRouter(),

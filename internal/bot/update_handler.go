@@ -11,7 +11,7 @@ import (
 )
 
 func (b *Bot) shouldTouchLastSeen(uc UpdateContext) bool {
-	// MemberSeen в message-handler принадлежит только main-group message/callback потоку.
+	// MemberSeen в message-handler принадлежит только member-source-chat message/callback потоку.
 	// Для private чатов ownership у filters.ChatFilter (membership verification + ensure).
 	if uc.IsAdminChat || uc.UserID == 0 || uc.ChatMember != nil {
 		return false
