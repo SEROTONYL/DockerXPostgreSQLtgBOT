@@ -109,11 +109,12 @@ func (h *Handler) handleBalanceAdjustMode(ctx context.Context, chatID, userID in
 	}
 	state := h.service.GetState(userID)
 	data, _ := state.Data.(*BalanceAdjustData)
-	if modeRaw == "add" {
+	switch modeRaw {
+	case "add":
 		data.Mode = BalanceAdjustModeAdd
-	} else if modeRaw == "deduct" {
+	case "deduct":
 		data.Mode = BalanceAdjustModeDeduct
-	} else {
+	default:
 		h.resetBalanceFlow(chatID, userID, data)
 		return
 	}
@@ -537,7 +538,9 @@ func (h *Handler) handleBalanceUndo(ctx context.Context, chatID, userID int64) {
 	data.Undone = true
 	data.LastOperation = nil
 	h.service.ClearState(userID)
-	h.renderAdminScreen(h.currentWizardCtx(), chatID, userID, h.balanceWizardState(data).MessageID, "balance_adjust_undo_done", "↩️ Откат выполнен", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("🏠 Админка", cbAdminReturnPanel, "success"))))
+	if err := h.renderAdminScreen(h.currentWizardCtx(), chatID, userID, h.balanceWizardState(data).MessageID, "balance_adjust_undo_done", "↩️ Откат выполнен", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("🏠 Админка", cbAdminReturnPanel, "success")))); err != nil {
+		h.showKeyboardSafe(h.currentWizardCtx(), chatID, userID, 0)
+	}
 }
 
 func (h *Handler) ensureBalanceState(chatID, userID int64, expected string) bool {
@@ -568,7 +571,9 @@ func (h *Handler) resetBalanceFlow(chatID, userID int64, data *BalanceAdjustData
 	}
 	h.service.ClearState(userID)
 	if flowMsgID > 0 {
-		h.renderAdminScreen(h.currentWizardCtx(), chatID, userID, flowMsgID, "balance_adjust_reset", "⚠️ Сессия сбилась/устарела. Возврат в админ-панель.", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("🏠 Админка", cbAdminReturnPanel, "success"))))
+		if err := h.renderAdminScreen(h.currentWizardCtx(), chatID, userID, flowMsgID, "balance_adjust_reset", "⚠️ Сессия сбилась/устарела. Возврат в админ-панель.", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("🏠 Админка", cbAdminReturnPanel, "success")))); err != nil {
+			h.showKeyboardSafe(h.currentWizardCtx(), chatID, userID, 0)
+		}
 		return
 	}
 	h.showKeyboardSafe(h.currentWizardCtx(), chatID, userID, 0)

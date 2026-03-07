@@ -118,19 +118,23 @@ func NewScheduler(cfg *config.Config, streakService *streak.Service, memberServi
 
 // Start launches background tasks.
 func (s *Scheduler) Start(ctx context.Context) {
-	s.cron.AddFunc("0 0 * * *", func() {
+	if _, err := s.cron.AddFunc("0 0 * * *", func() {
 		log.Info(cronInfoDailyReset)
 		if err := s.streakService.DailyReset(ctx); err != nil {
 			log.WithError(err).Error(cronErrorDailyReset)
 		}
-	})
+	}); err != nil {
+		log.WithError(err).Error("[CRON] failed to register daily reset job")
+	}
 
-	s.cron.AddFunc("0 * * * *", func() {
+	if _, err := s.cron.AddFunc("0 * * * *", func() {
 		log.Debug(cronDebugReminders)
 		if err := s.streakService.SendReminders(ctx, s.sendFunc); err != nil {
 			log.WithError(err).Error(cronErrorReminders)
 		}
-	})
+	}); err != nil {
+		log.WithError(err).Error("[CRON] failed to register reminders job")
+	}
 
 	s.cron.Start()
 	log.Info(cronInfoStarted)

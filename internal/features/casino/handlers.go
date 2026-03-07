@@ -62,18 +62,18 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 	if result.IsWin {
 		sb.WriteString("\n")
 		for _, win := range result.WinLines {
-			sb.WriteString(fmt.Sprintf("✅ Линия %d: %dx %s → %s\n",
+			fmt.Fprintf(&sb, "✅ Линия %d: %dx %s → %s\n",
 				win.LineIndex+1, win.Count, win.Symbol,
-				common.FormatBalance(win.Payout)))
+				common.FormatBalance(win.Payout))
 		}
 	}
 
 	// Скаттер-бонус
 	if result.ScatterCount >= 3 {
-		sb.WriteString(fmt.Sprintf("\n🎰 Скаттер бонус! %d скаттеров → +%s",
-			result.ScatterCount, common.FormatBalance(result.ScatterWin)))
+		fmt.Fprintf(&sb, "\n🎰 Скаттер бонус! %d скаттеров → +%s",
+			result.ScatterCount, common.FormatBalance(result.ScatterWin))
 		if result.FreeSpins > 0 {
-			sb.WriteString(fmt.Sprintf(" + %d фриспинов!", result.FreeSpins))
+			fmt.Fprintf(&sb, " + %d фриспинов!", result.FreeSpins)
 		}
 		sb.WriteString("\n")
 	}
@@ -81,14 +81,14 @@ func (h *Handler) HandleSlots(ctx context.Context, chatID int64, userID int64) {
 	// Итог
 	sb.WriteString("\n")
 	if result.IsWin {
-		sb.WriteString(fmt.Sprintf("💰 Выплата: %s\n", common.FormatBalance(result.TotalPayout)))
+		fmt.Fprintf(&sb, "💰 Выплата: %s\n", common.FormatBalance(result.TotalPayout))
 	} else {
 		sb.WriteString("💸 Нет выигрыша\n")
 	}
 
 	// Текущий баланс
 	balance, _ := h.service.economyService.GetBalance(ctx, userID)
-	sb.WriteString(fmt.Sprintf("📊 Баланс: %s", common.FormatBalance(balance)))
+	fmt.Fprintf(&sb, "📊 Баланс: %s", common.FormatBalance(balance))
 
 	h.sendMessage(ctx, chatID, sb.String())
 }

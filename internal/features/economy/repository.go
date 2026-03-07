@@ -61,14 +61,18 @@ func (r *Repository) GetBalance(ctx context.Context, userID int64) (int64, error
 //   - amount: сколько (положительное число)
 //   - txType: тип транзакции (streak_bonus, casino_win, transfer, ...)
 //   - description: описание для истории транзакций
-func (r *Repository) AddBalance(ctx context.Context, userID int64, amount int64, txType, description string) error {
+func (r *Repository) AddBalance(ctx context.Context, userID int64, amount int64, txType, description string) (err error) {
 	// Начинаем транзакцию БД, чтобы обновление баланса и запись транзакции
 	// были атомарными (либо оба произойдут, либо ни одного)
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("ошибка начала транзакции: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
+			err = errors.Join(err, fmt.Errorf("ошибка отката транзакции: %w", rollbackErr))
+		}
+	}()
 
 	if err = r.ensureBalanceRowTx(ctx, tx, userID); err != nil {
 		return err
@@ -93,17 +97,24 @@ func (r *Repository) AddBalance(ctx context.Context, userID int64, amount int64,
 		return fmt.Errorf("ошибка записи транзакции: %w", err)
 	}
 
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("ошибка коммита транзакции: %w", err)
+	}
+	return nil
 }
 
 // DeductBalance списывает пленки со счёта пользователя.
 // Проверяет, что баланс не станет отрицательным.
-func (r *Repository) DeductBalance(ctx context.Context, userID int64, amount int64, txType, description string) error {
+func (r *Repository) DeductBalance(ctx context.Context, userID int64, amount int64, txType, description string) (err error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("ошибка начала транзакции: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
+			err = errors.Join(err, fmt.Errorf("ошибка отката транзакции: %w", rollbackErr))
+		}
+	}()
 
 	if err = r.ensureBalanceRowTx(ctx, tx, userID); err != nil {
 		return err
@@ -141,17 +152,24 @@ func (r *Repository) DeductBalance(ctx context.Context, userID int64, amount int
 		return fmt.Errorf("ошибка записи транзакции: %w", err)
 	}
 
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("ошибка коммита транзакции: %w", err)
+	}
+	return nil
 }
 
 // Transfer переводит пленки от одного пользователя к другому.
 // Атомарная операция: либо оба баланса обновятся, либо ни одного.
-func (r *Repository) Transfer(ctx context.Context, fromUserID, toUserID, amount int64) error {
+func (r *Repository) Transfer(ctx context.Context, fromUserID, toUserID, amount int64) (err error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("ошибка начала транзакции: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
+			err = errors.Join(err, fmt.Errorf("ошибка отката транзакции: %w", rollbackErr))
+		}
+	}()
 
 	if err = r.ensureBalanceRowTx(ctx, tx, fromUserID); err != nil {
 		return err
@@ -202,7 +220,10 @@ func (r *Repository) Transfer(ctx context.Context, fromUserID, toUserID, amount 
 		return fmt.Errorf("ошибка записи транзакции: %w", err)
 	}
 
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("ошибка коммита транзакции: %w", err)
+	}
+	return nil
 }
 
 func (r *Repository) ensureBalanceRowTx(ctx context.Context, tx pgx.Tx, userID int64) error {

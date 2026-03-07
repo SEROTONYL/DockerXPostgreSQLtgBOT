@@ -103,8 +103,11 @@ func (s *Service) VerifyPassword(ctx context.Context, userID int64, password str
 	// Проверяем пароль
 	match := verifyArgon2id(password, s.cfg.AdminPasswordHash)
 
-	// Логируем попытку
-	s.repo.LogAttempt(ctx, userID, match)
+	// Логируем попытку. Это аудит/телеметрия: не блокируем основной поток,
+	// но не теряем ошибку.
+	if err := s.repo.LogAttempt(ctx, userID, match); err != nil {
+		log.WithError(err).WithFields(log.Fields{"user_id": userID, "success": match}).Warn("не удалось сохранить попытку входа администратора")
+	}
 
 	if !match {
 		return fmt.Errorf("неверный пароль")

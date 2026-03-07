@@ -157,10 +157,9 @@ type fakeMemberRepoHandlers struct {
 type fakeMemberSyncRepo struct {
 	activeIDs           []int64
 	refreshCandidateIDs []int64
-	without          []*members.Member
-	updateTagErr     error
-	listErr          error
-	updateTagBlocked bool
+	updateTagErr        error
+	listErr             error
+	updateTagBlocked    bool
 }
 
 func (r *fakeMemberSyncRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, joinedAt time.Time) error {
