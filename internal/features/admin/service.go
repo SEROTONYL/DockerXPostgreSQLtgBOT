@@ -214,6 +214,14 @@ func (s *Service) AssignRole(ctx context.Context, userID int64, role string) err
 	return s.memberRepo.UpdateRole(ctx, userID, role)
 }
 
+// DeleteBalanceDelta удаляет сохранённую дельту баланса в рамках чата.
+func (s *Service) DeleteBalanceDelta(ctx context.Context, chatID int64, deltaID int64) error {
+	if chatID <= 0 || deltaID <= 0 {
+		return fmt.Errorf("некорректные параметры удаления дельты")
+	}
+	return s.repo.DeleteBalanceDelta(ctx, chatID, deltaID)
+}
+
 // --- Криптографические утилиты ---
 
 // verifyArgon2id проверяет пароль по хешу Argon2id.

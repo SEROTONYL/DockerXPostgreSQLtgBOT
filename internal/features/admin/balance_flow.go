@@ -309,7 +309,7 @@ func (h *Handler) handleBalanceAmount(chatID, userID int64, cb string) {
 			h.renderBalanceAmount(chatID, userID)
 			return
 		}
-		if err := h.service.repo.DeleteBalanceDelta(h.currentWizardCtx(), chatID, id); err != nil {
+		if err := h.service.DeleteBalanceDelta(h.currentWizardCtx(), chatID, id); err != nil {
 			h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_delta_delete", "❌ Не удалось удалить дельту", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
 			return
 		}
