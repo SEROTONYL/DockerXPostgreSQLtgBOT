@@ -118,3 +118,17 @@ func (r *Repository) CreateBalanceDelta(ctx context.Context, chatID int64, name 
 	}
 	return nil
 }
+
+func (r *Repository) DeleteBalanceDelta(ctx context.Context, chatID int64, deltaID int64) error {
+	cmd, err := r.db.Exec(ctx, `
+		DELETE FROM admin_balance_deltas
+		WHERE chat_id = $1 AND id = $2
+	`, chatID, deltaID)
+	if err != nil {
+		return fmt.Errorf("ошибка удаления дельты: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("дельта не найдена")
+	}
+	return nil
+}

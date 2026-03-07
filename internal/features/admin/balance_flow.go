@@ -27,6 +27,8 @@ const (
 	cbBalAmtManual      = "admin:balamt:manual"
 	cbBalAmtBack        = "admin:balamt:back"
 	cbBalAmtAddDelta    = "admin:balamt:add_delta"
+	cbBalAmtDeleteDelta = "admin:balamt:delete_delta"
+	cbBalAmtDeleteID    = "admin:balamt:delete:"
 
 	cbBalConfirmApply  = "admin:balconfirm:apply"
 	cbBalConfirmBack   = "admin:balconfirm:back"
@@ -260,7 +262,7 @@ func (h *Handler) renderBalanceAmount(chatID, userID int64) {
 	for _, d := range deltas {
 		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData(fmt.Sprintf("%s %s%d", strings.TrimSpace(d.Name), sign, d.Amount), cbBalAmtDeltaPrefix+strconv.FormatInt(d.Amount, 10))))
 	}
-	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData("➕ Добавить дельту", cbBalAmtAddDelta)))
+	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData("➕ Добавить дельту", cbBalAmtAddDelta), newInlineKeyboardButtonData("🗑 Удалить дельту", cbBalAmtDeleteDelta)))
 	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData("⌨️ Ввести вручную", cbBalAmtManual)))
 	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger")))
 	h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_amount", "Выберите сумму изменения:", newInlineKeyboardMarkup(rows...))
@@ -299,6 +301,19 @@ func (h *Handler) handleBalanceAmount(chatID, userID int64, cb string) {
 		w.AwaitTextFor = "delta_name"
 		h.service.SetState(userID, StateBalanceDeltaName, data)
 		h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_delta_name", "Введите название дельты (1..32)", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
+	case state.State == StateBalanceAdjustAmount && cb == cbBalAmtDeleteDelta:
+		h.renderBalanceDeltaDelete(chatID, userID, data)
+	case state.State == StateBalanceAdjustAmount && strings.HasPrefix(cb, cbBalAmtDeleteID):
+		id, err := strconv.ParseInt(strings.TrimPrefix(cb, cbBalAmtDeleteID), 10, 64)
+		if err != nil || id <= 0 {
+			h.renderBalanceAmount(chatID, userID)
+			return
+		}
+		if err := h.service.DeleteBalanceDelta(h.currentWizardCtx(), chatID, id); err != nil {
+			h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_delta_delete", "❌ Не удалось удалить дельту", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
+			return
+		}
+		h.renderBalanceAmount(chatID, userID)
 	case cb == cbBalAmtBack && state.State == StateBalanceAdjustAmount:
 		uiwizard.Transition(h.balanceWizardState(data), StateBalanceAdjustPicker)
 		h.service.SetState(userID, StateBalanceAdjustPicker, data)
@@ -311,6 +326,24 @@ func (h *Handler) handleBalanceAmount(chatID, userID int64, cb string) {
 		h.service.SetState(userID, StateBalanceAdjustAmount, data)
 		h.renderBalanceAmount(chatID, userID)
 	}
+}
+
+func (h *Handler) renderBalanceDeltaDelete(chatID, userID int64, data *BalanceAdjustData) {
+	deltas, err := h.service.repo.ListBalanceDeltas(h.currentWizardCtx(), chatID)
+	if err != nil {
+		h.renderWizardError(chatID, userID, data, "balance_delta_delete", "Удаление дельты:", "Не удалось загрузить дельты", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
+		return
+	}
+	if len(deltas) == 0 {
+		h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_delta_delete", "Удаление дельты:\nℹ️ Нет сохранённых дельт", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
+		return
+	}
+	rows := make([][]models.InlineKeyboardButton, 0, len(deltas)+1)
+	for _, d := range deltas {
+		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData(fmt.Sprintf("🗑 %s (%d)", strings.TrimSpace(d.Name), d.Amount), cbBalAmtDeleteID+strconv.FormatInt(d.ID, 10))))
+	}
+	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger")))
+	h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_delta_delete", "Выберите дельту для удаления:", newInlineKeyboardMarkup(rows...))
 }
 
 func (h *Handler) handleBalanceAdjustManualAmount(ctx context.Context, chatID, userID int64, text string) bool {
