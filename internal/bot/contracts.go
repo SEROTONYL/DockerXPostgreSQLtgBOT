@@ -13,6 +13,11 @@ type AdminHandler interface {
 	HandleAdminMessage(ctx context.Context, chatID int64, userID int64, messageID int, text string) bool
 }
 
+// MembersHandler описывает обработку callback-ов пользовательского списка участников.
+type MembersHandler interface {
+	HandleMembersCallback(ctx context.Context, q *models.CallbackQuery) bool
+}
+
 // ChatAccessFilter описывает проверку доступа апдейтов по чату.
 type ChatAccessFilter interface {
 	CheckAccess(ctx context.Context, message *models.Message) bool

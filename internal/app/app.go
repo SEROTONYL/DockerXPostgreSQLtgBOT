@@ -14,6 +14,7 @@ import (
 	"serotonyl.ru/telegram-bot/internal/features/casino"
 	"serotonyl.ru/telegram-bot/internal/features/economy"
 	"serotonyl.ru/telegram-bot/internal/features/karma"
+	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/features/streak"
 	"serotonyl.ru/telegram-bot/internal/jobs"
 )
@@ -70,6 +71,11 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		return nil, err
 	}
 
+	membersModule, err := members.NewModule(members.Deps{Cfg: cfg, Ops: tg.Ops, Service: infra.MemberService, Economy: infra.EconomyService})
+	if err != nil {
+		return nil, err
+	}
+
 	casinoModule, err := casino.NewModule(casino.Deps{Cfg: cfg, Ops: tg.Ops, Service: infra.CasinoService})
 	if err != nil {
 		return nil, err
@@ -80,11 +86,13 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	karma.RegisterCommands(cmdRouter, karmaModule.Handler, cfg)
 	streak.RegisterCommands(cmdRouter, streakModule.Handler, cfg)
 	casino.RegisterCommands(cmdRouter, casinoModule.Handler, cfg)
+	membersModule.Feature.RegisterCommands(cmdRouter)
 
 	chatFilter := modules.BuildChatFilter(cfg, infra, tg)
 	b := modules.BuildBot(cfg, infra, tg, cmdRouter, chatFilter, modules.BotHandlers{
-		Admin: adminModule.Handler,
-		Karma: karmaModule.Handler,
+		Admin:   adminModule.Handler,
+		Members: membersModule.Handler,
+		Karma:   karmaModule.Handler,
 	}, modules.KarmaClassifier{Match: karma.IsThankYou})
 
 	scheduler = modules.BuildScheduler(cfg, infra, tg, b)

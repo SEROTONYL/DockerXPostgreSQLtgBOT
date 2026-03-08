@@ -651,3 +651,11 @@ func TestHandleUpdate_PrivateTextMessage_GoesThroughTextOnlyPath(t *testing.T) {
 		t.Fatalf("expected message handler to skip private member persistence, got %d", repo.ensureActiveCalls)
 	}
 }
+
+func (f *fakeMembersRepoStatus) GetUsersWithRole(ctx context.Context) ([]*members.Member, error) {
+	return nil, nil
+}
+
+func (f *fakeMembersRepoStatus) GetUsersWithoutRole(ctx context.Context) ([]*members.Member, error) {
+	return nil, nil
+}

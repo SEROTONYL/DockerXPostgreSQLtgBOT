@@ -1651,3 +1651,11 @@ func TestHandleAdminMessage_LoginAuthFlowSuccess_ShowsPanelAndClearsState(t *tes
 		t.Fatalf("expected no extra success message spam")
 	}
 }
+
+func (f *fakeMemberSyncRepo) GetUsersWithRole(ctx context.Context) ([]*members.Member, error) {
+	return nil, nil
+}
+
+func (f *fakeMemberSyncRepo) GetUsersWithoutRole(ctx context.Context) ([]*members.Member, error) {
+	return nil, nil
+}

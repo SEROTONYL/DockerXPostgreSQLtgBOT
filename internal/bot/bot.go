@@ -33,6 +33,7 @@ type Deps struct {
 	KarmaService   KarmaService
 	KarmaHandler   KarmaHandler
 	AdminHandler   AdminHandler
+	MembersHandler MembersHandler
 	ChatFilter     ChatAccessFilter
 	ThankYou       KarmaThankYouClassifier
 }
@@ -71,8 +72,9 @@ type Bot struct {
 	chatFilter  ChatAccessFilter
 	rateLimiter *middleware.RateLimiter
 
-	adminHandler AdminHandler
-	karmaHandler KarmaHandler
+	adminHandler   AdminHandler
+	membersHandler MembersHandler
+	karmaHandler   KarmaHandler
 
 	memberService  MemberService
 	economyService EconomyService
@@ -99,6 +101,7 @@ func New(d Deps) *Bot {
 		chatFilter:     d.ChatFilter,
 		rateLimiter:    middleware.NewRateLimiter(d.Cfg.RateLimitRequests, d.Cfg.RateLimitWindow),
 		adminHandler:   d.AdminHandler,
+		membersHandler: d.MembersHandler,
 		karmaHandler:   d.KarmaHandler,
 		memberService:  d.MemberService,
 		economyService: d.EconomyService,

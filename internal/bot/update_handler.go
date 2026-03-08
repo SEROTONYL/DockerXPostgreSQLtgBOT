@@ -54,7 +54,7 @@ func (b *Bot) handleAdminChatUpdate(ctx context.Context, uc UpdateContext) {
 	if uc.Message == nil {
 		return
 	}
-	cmd, args, isCommand := b.parser.ParseCommand(uc.Message.Text)
+	cmd, args, isCommand := b.parser.ParseCommand(uc.Message.Text, true)
 	if isCommand && isAdminChatAllowedCommand(cmd) {
 		b.routeCommand(ctx, uc, cmd, args)
 	}
@@ -80,6 +80,9 @@ func (b *Bot) handleCallbackUpdate(ctx context.Context, uc UpdateContext) bool {
 		if err := b.memberService.EnsureActiveMemberSeen(ctx, uc.UserID, uc.Username, uc.FullName, uc.Callback.From.IsBot, uc.Now); err != nil {
 			log.WithError(err).WithField("user_id", uc.UserID).Debug("EnsureActiveMemberSeen failed")
 		}
+	}
+	if b.membersHandler != nil && b.membersHandler.HandleMembersCallback(ctx, uc.Callback) {
+		return true
 	}
 	if b.adminHandler.HandleAdminCallback(ctx, uc.Callback) {
 		return true
@@ -139,7 +142,7 @@ func (b *Bot) handleMessageUpdate(ctx context.Context, uc UpdateContext) {
 		}
 	}
 
-	cmd, args, isCommand := b.parser.ParseCommand(messageText)
+	cmd, args, isCommand := b.parser.ParseCommand(messageText, false)
 	log.WithFields(log.Fields{
 		"isCommand": isCommand,
 		"cmd":       cmd,

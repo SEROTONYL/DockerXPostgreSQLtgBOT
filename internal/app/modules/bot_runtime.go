@@ -21,6 +21,9 @@ type BotHandlers struct {
 		HandleAdminMessage(ctx context.Context, chatID int64, userID int64, messageID int, text string) bool
 		HandleAdminCallback(ctx context.Context, q *models.CallbackQuery) bool
 	}
+	Members interface {
+		HandleMembersCallback(ctx context.Context, q *models.CallbackQuery) bool
+	}
 	Karma interface {
 		HandleThankYou(ctx context.Context, chatID int64, fromUserID int64, toUserID int64)
 	}
@@ -69,6 +72,7 @@ func BuildBot(cfg *config.Config, infra *Infra, tg *Telegram, cmdRouter *command
 		KarmaService:   infra.KarmaService,
 		KarmaHandler:   handlers.Karma,
 		AdminHandler:   handlers.Admin,
+		MembersHandler: handlers.Members,
 		ChatFilter:     chatFilter,
 		ThankYou:       classifier,
 	})

@@ -32,7 +32,7 @@ func TestRegisterAllFeaturesSmoke(t *testing.T) {
 		karma.NewFeature(nil, cfg),
 		streak.NewFeature(nil, cfg),
 		casino.NewFeature(nil, cfg),
-		members.NewFeature(),
+		members.NewFeature(nil),
 		debts.NewFeature(),
 	}
 

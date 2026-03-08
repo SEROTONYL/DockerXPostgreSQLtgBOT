@@ -8,8 +8,11 @@ import (
 )
 
 // RegisterCommands регистрирует команды экономики.
-func RegisterCommands(r *commands.Router, h *Handler, _ *config.Config) {
+func RegisterCommands(r *commands.Router, h *Handler, cfg *config.Config) {
 	r.Register("пленки", func(ctx context.Context, c commands.Context, args []string) {
+		if cfg == nil || c.ChatID != cfg.MemberSourceChatID {
+			return
+		}
 		h.HandleBalance(ctx, c.ChatID, c.UserID)
 	})
 	r.Register("отсыпать", func(ctx context.Context, c commands.Context, args []string) {

@@ -54,5 +54,6 @@ func (r *Router) Dispatch(ctx context.Context, c Context, cmd string, args []str
 }
 
 func normalize(cmd string) string {
-	return strings.ToLower(strings.TrimSpace(cmd))
+	cmd = strings.ToLower(strings.TrimSpace(cmd))
+	return strings.ReplaceAll(cmd, "ё", "е")
 }

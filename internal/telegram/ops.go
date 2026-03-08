@@ -18,6 +18,18 @@ type Client interface {
 	GetChatMember(chatID int64, userID int64) (member botapi.ChatMember, err error)
 }
 
+type parseModeSender interface {
+	SendMessageWithParseMode(chatID int64, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) (messageID int, err error)
+}
+
+type parseModeEditor interface {
+	EditMessageWithParseMode(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) error
+}
+
+var ParseModeHTML = stringPtr("HTML")
+
+func stringPtr(v string) *string { return &v }
+
 type updateHandler struct {
 	match   func(*botapi.Update) bool
 	handler func(context.Context, *botapi.Update)
@@ -42,7 +54,18 @@ func NewBotClient(bot *botapi.Bot) Client {
 }
 
 func (a *botClient) SendMessage(chatID int64, text string, markup *botapi.InlineKeyboardMarkup) (int, error) {
-	msg, err := a.bot.SendMessage(context.Background(), buildSendMessageParams(chatID, text, markup))
+	msg, err := a.bot.SendMessage(context.Background(), buildSendMessageParams(chatID, text, markup, nil))
+	if err != nil {
+		return 0, err
+	}
+	if msg == nil {
+		return 0, nil
+	}
+	return msg.MessageID, nil
+}
+
+func (a *botClient) SendMessageWithParseMode(chatID int64, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) (int, error) {
+	msg, err := a.bot.SendMessage(context.Background(), buildSendMessageParams(chatID, text, markup, parseMode))
 	if err != nil {
 		return 0, err
 	}
@@ -53,7 +76,12 @@ func (a *botClient) SendMessage(chatID int64, text string, markup *botapi.Inline
 }
 
 func (a *botClient) EditMessage(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup) error {
-	_, err := a.bot.EditMessageText(context.Background(), buildEditMessageTextParams(chatID, messageID, text, markup))
+	_, err := a.bot.EditMessageText(context.Background(), buildEditMessageTextParams(chatID, messageID, text, markup, nil))
+	return err
+}
+
+func (a *botClient) EditMessageWithParseMode(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) error {
+	_, err := a.bot.EditMessageText(context.Background(), buildEditMessageTextParams(chatID, messageID, text, markup, parseMode))
 	return err
 }
 
@@ -148,18 +176,24 @@ func (a *botClient) AnswerCallbackQueryCtx(ctx context.Context, callbackID strin
 	})
 }
 
-func buildSendMessageParams(chatID int64, text string, markup *botapi.InlineKeyboardMarkup) *botapi.SendMessageParams {
+func buildSendMessageParams(chatID int64, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) *botapi.SendMessageParams {
 	params := &botapi.SendMessageParams{ChatID: botapi.ChatID{ID: chatID}, Text: text}
 	if markup != nil {
 		params.ReplyMarkup = markup
 	}
+	if parseMode != nil {
+		params.ParseMode = *parseMode
+	}
 	return params
 }
 
-func buildEditMessageTextParams(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup) *botapi.EditMessageTextParams {
+func buildEditMessageTextParams(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) *botapi.EditMessageTextParams {
 	params := &botapi.EditMessageTextParams{ChatID: botapi.ChatID{ID: chatID}, MessageID: messageID, Text: text}
 	if markup != nil {
 		params.ReplyMarkup = markup
+	}
+	if parseMode != nil {
+		params.ParseMode = *parseMode
 	}
 	return params
 }
@@ -199,7 +233,11 @@ func NewOpsWithLogger(c Client, l *logrus.Entry) *Ops {
 }
 
 func (o *Ops) Send(ctx context.Context, chatID int64, text string, markup *botapi.InlineKeyboardMarkup) (int, error) {
-	msgID, err := o.c.SendMessage(chatID, text, markup)
+	return o.SendWithParseMode(ctx, chatID, text, markup, nil)
+}
+
+func (o *Ops) SendWithParseMode(ctx context.Context, chatID int64, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) (int, error) {
+	msgID, err := o.sendWithParseMode(chatID, text, markup, parseMode)
 	if err != nil {
 		o.log.WithContext(ctx).WithError(err).WithField("chat_id", chatID).Warn("telegram send failed")
 		return 0, err
@@ -210,7 +248,11 @@ func (o *Ops) SendText(ctx context.Context, chatID int64, text string, markup *b
 	return o.Send(ctx, chatID, text, markup)
 }
 func (o *Ops) Edit(ctx context.Context, chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup) error {
-	err := o.c.EditMessage(chatID, messageID, text, markup)
+	return o.EditWithParseMode(ctx, chatID, messageID, text, markup, nil)
+}
+
+func (o *Ops) EditWithParseMode(ctx context.Context, chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) error {
+	err := o.editWithParseMode(chatID, messageID, text, markup, parseMode)
 	if err == nil {
 		return nil
 	}
@@ -351,6 +393,20 @@ func (o *Ops) answerCallbackAck(ctx context.Context, callbackID string) error {
 	default:
 		return fmt.Errorf("client does not support answer callback")
 	}
+}
+
+func (o *Ops) sendWithParseMode(chatID int64, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) (int, error) {
+	if c, ok := any(o.c).(parseModeSender); ok {
+		return c.SendMessageWithParseMode(chatID, text, markup, parseMode)
+	}
+	return o.c.SendMessage(chatID, text, markup)
+}
+
+func (o *Ops) editWithParseMode(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) error {
+	if c, ok := any(o.c).(parseModeEditor); ok {
+		return c.EditMessageWithParseMode(chatID, messageID, text, markup, parseMode)
+	}
+	return o.c.EditMessage(chatID, messageID, text, markup)
 }
 
 func (o *Ops) EditOrSend(ctx context.Context, chatID int64, messageID int, text string, keyboard botapi.InlineKeyboardMarkup) (int, bool, error) {

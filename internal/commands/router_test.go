@@ -39,3 +39,15 @@ func TestRouterRegisterDuplicatePanics(t *testing.T) {
 
 	r.Register(" CMD ", func(ctx context.Context, c Context, args []string) {})
 }
+
+func TestRouterNormalizeTreatsYoAsYe(t *testing.T) {
+	r := NewRouter()
+	called := false
+	r.Register("пленки", func(ctx context.Context, c Context, args []string) { called = true })
+	if ok := r.Dispatch(context.Background(), Context{}, "плёнки", nil); !ok {
+		t.Fatal("expected command alias with ё to be dispatched")
+	}
+	if !called {
+		t.Fatal("expected handler called")
+	}
+}
