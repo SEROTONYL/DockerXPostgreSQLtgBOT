@@ -28,6 +28,7 @@ type Screen struct {
 	MessageID   int
 	Text        string
 	ReplyMarkup any
+	ParseMode   *string
 }
 
 // RenderScreen is the SINGLE source of truth for edit-or-send behavior.
@@ -36,7 +37,7 @@ func RenderScreen(ctx context.Context, ops *Ops, s Screen) (msgID int, usedEdit 
 	mk := inlineMarkup(s.ReplyMarkup)
 
 	if s.MessageID > 0 {
-		err = ops.Edit(ctx, s.ChatID, s.MessageID, s.Text, mk)
+		err = ops.EditWithParseMode(ctx, s.ChatID, s.MessageID, s.Text, mk, s.ParseMode)
 		if err == nil {
 			return s.MessageID, true, nil
 		}
@@ -46,7 +47,7 @@ func RenderScreen(ctx context.Context, ops *Ops, s Screen) (msgID int, usedEdit 
 		}
 
 		if ShouldFallbackToSendOnEdit(err) {
-			sentID, sendErr := ops.Send(ctx, s.ChatID, s.Text, mk)
+			sentID, sendErr := ops.SendWithParseMode(ctx, s.ChatID, s.Text, mk, s.ParseMode)
 			if sendErr != nil {
 				return 0, false, sendErr
 			}
@@ -55,7 +56,7 @@ func RenderScreen(ctx context.Context, ops *Ops, s Screen) (msgID int, usedEdit 
 		return 0, true, err
 	}
 
-	sentID, sendErr := ops.Send(ctx, s.ChatID, s.Text, mk)
+	sentID, sendErr := ops.SendWithParseMode(ctx, s.ChatID, s.Text, mk, s.ParseMode)
 	if sendErr != nil {
 		return 0, false, sendErr
 	}

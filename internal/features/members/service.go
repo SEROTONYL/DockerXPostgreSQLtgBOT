@@ -34,6 +34,8 @@ type memberRepository interface {
 	UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error
 	CountMembersByStatus(ctx context.Context) (active int, left int, err error)
 	CountPendingPurge(ctx context.Context, now time.Time) (int, error)
+	GetUsersWithRole(ctx context.Context) ([]*Member, error)
+	GetUsersWithoutRole(ctx context.Context) ([]*Member, error)
 }
 
 // Service управляет участниками чата.
@@ -101,6 +103,14 @@ func (s *Service) TouchLastSeen(ctx context.Context, userID int64, seenAt time.T
 
 func (s *Service) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {
 	return s.repo.CountMembersByStatus(ctx)
+}
+
+func (s *Service) GetUsersWithRole(ctx context.Context) ([]*Member, error) {
+	return s.repo.GetUsersWithRole(ctx)
+}
+
+func (s *Service) GetUsersWithoutRole(ctx context.Context) ([]*Member, error) {
+	return s.repo.GetUsersWithoutRole(ctx)
 }
 
 func (s *Service) CountPendingPurge(ctx context.Context, now time.Time) (int, error) {

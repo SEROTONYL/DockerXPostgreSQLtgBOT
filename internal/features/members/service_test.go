@@ -462,3 +462,6 @@ func (f *fakeTelegramClient) GetChatMember(chatID int64, userID int64) (models.C
 	}
 	return &models.ChatMemberMember{User: models.User{ID: userID}}, nil
 }
+
+func (f *fakeRepo) GetUsersWithRole(ctx context.Context) ([]*Member, error)    { return nil, nil }
+func (f *fakeRepo) GetUsersWithoutRole(ctx context.Context) ([]*Member, error) { return nil, nil }

@@ -6,7 +6,7 @@ import (
 )
 
 func TestSendMessage_DoesNotSerializeNullReplyMarkup(t *testing.T) {
-	params := buildSendMessageParams(12345, "hello", nil)
+	params := buildSendMessageParams(12345, "hello", nil, nil)
 
 	payload, err := json.Marshal(params)
 	if err != nil {
@@ -24,7 +24,7 @@ func TestSendMessage_DoesNotSerializeNullReplyMarkup(t *testing.T) {
 }
 
 func TestEditMessage_DoesNotSerializeNullReplyMarkup(t *testing.T) {
-	params := buildEditMessageTextParams(12345, 42, "hello", nil)
+	params := buildEditMessageTextParams(12345, 42, "hello", nil, nil)
 
 	payload, err := json.Marshal(params)
 	if err != nil {

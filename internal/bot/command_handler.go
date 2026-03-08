@@ -59,17 +59,18 @@ type CommandParser struct {
 
 // NewCommandParser создаёт парсер команд.
 func NewCommandParser() *CommandParser {
-	return &CommandParser{
-		validPrefixes: []string{"!", ".", "/"},
-	}
+	return &CommandParser{validPrefixes: []string{"!", ".", "/"}}
 }
 
 // ParseCommand разбирает текст на команду и аргументы.
-func (p *CommandParser) ParseCommand(text string) (string, []string, bool) {
+func (p *CommandParser) ParseCommand(text string, allowSlash bool) (string, []string, bool) {
 	text = strings.TrimSpace(text)
 
 	hasPrefix := false
 	for _, prefix := range p.validPrefixes {
+		if prefix == "/" && !allowSlash {
+			continue
+		}
 		if strings.HasPrefix(text, prefix) {
 			text = strings.TrimPrefix(text, prefix)
 			hasPrefix = true
@@ -83,12 +84,12 @@ func (p *CommandParser) ParseCommand(text string) (string, []string, bool) {
 
 	text = strings.TrimSpace(text)
 	parts := strings.Fields(text)
-
 	if len(parts) == 0 {
 		return "", nil, false
 	}
 
 	command := strings.ToLower(parts[0])
+	command = strings.ReplaceAll(command, "ё", "е")
 	var args []string
 	if len(parts) > 1 {
 		args = parts[1:]

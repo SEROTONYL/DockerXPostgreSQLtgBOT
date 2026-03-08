@@ -1,9 +1,19 @@
 package members
 
-import "serotonyl.ru/telegram-bot/internal/commands"
+import (
+	"context"
 
-type Feature struct{}
+	"serotonyl.ru/telegram-bot/internal/commands"
+)
 
-func NewFeature() *Feature                           { return &Feature{} }
-func (f *Feature) Name() string                      { return "members" }
-func (f *Feature) RegisterCommands(*commands.Router) {}
+type Feature struct {
+	h *Handler
+}
+
+func NewFeature(h *Handler) *Feature { return &Feature{h: h} }
+func (f *Feature) Name() string      { return "members" }
+func (f *Feature) RegisterCommands(r *commands.Router) {
+	r.Register("список", func(ctx context.Context, c commands.Context, args []string) {
+		f.h.HandleMembersList(ctx, c.ChatID, c.UserID)
+	})
+}

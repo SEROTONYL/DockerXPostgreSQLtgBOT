@@ -1,9 +1,33 @@
 package members
 
-import "serotonyl.ru/telegram-bot/internal/feature"
+import (
+	"serotonyl.ru/telegram-bot/internal/config"
+	"serotonyl.ru/telegram-bot/internal/feature"
+	"serotonyl.ru/telegram-bot/internal/telegram"
+)
 
-type Deps struct{}
+type Deps struct {
+	Cfg     *config.Config
+	Ops     *telegram.Ops
+	Service *Service
+	Economy balanceProvider
+}
 
-func Build(Deps) (feature.Feature, error) {
-	return NewFeature(), nil
+type Module struct {
+	Handler *Handler
+	Feature feature.Feature
+}
+
+func NewModule(deps Deps) (*Module, error) {
+	h := NewHandler(deps.Service, deps.Economy, deps.Ops, deps.Cfg)
+	f := NewFeature(h)
+	return &Module{Handler: h, Feature: f}, nil
+}
+
+func Build(deps Deps) (feature.Feature, error) {
+	m, err := NewModule(deps)
+	if err != nil {
+		return nil, err
+	}
+	return m.Feature, nil
 }

@@ -368,3 +368,10 @@ func TestEnsureMemberSeen_PrivateNoCreateWhenMissing(t *testing.T) {
 		t.Fatal("expected no member to be created in strict private mode")
 	}
 }
+
+func (f *lifecycleFakeRepo) GetUsersWithRole(ctx context.Context) ([]*Member, error) { return nil, nil }
+func (f *lifecycleFakeRepo) GetUsersWithoutRole(ctx context.Context) ([]*Member, error) {
+	return nil, nil
+}
+func (r *seenStateRepo) GetUsersWithRole(ctx context.Context) ([]*Member, error)    { return nil, nil }
+func (r *seenStateRepo) GetUsersWithoutRole(ctx context.Context) ([]*Member, error) { return nil, nil }
