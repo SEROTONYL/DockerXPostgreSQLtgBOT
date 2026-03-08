@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	log "github.com/sirupsen/logrus"
 
 	"serotonyl.ru/telegram-bot/internal/common"
@@ -34,6 +35,13 @@ func (s *Service) AddBalance(ctx context.Context, userID int64, amount int64, tx
 		return common.ErrInvalidAmount
 	}
 	return s.repo.AddBalance(ctx, userID, amount, txType, description)
+}
+
+func (s *Service) AddBalanceWithHook(ctx context.Context, userID int64, amount int64, txType, description string, hook func(context.Context, pgx.Tx) error) error {
+	if amount <= 0 {
+		return common.ErrInvalidAmount
+	}
+	return s.repo.AddBalanceWithHook(ctx, userID, amount, txType, description, hook)
 }
 
 // DeductBalance списывает пленки.

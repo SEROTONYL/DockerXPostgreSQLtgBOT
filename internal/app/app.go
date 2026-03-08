@@ -66,7 +66,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		return nil, err
 	}
 
-	karmaModule, err := karma.NewModule(karma.Deps{Cfg: cfg, Ops: tg.Ops, Service: infra.KarmaService})
+	karmaModule, err := karma.NewModule(karma.Deps{Cfg: cfg, Ops: tg.Ops, Service: infra.KarmaService, MemberService: infra.MemberService})
 	if err != nil {
 		return nil, err
 	}

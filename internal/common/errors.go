@@ -28,6 +28,15 @@ var (
 	ErrKarmaAlreadyGave = errors.New("вы уже давали карму этому пользователю сегодня")
 )
 
+var (
+	ErrThanksTargetMissing      = errors.New("не указан получатель благодарности")
+	ErrThanksMalformedCommand   = errors.New("некорректная команда благодарности")
+	ErrThanksSelfGive           = errors.New("нельзя благодарить самого себя")
+	ErrThanksTargetIsBot        = errors.New("нельзя благодарить бота")
+	ErrThanksDailyLimit         = errors.New("дневной лимит благодарностей исчерпан")
+	ErrThanksReciprocalCooldown = errors.New("ответная благодарность временно недоступна")
+)
+
 // Ошибки админки
 var (
 	// ErrNotAdmin — пользователь не является администратором

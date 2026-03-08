@@ -55,7 +55,7 @@ func BuildInfra(ctx context.Context, cfg *config.Config) (*Infra, error) {
 	memberService := members.NewService(memberRepo)
 	economyService := economy.NewService(economyRepo)
 	streakService := streak.NewService(streakRepo, economyService, cfg)
-	karmaService := karma.NewService(karmaRepo, cfg)
+	karmaService := karma.NewService(karmaRepo, economyService, memberService, cfg)
 	casinoService := casino.NewService(casinoRepo, economyService, cfg)
 	adminService := admin.NewService(adminRepo, memberRepo, cfg)
 

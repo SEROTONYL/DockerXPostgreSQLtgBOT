@@ -66,9 +66,10 @@ type Config struct {
 	StreakReminderThreshold int `envconfig:"STREAK_REMINDER_THRESHOLD" default:"7"`
 	StreakInactiveHours     int `envconfig:"STREAK_INACTIVE_HOURS" default:"10"`
 
-	// --- Karma ---
+	// --- Karma / Thanks ---
 	KarmaDailyLimit            int `envconfig:"KARMA_DAILY_LIMIT" default:"2"`
 	KarmaCooldownSameUserHours int `envconfig:"KARMA_COOLDOWN_SAME_USER_HOURS" default:"24"`
+	ThanksDailyLimit           int `envconfig:"THANKS_DAILY_LIMIT" default:"3"`
 
 	// --- Casino ---
 	CasinoSlotsBet int64   `envconfig:"CASINO_SLOTS_BET" default:"50"`

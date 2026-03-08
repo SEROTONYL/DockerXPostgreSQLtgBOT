@@ -62,37 +62,24 @@ func (r *Repository) GetBalance(ctx context.Context, userID int64) (int64, error
 //   - txType: тип транзакции (streak_bonus, casino_win, transfer, ...)
 //   - description: описание для истории транзакций
 func (r *Repository) AddBalance(ctx context.Context, userID int64, amount int64, txType, description string) (err error) {
-	// Начинаем транзакцию БД, чтобы обновление баланса и запись транзакции
-	// были атомарными (либо оба произойдут, либо ни одного)
+	return r.AddBalanceWithHook(ctx, userID, amount, txType, description, nil)
+}
+
+func (r *Repository) AddBalanceWithHook(ctx context.Context, userID int64, amount int64, txType, description string, hook func(context.Context, pgx.Tx) error) (err error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("ошибка начала транзакции: %w", err)
 	}
 	defer rollbackOnFailure(ctx, tx, &err)
 
-	if err = r.ensureBalanceRowTx(ctx, tx, userID); err != nil {
+	if err = r.addBalanceTx(ctx, tx, userID, amount, txType, description); err != nil {
 		return err
 	}
-
-	// Обновляем баланс и total_earned
-	_, err = tx.Exec(ctx, `
-		UPDATE balances
-		SET balance = balance + $2, total_earned = total_earned + $2, updated_at = NOW()
-		WHERE user_id = $1
-	`, userID, amount)
-	if err != nil {
-		return fmt.Errorf("ошибка начисления: %w", err)
+	if hook != nil {
+		if err = hook(ctx, tx); err != nil {
+			return err
+		}
 	}
-
-	// Записываем транзакцию в историю
-	_, err = tx.Exec(ctx, `
-		INSERT INTO transactions (to_user_id, amount, transaction_type, description)
-		VALUES ($1, $2, $3, $4)
-	`, userID, amount, txType, description)
-	if err != nil {
-		return fmt.Errorf("ошибка записи транзакции: %w", err)
-	}
-
 	if err = tx.Commit(ctx); err != nil {
 		return fmt.Errorf("ошибка коммита транзакции: %w", err)
 	}
@@ -225,6 +212,31 @@ func rollbackOnFailure(ctx context.Context, tx pgx.Tx, errp *error) {
 	if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
 		*errp = errors.Join(*errp, fmt.Errorf("ошибка отката транзакции: %w", rollbackErr))
 	}
+}
+
+func (r *Repository) addBalanceTx(ctx context.Context, tx pgx.Tx, userID int64, amount int64, txType, description string) error {
+	if err := r.ensureBalanceRowTx(ctx, tx, userID); err != nil {
+		return err
+	}
+
+	_, err := tx.Exec(ctx, `
+		UPDATE balances
+		SET balance = balance + $2, total_earned = total_earned + $2, updated_at = NOW()
+		WHERE user_id = $1
+	`, userID, amount)
+	if err != nil {
+		return fmt.Errorf("ошибка начисления: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO transactions (to_user_id, amount, transaction_type, description)
+		VALUES ($1, $2, $3, $4)
+	`, userID, amount, txType, description)
+	if err != nil {
+		return fmt.Errorf("ошибка записи транзакции: %w", err)
+	}
+
+	return nil
 }
 
 func (r *Repository) ensureBalanceRowTx(ctx context.Context, tx pgx.Tx, userID int64) error {
