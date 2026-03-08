@@ -24,11 +24,12 @@ var editNeedlesCantBeEdited = []string{"message can't be edited", "message canâ€
 var editNeedlesForbidden = []string{"bot was blocked by the user", "chat not found", "forbidden", "not enough rights", "user is deactivated"}
 
 type Screen struct {
-	ChatID      int64
-	MessageID   int
-	Text        string
-	ReplyMarkup any
-	ParseMode   *string
+	ChatID                int64
+	MessageID             int
+	Text                  string
+	ReplyMarkup           any
+	ParseMode             *string
+	DisableWebPagePreview bool
 }
 
 // RenderScreen is the SINGLE source of truth for edit-or-send behavior.
@@ -37,7 +38,7 @@ func RenderScreen(ctx context.Context, ops *Ops, s Screen) (msgID int, usedEdit 
 	mk := inlineMarkup(s.ReplyMarkup)
 
 	if s.MessageID > 0 {
-		err = ops.EditWithParseMode(ctx, s.ChatID, s.MessageID, s.Text, mk, s.ParseMode)
+		err = ops.EditWithOptions(ctx, EditOptions{ChatID: s.ChatID, MessageID: s.MessageID, Text: s.Text, ReplyMarkup: mk, ParseMode: s.ParseMode, DisableWebPagePreview: s.DisableWebPagePreview})
 		if err == nil {
 			return s.MessageID, true, nil
 		}
@@ -47,7 +48,7 @@ func RenderScreen(ctx context.Context, ops *Ops, s Screen) (msgID int, usedEdit 
 		}
 
 		if ShouldFallbackToSendOnEdit(err) {
-			sentID, sendErr := ops.SendWithParseMode(ctx, s.ChatID, s.Text, mk, s.ParseMode)
+			sentID, sendErr := ops.SendWithOptions(ctx, SendOptions{ChatID: s.ChatID, Text: s.Text, ReplyMarkup: mk, ParseMode: s.ParseMode, DisableWebPagePreview: s.DisableWebPagePreview})
 			if sendErr != nil {
 				return 0, false, sendErr
 			}
@@ -56,7 +57,7 @@ func RenderScreen(ctx context.Context, ops *Ops, s Screen) (msgID int, usedEdit 
 		return 0, true, err
 	}
 
-	sentID, sendErr := ops.SendWithParseMode(ctx, s.ChatID, s.Text, mk, s.ParseMode)
+	sentID, sendErr := ops.SendWithOptions(ctx, SendOptions{ChatID: s.ChatID, Text: s.Text, ReplyMarkup: mk, ParseMode: s.ParseMode, DisableWebPagePreview: s.DisableWebPagePreview})
 	if sendErr != nil {
 		return 0, false, sendErr
 	}

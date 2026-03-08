@@ -22,11 +22,37 @@ type parseModeSender interface {
 	SendMessageWithParseMode(chatID int64, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) (messageID int, err error)
 }
 
+type optionSender interface {
+	SendMessageWithOptions(opts SendOptions) (messageID int, err error)
+}
+
 type parseModeEditor interface {
 	EditMessageWithParseMode(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) error
 }
 
+type optionEditor interface {
+	EditMessageWithOptions(opts EditOptions) error
+}
+
 var ParseModeHTML = stringPtr("HTML")
+
+type SendOptions struct {
+	ChatID                int64
+	Text                  string
+	ReplyMarkup           *botapi.InlineKeyboardMarkup
+	ParseMode             *string
+	ReplyToMessageID      int
+	DisableWebPagePreview bool
+}
+
+type EditOptions struct {
+	ChatID                int64
+	MessageID             int
+	Text                  string
+	ReplyMarkup           *botapi.InlineKeyboardMarkup
+	ParseMode             *string
+	DisableWebPagePreview bool
+}
 
 func stringPtr(v string) *string { return &v }
 
@@ -54,7 +80,7 @@ func NewBotClient(bot *botapi.Bot) Client {
 }
 
 func (a *botClient) SendMessage(chatID int64, text string, markup *botapi.InlineKeyboardMarkup) (int, error) {
-	msg, err := a.bot.SendMessage(context.Background(), buildSendMessageParams(chatID, text, markup, nil))
+	msg, err := a.bot.SendMessage(context.Background(), buildSendMessageParams(SendOptions{ChatID: chatID, Text: text, ReplyMarkup: markup}))
 	if err != nil {
 		return 0, err
 	}
@@ -65,7 +91,18 @@ func (a *botClient) SendMessage(chatID int64, text string, markup *botapi.Inline
 }
 
 func (a *botClient) SendMessageWithParseMode(chatID int64, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) (int, error) {
-	msg, err := a.bot.SendMessage(context.Background(), buildSendMessageParams(chatID, text, markup, parseMode))
+	msg, err := a.bot.SendMessage(context.Background(), buildSendMessageParams(SendOptions{ChatID: chatID, Text: text, ReplyMarkup: markup, ParseMode: parseMode}))
+	if err != nil {
+		return 0, err
+	}
+	if msg == nil {
+		return 0, nil
+	}
+	return msg.MessageID, nil
+}
+
+func (a *botClient) SendMessageWithOptions(opts SendOptions) (int, error) {
+	msg, err := a.bot.SendMessage(context.Background(), buildSendMessageParams(opts))
 	if err != nil {
 		return 0, err
 	}
@@ -76,12 +113,17 @@ func (a *botClient) SendMessageWithParseMode(chatID int64, text string, markup *
 }
 
 func (a *botClient) EditMessage(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup) error {
-	_, err := a.bot.EditMessageText(context.Background(), buildEditMessageTextParams(chatID, messageID, text, markup, nil))
+	_, err := a.bot.EditMessageText(context.Background(), buildEditMessageTextParams(EditOptions{ChatID: chatID, MessageID: messageID, Text: text, ReplyMarkup: markup}))
 	return err
 }
 
 func (a *botClient) EditMessageWithParseMode(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) error {
-	_, err := a.bot.EditMessageText(context.Background(), buildEditMessageTextParams(chatID, messageID, text, markup, parseMode))
+	_, err := a.bot.EditMessageText(context.Background(), buildEditMessageTextParams(EditOptions{ChatID: chatID, MessageID: messageID, Text: text, ReplyMarkup: markup, ParseMode: parseMode}))
+	return err
+}
+
+func (a *botClient) EditMessageWithOptions(opts EditOptions) error {
+	_, err := a.bot.EditMessageText(context.Background(), buildEditMessageTextParams(opts))
 	return err
 }
 
@@ -176,24 +218,33 @@ func (a *botClient) AnswerCallbackQueryCtx(ctx context.Context, callbackID strin
 	})
 }
 
-func buildSendMessageParams(chatID int64, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) *botapi.SendMessageParams {
-	params := &botapi.SendMessageParams{ChatID: botapi.ChatID{ID: chatID}, Text: text}
-	if markup != nil {
-		params.ReplyMarkup = markup
+func buildSendMessageParams(opts SendOptions) *botapi.SendMessageParams {
+	params := &botapi.SendMessageParams{ChatID: botapi.ChatID{ID: opts.ChatID}, Text: opts.Text}
+	if opts.ReplyMarkup != nil {
+		params.ReplyMarkup = opts.ReplyMarkup
 	}
-	if parseMode != nil {
-		params.ParseMode = *parseMode
+	if opts.ParseMode != nil {
+		params.ParseMode = *opts.ParseMode
+	}
+	if opts.ReplyToMessageID > 0 {
+		params.ReplyParameters = &botapi.ReplyParameters{MessageID: opts.ReplyToMessageID}
+	}
+	if opts.DisableWebPagePreview {
+		params.LinkPreviewOptions = &botapi.LinkPreviewOptions{IsDisabled: true}
 	}
 	return params
 }
 
-func buildEditMessageTextParams(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) *botapi.EditMessageTextParams {
-	params := &botapi.EditMessageTextParams{ChatID: botapi.ChatID{ID: chatID}, MessageID: messageID, Text: text}
-	if markup != nil {
-		params.ReplyMarkup = markup
+func buildEditMessageTextParams(opts EditOptions) *botapi.EditMessageTextParams {
+	params := &botapi.EditMessageTextParams{ChatID: botapi.ChatID{ID: opts.ChatID}, MessageID: opts.MessageID, Text: opts.Text}
+	if opts.ReplyMarkup != nil {
+		params.ReplyMarkup = opts.ReplyMarkup
 	}
-	if parseMode != nil {
-		params.ParseMode = *parseMode
+	if opts.ParseMode != nil {
+		params.ParseMode = *opts.ParseMode
+	}
+	if opts.DisableWebPagePreview {
+		params.LinkPreviewOptions = &botapi.LinkPreviewOptions{IsDisabled: true}
 	}
 	return params
 }
@@ -233,13 +284,17 @@ func NewOpsWithLogger(c Client, l *logrus.Entry) *Ops {
 }
 
 func (o *Ops) Send(ctx context.Context, chatID int64, text string, markup *botapi.InlineKeyboardMarkup) (int, error) {
-	return o.SendWithParseMode(ctx, chatID, text, markup, nil)
+	return o.SendWithOptions(ctx, SendOptions{ChatID: chatID, Text: text, ReplyMarkup: markup})
 }
 
 func (o *Ops) SendWithParseMode(ctx context.Context, chatID int64, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) (int, error) {
-	msgID, err := o.sendWithParseMode(chatID, text, markup, parseMode)
+	return o.SendWithOptions(ctx, SendOptions{ChatID: chatID, Text: text, ReplyMarkup: markup, ParseMode: parseMode})
+}
+
+func (o *Ops) SendWithOptions(ctx context.Context, opts SendOptions) (int, error) {
+	msgID, err := o.sendWithOptions(opts)
 	if err != nil {
-		o.log.WithContext(ctx).WithError(err).WithField("chat_id", chatID).Warn("telegram send failed")
+		o.log.WithContext(ctx).WithError(err).WithField("chat_id", opts.ChatID).Warn("telegram send failed")
 		return 0, err
 	}
 	return msgID, nil
@@ -252,12 +307,16 @@ func (o *Ops) Edit(ctx context.Context, chatID int64, messageID int, text string
 }
 
 func (o *Ops) EditWithParseMode(ctx context.Context, chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) error {
-	err := o.editWithParseMode(chatID, messageID, text, markup, parseMode)
+	return o.EditWithOptions(ctx, EditOptions{ChatID: chatID, MessageID: messageID, Text: text, ReplyMarkup: markup, ParseMode: parseMode})
+}
+
+func (o *Ops) EditWithOptions(ctx context.Context, opts EditOptions) error {
+	err := o.editWithOptions(opts)
 	if err == nil {
 		return nil
 	}
 	kind := classifyEditError(err)
-	entry := o.log.WithContext(ctx).WithError(err).WithFields(logrus.Fields{"chat_id": chatID, "message_id": messageID, "kind": kind})
+	entry := o.log.WithContext(ctx).WithError(err).WithFields(logrus.Fields{"chat_id": opts.ChatID, "message_id": opts.MessageID, "kind": kind})
 	switch kind {
 	case editErrNotModified:
 		entry.Debug("telegram edit skipped: message is not modified")
@@ -395,18 +454,24 @@ func (o *Ops) answerCallbackAck(ctx context.Context, callbackID string) error {
 	}
 }
 
-func (o *Ops) sendWithParseMode(chatID int64, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) (int, error) {
-	if c, ok := any(o.c).(parseModeSender); ok {
-		return c.SendMessageWithParseMode(chatID, text, markup, parseMode)
+func (o *Ops) sendWithOptions(opts SendOptions) (int, error) {
+	if c, ok := any(o.c).(optionSender); ok {
+		return c.SendMessageWithOptions(opts)
 	}
-	return o.c.SendMessage(chatID, text, markup)
+	if c, ok := any(o.c).(parseModeSender); ok {
+		return c.SendMessageWithParseMode(opts.ChatID, opts.Text, opts.ReplyMarkup, opts.ParseMode)
+	}
+	return o.c.SendMessage(opts.ChatID, opts.Text, opts.ReplyMarkup)
 }
 
-func (o *Ops) editWithParseMode(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup, parseMode *string) error {
-	if c, ok := any(o.c).(parseModeEditor); ok {
-		return c.EditMessageWithParseMode(chatID, messageID, text, markup, parseMode)
+func (o *Ops) editWithOptions(opts EditOptions) error {
+	if c, ok := any(o.c).(optionEditor); ok {
+		return c.EditMessageWithOptions(opts)
 	}
-	return o.c.EditMessage(chatID, messageID, text, markup)
+	if c, ok := any(o.c).(parseModeEditor); ok {
+		return c.EditMessageWithParseMode(opts.ChatID, opts.MessageID, opts.Text, opts.ReplyMarkup, opts.ParseMode)
+	}
+	return o.c.EditMessage(opts.ChatID, opts.MessageID, opts.Text, opts.ReplyMarkup)
 }
 
 func (o *Ops) EditOrSend(ctx context.Context, chatID int64, messageID int, text string, keyboard botapi.InlineKeyboardMarkup) (int, bool, error) {
