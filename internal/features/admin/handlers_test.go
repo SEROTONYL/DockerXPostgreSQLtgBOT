@@ -27,6 +27,7 @@ type tgCall struct {
 type fakeTG struct {
 	calls            []tgCall
 	editErr          error
+	deleteErr        error
 	chatMemberByUser map[int64]models.User
 }
 
@@ -58,7 +59,7 @@ func (f *fakeTG) EditReplyMarkup(chatID int64, messageID int, markup *models.Inl
 
 func (f *fakeTG) DeleteMessage(chatID int64, messageID int) error {
 	f.calls = append(f.calls, tgCall{kind: "delete", chatID: chatID, messageID: messageID})
-	return nil
+	return f.deleteErr
 }
 
 func (f *fakeTG) count(kind string) int {
@@ -369,55 +370,96 @@ func buttonByText(markup *models.InlineKeyboardMarkup, text string) *models.Inli
 	return nil
 }
 
-func TestFormatMemberIdentityCompact(t *testing.T) {
-	tag := "Мур"
-	lastKnown := "Known Nick"
+func buttonByCallbackData(markup *models.InlineKeyboardMarkup, data string) *models.InlineKeyboardButton {
+	if markup == nil {
+		return nil
+	}
+	for _, row := range markup.InlineKeyboard {
+		for _, b := range row {
+			if b.CallbackData == data {
+				btn := b
+				return &btn
+			}
+		}
+	}
+	return nil
+}
+
+func ptrString(s string) *string {
+	return &s
+}
+
+func TestFormatMemberTagOnly(t *testing.T) {
+	tag := "TEAM-A"
 	tests := []struct {
 		name string
 		user *members.Member
 		want string
 	}{
 		{
-			name: "tag + username",
-			user: &members.Member{UserID: 1, Tag: &tag, Username: "@kysxDDD"},
-			want: "Мур • @kysxDDD",
+			name: "with tag",
+			user: &members.Member{UserID: 1, Tag: &tag, Username: "user", FirstName: "Name"},
+			want: "TEAM-A",
 		},
 		{
-			name: "tag + no username + nick",
-			user: &members.Member{UserID: 2, Tag: &tag, FirstName: "Nick", LastName: "Name"},
-			want: "Мур • Nick Name • id:2",
+			name: "empty tag",
+			user: &members.Member{UserID: 2, Tag: ptrString("  ")},
+			want: "Без тега",
 		},
 		{
-			name: "tag + no username + no nick",
-			user: &members.Member{UserID: 3, Tag: &tag},
-			want: "Мур • id:3",
-		},
-		{
-			name: "no tag + username",
-			user: &members.Member{UserID: 4, Username: "user"},
-			want: "@user",
-		},
-		{
-			name: "no tag + no username + nick",
-			user: &members.Member{UserID: 5, FirstName: "OnlyNick"},
-			want: "OnlyNick • id:5",
+			name: "no tag",
+			user: &members.Member{UserID: 3, Username: "user", FirstName: "Name"},
+			want: "Без тега",
 		},
 		{
 			name: "nil user",
 			user: nil,
-			want: "id:0",
-		},
-		{
-			name: "fallback to last known name",
-			user: &members.Member{UserID: 6, LastKnownName: &lastKnown},
-			want: "Known Nick • id:6",
+			want: "Без тега",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := formatMemberIdentityCompact(tt.user); got != tt.want {
-				t.Fatalf("formatMemberIdentityCompact() = %q, want %q", got, tt.want)
+			if got := formatMemberTagOnly(tt.user); got != tt.want {
+				t.Fatalf("formatMemberTagOnly() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatMemberRoleOnly(t *testing.T) {
+	role := "Модератор"
+	tests := []struct {
+		name string
+		user *members.Member
+		want string
+	}{
+		{
+			name: "with role",
+			user: &members.Member{UserID: 1, Role: &role, Username: "user", FirstName: "Name"},
+			want: "Модератор",
+		},
+		{
+			name: "empty role",
+			user: &members.Member{UserID: 2, Role: ptrString("  ")},
+			want: "Без роли",
+		},
+		{
+			name: "no role",
+			user: &members.Member{UserID: 3, Username: "user", FirstName: "Name"},
+			want: "Без роли",
+		},
+		{
+			name: "nil user",
+			user: nil,
+			want: "Без роли",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatMemberRoleOnly(tt.user); got != tt.want {
+				t.Fatalf("formatMemberRoleOnly() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -500,13 +542,13 @@ func TestPickerFlow_OpenPicker_ShowsUserList(t *testing.T) {
 	if hasButton(e.markup, "Отменить действие", cbAdminCancelAction) {
 		t.Fatalf("did not expect cancel action button")
 	}
-	if b := buttonByText(e.markup, formatUserPickerButton(repo.with[0], UserPickerChangeWithRole)); b == nil || b.Style != "primary" {
+	if b := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, repo.with[0].UserID)); b == nil || b.Style != "primary" {
 		t.Fatalf("expected first user button style primary, got %#v", b)
 	}
-	if b := buttonByText(e.markup, formatUserPickerButton(repo.with[1], UserPickerChangeWithRole)); b == nil || b.Style != "success" {
+	if b := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, repo.with[1].UserID)); b == nil || b.Style != "success" {
 		t.Fatalf("expected second user button style success, got %#v", b)
 	}
-	if b := buttonByText(e.markup, formatUserPickerButton(repo.with[2], UserPickerChangeWithRole)); b == nil || b.Style != "primary" {
+	if b := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, repo.with[2].UserID)); b == nil || b.Style != "primary" {
 		t.Fatalf("expected third user button style primary, got %#v", b)
 	}
 	if b := buttonByText(e.markup, userPickerBackButton); b == nil || b.Style != "danger" {
@@ -589,8 +631,8 @@ func TestAssignRole_PickerRenders_WhenMemberHasOnlyIDAfterNullNormalization(t *t
 	if e == nil || !strings.Contains(e.text, "Выбери участника") {
 		t.Fatalf("expected picker render, got %#v", e)
 	}
-	if b := buttonByText(e.markup, "id:1001"); b == nil {
-		t.Fatalf("expected id fallback button for normalized NULL identity fields")
+	if b := buttonByText(e.markup, "Без тега"); b == nil {
+		t.Fatalf("expected neutral fallback button for users without tag")
 	}
 }
 
@@ -626,7 +668,7 @@ func TestChangeRolePicker_DoesNotRenderBots(t *testing.T) {
 	if e == nil || e.markup == nil {
 		t.Fatalf("expected picker edit")
 	}
-	if buttonByText(e.markup, "member • Bot • id:2002") != nil || buttonByText(e.markup, "member • id:2002") != nil {
+	if buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, 2002)) != nil {
 		t.Fatalf("bot candidate must not be rendered in change-role picker")
 	}
 }
@@ -721,8 +763,8 @@ func TestAssignRefresh_Success_ReopensPicker_WithNullSafeIdentityFallback(t *tes
 	if e == nil || !strings.Contains(e.text, "Выбери участника") {
 		t.Fatalf("expected picker rerender after refresh, got %#v", e)
 	}
-	if b := buttonByText(e.markup, "id:1001"); b == nil {
-		t.Fatalf("expected id fallback button after refresh")
+	if b := buttonByText(e.markup, "Без тега"); b == nil {
+		t.Fatalf("expected neutral fallback button after refresh")
 	}
 }
 
@@ -838,11 +880,11 @@ func TestPickerFlow_Pagination_StyleRestartsOnNewPage(t *testing.T) {
 	if e == nil || e.markup == nil {
 		t.Fatalf("expected edit with picker markup")
 	}
-	firstPageSecondBtn := buttonByText(e.markup, formatUserPickerButton(users[8], UserPickerChangeWithRole))
+	firstPageSecondBtn := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, users[8].UserID))
 	if firstPageSecondBtn == nil || firstPageSecondBtn.Style != "primary" {
 		t.Fatalf("expected first button on second page to restart with primary, got %#v", firstPageSecondBtn)
 	}
-	if b := buttonByText(e.markup, formatUserPickerButton(users[9], UserPickerChangeWithRole)); b == nil || b.Style != "success" {
+	if b := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, users[9].UserID)); b == nil || b.Style != "success" {
 		t.Fatalf("expected second button on second page style success, got %#v", b)
 	}
 }
@@ -868,8 +910,8 @@ func TestChangeRole_PickerRenders_WithIDFallback_WhenIdentityFieldsEmpty(t *test
 	if e == nil || !strings.Contains(e.text, "Выбери участника") {
 		t.Fatalf("expected picker render, got %#v", e)
 	}
-	if b := buttonByText(e.markup, "operator • id:1001"); b == nil {
-		t.Fatalf("expected change-role picker button with role and id fallback")
+	if b := buttonByText(e.markup, "operator"); b == nil {
+		t.Fatalf("expected change-role picker button with stored role")
 	}
 }
 
@@ -896,8 +938,8 @@ func TestChangeRole_PickerRenders_WithLastKnownNameFallback_WhenIdentityFieldsEm
 	if e == nil || !strings.Contains(e.text, "Выбери участника") {
 		t.Fatalf("expected picker render, got %#v", e)
 	}
-	if b := buttonByText(e.markup, "operator • Ghost User • id:1002"); b == nil {
-		t.Fatalf("expected change-role picker button with last_known_name fallback")
+	if b := buttonByText(e.markup, "operator"); b == nil {
+		t.Fatalf("expected change-role picker to ignore last known name and show only role")
 	}
 }
 
@@ -980,39 +1022,25 @@ func TestCancelAction_FromRoleInput_ReturnsToPanel(t *testing.T) {
 	}
 }
 
-func TestFormatMemberForAssignPicker(t *testing.T) {
+func TestFormatUserPickerButton_UsesRoleOnlyForChangePicker(t *testing.T) {
+	role := "Администратор"
 	tag := "TEAM-A"
-	withTag := &members.Member{UserID: 1001, Tag: &tag, Username: "user", FirstName: "Ivan"}
-	if got := formatMemberForAssignPicker(withTag); got != "TEAM-A • id:1001" {
-		t.Fatalf("unexpected assign format with tag: %q", got)
+	userWithRole := &members.Member{UserID: 1001, Tag: &tag, Role: &role, Username: "u1"}
+	if got := formatUserPickerButton(userWithRole, UserPickerChangeWithRole); got != "Администратор" {
+		t.Fatalf("unexpected picker format with role: %q", got)
 	}
 
-	withUsername := &members.Member{UserID: 1002, Username: "user"}
-	if got := formatMemberForAssignPicker(withUsername); got != "@user • id:1002" {
-		t.Fatalf("unexpected assign format with username: %q", got)
-	}
-
-	withName := &members.Member{UserID: 1003, FirstName: "Ivan"}
-	if got := formatMemberForAssignPicker(withName); got != "id:1003 • Ivan" {
-		t.Fatalf("unexpected assign format with first name: %q", got)
-	}
-
-	idOnly := &members.Member{UserID: 1004}
-	if got := formatMemberForAssignPicker(idOnly); got != "id:1004" {
-		t.Fatalf("unexpected assign format id-only: %q", got)
+	userWithoutRole := &members.Member{UserID: 1002, Tag: &tag, Username: "u2", FirstName: "Ivan"}
+	if got := formatUserPickerButton(userWithoutRole, UserPickerChangeWithRole); got != "Без роли" {
+		t.Fatalf("unexpected picker format without role: %q", got)
 	}
 }
 
-func TestFormatMemberForRolePicker(t *testing.T) {
-	role := "мяу"
-	withUsername := &members.Member{UserID: 1001, Username: "u", Role: &role}
-	if got := formatMemberForRolePicker(withUsername); got != "мяу • @u" {
-		t.Fatalf("unexpected role format with username: %q", got)
-	}
-
-	withoutUsername := &members.Member{UserID: 1002, Role: &role}
-	if got := formatMemberForRolePicker(withoutUsername); got != "мяу • id:1002" {
-		t.Fatalf("unexpected role format without username: %q", got)
+func TestFormatUserPickerButton_KeepsAssignPickerFormat(t *testing.T) {
+	tag := "TEAM-A"
+	user := &members.Member{UserID: 1001, Tag: &tag, Role: ptrString("role"), Username: "u1"}
+	if got := formatUserPickerButton(user, UserPickerAssignWithoutRole); got != "TEAM-A" {
+		t.Fatalf("unexpected assign picker format: %q", got)
 	}
 }
 

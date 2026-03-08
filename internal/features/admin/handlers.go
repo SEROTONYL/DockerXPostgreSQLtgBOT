@@ -106,7 +106,7 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 
 	if hasActiveSession {
 		if isLoginCommand {
-			if err := h.showKeyboard(ctx, chatID, userID, h.panelMessageIDFromState(userID)); err != nil {
+			if err := h.reopenAdminPanel(ctx, chatID, userID); err != nil {
 				h.sendUIErrorHint(ctx, chatID, err)
 			}
 			return true
@@ -210,7 +210,7 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 	userID := q.From.ID
 	data := q.Data
 	panelMsgID := msg.MessageID
-	h.attachPanelMessageID(userID, panelMsgID)
+	h.attachPanelMessage(userID, chatID, panelMsgID)
 
 	if !h.service.CanEnterAdmin(ctx, userID) {
 		return true
@@ -286,7 +286,7 @@ func (h *Handler) handlePasswordInput(ctx context.Context, chatID int64, userID 
 	}
 
 	h.service.ClearState(userID)
-	if err := h.showKeyboard(ctx, chatID, userID, 0); err != nil {
+	if err := h.reopenAdminPanel(ctx, chatID, userID); err != nil {
 		h.sendUIErrorHint(ctx, chatID, err)
 	}
 }
@@ -513,7 +513,7 @@ func (h *Handler) startUserPicker(ctx context.Context, chatID, userID int64, pan
 		PageSize:      userPickerPageSize,
 	}
 	h.service.SetState(userID, stateName, data)
-	h.attachPanelMessageID(userID, panelMsgID)
+	h.attachPanelMessage(userID, chatID, panelMsgID)
 	h.renderUserPickerPage(ctx, chatID, userID, panelMsgID, stateName)
 }
 
@@ -585,13 +585,6 @@ func (h *Handler) renderUserPickerPage(ctx context.Context, chatID, userID int64
 	keyboard := newInlineKeyboardMarkup(rows...)
 
 	caption := "Выбери участника:"
-	switch data.Mode {
-	case UserPickerAssignWithoutRole:
-		caption = "Выбери участника:\nФормат: @username • id, иначе Имя • id."
-	case UserPickerChangeWithRole:
-		caption = "Выбери участника:\nФормат: роль • тег • @username, иначе роль • тег • ник • id."
-	default:
-	}
 
 	if panelMsgID <= 0 {
 		panelMsgID = h.panelMessageIDFromState(userID)
@@ -748,44 +741,30 @@ func isUserPickerPageLabel(text string) bool {
 }
 
 func formatUserPickerButton(user *members.Member, mode UserPickerMode) string {
-	if mode == UserPickerAssignWithoutRole {
-		return shortenForButton(formatMemberForAssignPicker(user), 40)
+	switch mode {
+	case UserPickerChangeWithRole:
+		return shortenForButton(formatMemberRoleOnly(user), 40)
+	default:
+		return shortenForButton(formatMemberTagOnly(user), 40)
 	}
-	return shortenForButton(formatMemberForRolePicker(user), 40)
 }
 
-func formatMemberForRolePicker(user *members.Member) string {
-	role := "без роли"
-	if user.Role != nil && strings.TrimSpace(*user.Role) != "" {
-		role = strings.TrimSpace(*user.Role)
+func formatMemberTagOnly(user *members.Member) string {
+	if user != nil && user.Tag != nil {
+		if tag := strings.TrimSpace(*user.Tag); tag != "" {
+			return tag
+		}
 	}
-	return fmt.Sprintf("%s • %s", role, formatMemberIdentityCompact(user))
+	return "Без тега"
 }
 
-func formatMemberForAssignPicker(user *members.Member) string {
-	return formatMemberIdentity(user)
-}
-
-func formatMemberIdentity(user *members.Member) string {
-	if user == nil {
-		return "id:0"
+func formatMemberRoleOnly(user *members.Member) string {
+	if user != nil && user.Role != nil {
+		if role := strings.TrimSpace(*user.Role); role != "" {
+			return role
+		}
 	}
-
-	if user.Tag != nil && strings.TrimSpace(*user.Tag) != "" {
-		return fmt.Sprintf("%s • id:%d", strings.TrimSpace(*user.Tag), user.UserID)
-	}
-
-	username := strings.TrimSpace(strings.TrimPrefix(user.Username, "@"))
-	if username != "" {
-		return fmt.Sprintf("@%s • id:%d", username, user.UserID)
-	}
-
-	name := strings.TrimSpace(strings.Join([]string{strings.TrimSpace(user.FirstName), strings.TrimSpace(user.LastName)}, " "))
-	if name != "" {
-		return fmt.Sprintf("id:%d • %s", user.UserID, name)
-	}
-
-	return fmt.Sprintf("id:%d", user.UserID)
+	return "Без роли"
 }
 
 func formatMemberIdentityCompact(user *members.Member) string {
@@ -1024,7 +1003,7 @@ func (h *Handler) renderAdminScreen(ctx context.Context, chatID, userID int64, p
 	if err != nil {
 		if telegram.IsEditNotModified(err) {
 			log.WithError(err).WithFields(log.Fields{"chat_id": chatID, "panel_message_id": panelMsgID, "screen": screenName}).Debug("admin ui edit skipped: message is not modified")
-			h.attachPanelMessageID(userID, panelMsgID)
+			h.attachPanelMessage(userID, chatID, panelMsgID)
 			return nil
 		}
 		action := "send"
@@ -1034,12 +1013,33 @@ func (h *Handler) renderAdminScreen(ctx context.Context, chatID, userID int64, p
 		h.logAdminUIError(userID, chatID, panelMsgID, screenName, action, 0, err.Error(), err)
 		return err
 	}
-	h.attachPanelMessageID(userID, msgID)
+	h.attachPanelMessage(userID, chatID, msgID)
 	return nil
 }
 
-func (h *Handler) attachPanelMessageID(userID int64, panelMsgID int) {
-	h.service.SetPanelMessageID(userID, panelMsgID)
+func (h *Handler) reopenAdminPanel(ctx context.Context, chatID, userID int64) error {
+	panel := h.service.GetPanelMessage(userID)
+	h.service.ClearState(userID)
+	h.deletePanelMessage(ctx, userID, panel)
+	return h.showKeyboard(ctx, chatID, userID, 0)
+}
+
+func (h *Handler) deletePanelMessage(ctx context.Context, userID int64, panel AdminPanelMessage) {
+	h.service.ClearPanelMessage(userID)
+	if panel.ChatID == 0 || panel.MessageID <= 0 {
+		return
+	}
+	if err := h.ops.DeleteMessage(ctx, panel.ChatID, panel.MessageID); err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"user_id":    userID,
+			"chat_id":    panel.ChatID,
+			"message_id": panel.MessageID,
+		}).Debug("failed to delete previous admin panel message")
+	}
+}
+
+func (h *Handler) attachPanelMessage(userID, chatID int64, panelMsgID int) {
+	h.service.SetPanelMessage(userID, chatID, panelMsgID)
 }
 
 func (h *Handler) panelMessageIDFromState(userID int64) int {

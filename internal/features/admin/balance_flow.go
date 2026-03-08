@@ -78,7 +78,7 @@ func (h *Handler) renderWizard(ctx context.Context, chatID, userID int64, data *
 		h.sendUIErrorHint(ctx, chatID, err)
 		return
 	}
-	h.attachPanelMessageID(userID, w.MessageID)
+	h.attachPanelMessage(userID, chatID, w.MessageID)
 }
 
 func (h *Handler) handleBalanceAdjustCallback(ctx context.Context, chatID, userID int64, panelMsgID int, data string) {

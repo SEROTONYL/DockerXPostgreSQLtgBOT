@@ -18,6 +18,12 @@ type MembersHandler interface {
 	HandleMembersCallback(ctx context.Context, q *models.CallbackQuery) bool
 }
 
+// EconomyHandler описывает обработку переводов плёнок вне обычного command-router.
+type EconomyHandler interface {
+	HandleEconomyCallback(ctx context.Context, q *models.CallbackQuery) bool
+	HandleEconomyMessage(ctx context.Context, message *models.Message) bool
+}
+
 // ChatAccessFilter описывает проверку доступа апдейтов по чату.
 type ChatAccessFilter interface {
 	CheckAccess(ctx context.Context, message *models.Message) bool

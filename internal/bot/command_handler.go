@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	models "github.com/mymmrac/telego"
 	log "github.com/sirupsen/logrus"
 
 	"serotonyl.ru/telegram-bot/internal/commands"
@@ -43,6 +44,7 @@ func (b *Bot) routeCommand(ctx context.Context, uc UpdateContext, cmd string, ar
 		ChatID:      uc.ChatID,
 		UserID:      uc.UserID,
 		MessageID:   messageIDFromUpdate(uc),
+		Message:     messageFromUpdate(uc),
 		IsPrivate:   uc.IsPrivate,
 		IsAdminChat: uc.IsAdminChat,
 		Now:         uc.Now,
@@ -104,4 +106,11 @@ func messageIDFromUpdate(uc UpdateContext) int {
 		return uc.Message.MessageID
 	}
 	return 0
+}
+
+func messageFromUpdate(uc UpdateContext) *models.Message {
+	if uc.Message != nil {
+		return uc.Message
+	}
+	return nil
 }

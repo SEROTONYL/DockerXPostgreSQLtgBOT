@@ -38,6 +38,11 @@ type AdminState struct {
 }
 
 // UserPickerMode определяет режим выборщика пользователей.
+type AdminPanelMessage struct {
+	ChatID    int64
+	MessageID int
+}
+
 type UserPickerMode string
 
 const (

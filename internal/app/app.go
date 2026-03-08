@@ -92,6 +92,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	b := modules.BuildBot(cfg, infra, tg, cmdRouter, chatFilter, modules.BotHandlers{
 		Admin:   adminModule.Handler,
 		Members: membersModule.Handler,
+		Economy: economyModule.Handler,
 		Karma:   karmaModule.Handler,
 	}, modules.KarmaClassifier{Match: karma.IsThankYou})
 

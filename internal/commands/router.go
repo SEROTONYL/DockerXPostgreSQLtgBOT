@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	models "github.com/mymmrac/telego"
 )
 
 // Context содержит данные апдейта, необходимые для обработки команд.
@@ -11,6 +13,7 @@ type Context struct {
 	ChatID      int64
 	UserID      int64
 	MessageID   int
+	Message     *models.Message
 	IsPrivate   bool
 	IsAdminChat bool
 	Now         time.Time

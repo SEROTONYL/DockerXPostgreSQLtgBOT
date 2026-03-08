@@ -84,6 +84,9 @@ func (b *Bot) handleCallbackUpdate(ctx context.Context, uc UpdateContext) bool {
 	if b.membersHandler != nil && b.membersHandler.HandleMembersCallback(ctx, uc.Callback) {
 		return true
 	}
+	if b.economyHandler != nil && b.economyHandler.HandleEconomyCallback(ctx, uc.Callback) {
+		return true
+	}
 	if b.adminHandler.HandleAdminCallback(ctx, uc.Callback) {
 		return true
 	}
@@ -152,6 +155,10 @@ func (b *Bot) handleMessageUpdate(ctx context.Context, uc UpdateContext) {
 
 	if isCommand {
 		b.routeCommand(ctx, uc, cmd, args)
+		return
+	}
+
+	if b.economyHandler != nil && b.economyHandler.HandleEconomyMessage(ctx, message) {
 		return
 	}
 
