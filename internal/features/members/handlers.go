@@ -12,7 +12,6 @@ import (
 	models "github.com/mymmrac/telego"
 	log "github.com/sirupsen/logrus"
 
-	"serotonyl.ru/telegram-bot/internal/common"
 	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/telegram"
 )
@@ -147,7 +146,7 @@ func (h *Handler) renderMembersPage(ctx context.Context, chatID int64, messageID
 
 	rows := make([]string, 0, len(pageMembers))
 	for _, rm := range pageMembers {
-		rows = append(rows, fmt.Sprintf("%s - %s", roleAnchor(rm.member), common.FormatBalance(rm.balance)))
+		rows = append(rows, fmt.Sprintf("%s - %d 🎞️", roleAnchor(rm.member), rm.balance))
 	}
 
 	text := "🏆 Топ участников пуст"
