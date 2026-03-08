@@ -6,7 +6,7 @@ import (
 )
 
 func TestSendMessage_DoesNotSerializeNullReplyMarkup(t *testing.T) {
-	params := buildSendMessageParams(12345, "hello", nil, nil)
+	params := buildSendMessageParams(SendOptions{ChatID: 12345, Text: "hello"})
 
 	payload, err := json.Marshal(params)
 	if err != nil {
@@ -24,7 +24,7 @@ func TestSendMessage_DoesNotSerializeNullReplyMarkup(t *testing.T) {
 }
 
 func TestEditMessage_DoesNotSerializeNullReplyMarkup(t *testing.T) {
-	params := buildEditMessageTextParams(12345, 42, "hello", nil, nil)
+	params := buildEditMessageTextParams(EditOptions{ChatID: 12345, MessageID: 42, Text: "hello"})
 
 	payload, err := json.Marshal(params)
 	if err != nil {
@@ -38,5 +38,15 @@ func TestEditMessage_DoesNotSerializeNullReplyMarkup(t *testing.T) {
 
 	if value, exists := data["reply_markup"]; exists {
 		t.Fatalf("reply_markup must be omitted for nil markup, got: %v", value)
+	}
+}
+
+func TestSendMessage_WithReplyAndDisabledPreview(t *testing.T) {
+	params := buildSendMessageParams(SendOptions{ChatID: 12345, Text: "hello", ReplyToMessageID: 77, DisableWebPagePreview: true})
+	if params.ReplyParameters == nil || params.ReplyParameters.MessageID != 77 {
+		t.Fatalf("expected reply parameters with message_id=77, got %#v", params.ReplyParameters)
+	}
+	if params.LinkPreviewOptions == nil || !params.LinkPreviewOptions.IsDisabled {
+		t.Fatalf("expected disabled link preview, got %#v", params.LinkPreviewOptions)
 	}
 }

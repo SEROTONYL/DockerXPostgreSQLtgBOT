@@ -10,6 +10,7 @@ import (
 type Context struct {
 	ChatID      int64
 	UserID      int64
+	MessageID   int
 	IsPrivate   bool
 	IsAdminChat bool
 	Now         time.Time

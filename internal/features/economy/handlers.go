@@ -36,16 +36,16 @@ func NewHandler(service *Service, memberService *members.Service, tgOps *telegra
 // Формат ответа:
 //
 //	💰 Баланс: 150 пленок
-func (h *Handler) HandleBalance(ctx context.Context, chatID int64, userID int64) {
+func (h *Handler) HandleBalance(ctx context.Context, chatID int64, userID int64, replyToMessageID int) {
 	balance, err := h.service.GetBalance(ctx, userID)
 	if err != nil {
 		log.WithError(err).Error("Ошибка получения баланса")
-		h.sendMessage(ctx, chatID, "❌ Ошибка получения баланса")
+		h.sendMessage(ctx, chatID, "❌ Ошибка получения баланса", replyToMessageID)
 		return
 	}
 
-	text := fmt.Sprintf("💰 Баланс: %s", common.FormatBalance(balance))
-	h.sendMessage(ctx, chatID, text)
+	text := fmt.Sprintf("У вас: %d📼", balance)
+	h.sendMessage(ctx, chatID, text, replyToMessageID)
 }
 
 // HandleTransfer обрабатывает команду !отсыпать @username 100.
@@ -61,28 +61,28 @@ func (h *Handler) HandleBalance(ctx context.Context, chatID int64, userID int64)
 func (h *Handler) HandleTransfer(ctx context.Context, chatID int64, fromUserID int64, args []string) {
 	// Проверяем аргументы: нужен @username и сумма
 	if len(args) < 2 {
-		h.sendMessage(ctx, chatID, "❌ Формат: !отсыпать @username сумма")
+		h.sendMessage(ctx, chatID, "❌ Формат: !отсыпать @username сумма", 0)
 		return
 	}
 
 	// Парсим username (убираем @ если есть)
 	username := strings.TrimPrefix(args[0], "@")
 	if username == "" {
-		h.sendMessage(ctx, chatID, "❌ Укажите @username получателя")
+		h.sendMessage(ctx, chatID, "❌ Укажите @username получателя", 0)
 		return
 	}
 
 	// Парсим сумму
 	amount, err := strconv.ParseInt(args[1], 10, 64)
 	if err != nil || amount <= 0 {
-		h.sendMessage(ctx, chatID, "❌ Сумма должна быть положительным числом")
+		h.sendMessage(ctx, chatID, "❌ Сумма должна быть положительным числом", 0)
 		return
 	}
 
 	// Находим получателя по username
 	recipient, err := h.memberService.GetByUsername(ctx, username)
 	if err != nil {
-		h.sendMessage(ctx, chatID, "❌ Пользователь не найден")
+		h.sendMessage(ctx, chatID, "❌ Пользователь не найден", 0)
 		return
 	}
 
@@ -91,14 +91,14 @@ func (h *Handler) HandleTransfer(ctx context.Context, chatID int64, fromUserID i
 	if err != nil {
 		switch err {
 		case common.ErrSelfTransfer:
-			h.sendMessage(ctx, chatID, "❌ Нельзя переводить плёнки самому себе")
+			h.sendMessage(ctx, chatID, "❌ Нельзя переводить плёнки самому себе", 0)
 		case common.ErrInsufficientBalance:
-			h.sendMessage(ctx, chatID, "❌ Недостаточно плёнок на счёте")
+			h.sendMessage(ctx, chatID, "❌ Недостаточно плёнок на счёте", 0)
 		case common.ErrInvalidAmount:
-			h.sendMessage(ctx, chatID, "❌ Сумма должна быть положительной")
+			h.sendMessage(ctx, chatID, "❌ Сумма должна быть положительной", 0)
 		default:
 			log.WithError(err).Error("Ошибка перевода")
-			h.sendMessage(ctx, chatID, "❌ Ошибка выполнения перевода")
+			h.sendMessage(ctx, chatID, "❌ Ошибка выполнения перевода", 0)
 		}
 		return
 	}
@@ -108,7 +108,7 @@ func (h *Handler) HandleTransfer(ctx context.Context, chatID int64, fromUserID i
 
 	text := fmt.Sprintf("✅ Переведено %s @%s\nТвой баланс: %s",
 		common.FormatBalance(amount), username, common.FormatBalance(newBalance))
-	h.sendMessage(ctx, chatID, text)
+	h.sendMessage(ctx, chatID, text, 0)
 }
 
 // HandleTransactions обрабатывает команду !транзакции — показывает историю.
@@ -116,15 +116,19 @@ func (h *Handler) HandleTransactions(ctx context.Context, chatID int64, userID i
 	history, err := h.service.GetTransactionHistory(ctx, userID)
 	if err != nil {
 		log.WithError(err).Error("Ошибка получения транзакций")
-		h.sendMessage(ctx, chatID, "❌ Ошибка получения истории транзакций")
+		h.sendMessage(ctx, chatID, "❌ Ошибка получения истории транзакций", 0)
 		return
 	}
 
 	// Отправляем с MarkdownV2 для поддержки спойлеров
-	h.sendMessage(ctx, chatID, history)
+	h.sendMessage(ctx, chatID, history, 0)
 }
 
 // sendMessage — вспомогательный метод для отправки текстовых сообщений.
-func (h *Handler) sendMessage(ctx context.Context, chatID int64, text string) {
-	_, _ = h.tgOps.Send(ctx, chatID, text, nil)
+func (h *Handler) sendMessage(ctx context.Context, chatID int64, text string, replyToMessageID int) {
+	_, _ = h.tgOps.SendWithOptions(ctx, telegram.SendOptions{
+		ChatID:           chatID,
+		Text:             text,
+		ReplyToMessageID: replyToMessageID,
+	})
 }

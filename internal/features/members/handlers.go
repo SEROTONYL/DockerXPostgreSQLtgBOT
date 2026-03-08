@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -107,7 +108,26 @@ func (h *Handler) renderMembersPage(ctx context.Context, chatID int64, messageID
 	all = append(all, withRole...)
 	all = append(all, withoutRole...)
 
-	totalPages := maxPageCount(len(all), membersListPageSize)
+	type rankedMember struct {
+		member  *Member
+		balance int64
+	}
+	ranked := make([]rankedMember, 0, len(all))
+	for _, m := range all {
+		balance, balErr := h.economy.GetBalance(ctx, m.UserID)
+		if balErr != nil {
+			return balErr
+		}
+		ranked = append(ranked, rankedMember{member: m, balance: balance})
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].balance == ranked[j].balance {
+			return ranked[i].member.UserID < ranked[j].member.UserID
+		}
+		return ranked[i].balance > ranked[j].balance
+	})
+
+	totalPages := maxPageCount(len(ranked), membersListPageSize)
 	if page < 0 {
 		page = 0
 	}
@@ -120,33 +140,29 @@ func (h *Handler) renderMembersPage(ctx context.Context, chatID int64, messageID
 
 	start := page * membersListPageSize
 	end := start + membersListPageSize
-	if end > len(all) {
-		end = len(all)
+	if end > len(ranked) {
+		end = len(ranked)
 	}
-	pageMembers := all[start:end]
+	pageMembers := ranked[start:end]
 
 	rows := make([]string, 0, len(pageMembers))
-	for _, m := range pageMembers {
-		balance, balErr := h.economy.GetBalance(ctx, m.UserID)
-		if balErr != nil {
-			return balErr
-		}
-		rows = append(rows, fmt.Sprintf("%s - %s", roleAnchor(m), common.FormatBalance(balance)))
+	for _, rm := range pageMembers {
+		rows = append(rows, fmt.Sprintf("%s - %s", roleAnchor(rm.member), common.FormatBalance(rm.balance)))
 	}
 
-	text := "Список участников пуст"
+	text := "🏆 Топ участников пуст"
 	if len(rows) > 0 {
-		text = strings.Join(rows, "\n")
+		text = "🏆 Топ участников\n\n" + strings.Join(rows, "\n")
 	}
-	text += fmt.Sprintf("\n\nСтр %d/%d", page+1, totalPages)
 
 	keyboard := membersListKeyboard(ownerUserID, page, totalPages)
 	_, _, err = telegram.RenderScreen(ctx, h.tgOps, telegram.Screen{
-		ChatID:      chatID,
-		MessageID:   messageID,
-		Text:        text,
-		ReplyMarkup: keyboard,
-		ParseMode:   telegram.ParseModeHTML,
+		ChatID:                chatID,
+		MessageID:             messageID,
+		Text:                  text,
+		ReplyMarkup:           keyboard,
+		ParseMode:             telegram.ParseModeHTML,
+		DisableWebPagePreview: true,
 	})
 	return err
 }

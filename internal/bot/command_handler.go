@@ -42,6 +42,7 @@ func (b *Bot) routeCommand(ctx context.Context, uc UpdateContext, cmd string, ar
 	c := commands.Context{
 		ChatID:      uc.ChatID,
 		UserID:      uc.UserID,
+		MessageID:   messageIDFromUpdate(uc),
 		IsPrivate:   uc.IsPrivate,
 		IsAdminChat: uc.IsAdminChat,
 		Now:         uc.Now,
@@ -96,4 +97,11 @@ func (p *CommandParser) ParseCommand(text string, allowSlash bool) (string, []st
 	}
 
 	return command, args, true
+}
+
+func messageIDFromUpdate(uc UpdateContext) int {
+	if uc.Message != nil {
+		return uc.Message.MessageID
+	}
+	return 0
 }
