@@ -15,6 +15,12 @@ func RegisterCommands(r *commands.Router, h *Handler, cfg *config.Config) {
 		}
 		h.HandleBalance(ctx, c.ChatID, c.UserID, c.MessageID)
 	})
+	r.Register("твои", func(ctx context.Context, c commands.Context, args []string) {
+		if cfg == nil || c.ChatID != cfg.MemberSourceChatID {
+			return
+		}
+		h.HandleTargetBalanceCommand(ctx, c, args)
+	})
 	r.Register("отсыпать", func(ctx context.Context, c commands.Context, args []string) {
 		h.HandleTransferCommand(ctx, c, args)
 	})

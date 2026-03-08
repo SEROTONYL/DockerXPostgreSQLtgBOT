@@ -72,6 +72,10 @@ func (f *lifecycleFakeRepo) GetByUsername(ctx context.Context, username string) 
 	return &m, nil
 }
 
+func (f *lifecycleFakeRepo) FindByNickname(ctx context.Context, nickname string) (*Member, error) {
+	return nil, nil
+}
+
 func (f *lifecycleFakeRepo) ListActiveUserIDs(ctx context.Context) ([]int64, error) {
 	return nil, nil
 }
@@ -270,6 +274,9 @@ func (r *seenStateRepo) GetByUserID(ctx context.Context, userID int64) (*Member,
 	return &cp, nil
 }
 func (r *seenStateRepo) GetByUsername(ctx context.Context, username string) (*Member, error) {
+	return nil, nil
+}
+func (r *seenStateRepo) FindByNickname(ctx context.Context, nickname string) (*Member, error) {
 	return nil, nil
 }
 func (r *seenStateRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {

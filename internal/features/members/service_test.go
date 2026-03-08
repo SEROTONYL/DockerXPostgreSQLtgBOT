@@ -77,6 +77,9 @@ func (f *fakeRepo) GetByUserID(ctx context.Context, userID int64) (*Member, erro
 func (f *fakeRepo) GetByUsername(ctx context.Context, username string) (*Member, error) {
 	return nil, nil
 }
+func (f *fakeRepo) FindByNickname(ctx context.Context, nickname string) (*Member, error) {
+	return nil, nil
+}
 func (f *fakeRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	f.ensureSeenCalled = true
 	f.ensureSeenUserID = userID

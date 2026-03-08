@@ -48,11 +48,11 @@ func (h *Handler) HandleNewChatMembers(ctx context.Context, newMembers []models.
 	}
 }
 
-func (h *Handler) HandleMembersList(ctx context.Context, chatID int64, ownerUserID int64) {
+func (h *Handler) HandleMembersList(ctx context.Context, chatID int64, ownerUserID int64, limit int) {
 	if !h.canRenderMembersList(chatID) {
 		return
 	}
-	if err := h.renderMembersPage(ctx, chatID, 0, ownerUserID, 0); err != nil {
+	if err := h.renderMembersPage(ctx, chatID, 0, ownerUserID, 0, limit); err != nil {
 		log.WithError(err).Warn("members list render failed")
 	}
 }
@@ -80,7 +80,7 @@ func (h *Handler) HandleMembersCallback(ctx context.Context, cb *models.Callback
 		h.answerCallback(ctx, cb.ID, "Листать список может только тот, кто его открыл")
 		return true
 	}
-	if err := h.renderMembersPage(ctx, msg.Chat.ID, msg.MessageID, ownerUserID, page); err != nil {
+	if err := h.renderMembersPage(ctx, msg.Chat.ID, msg.MessageID, ownerUserID, page, 0); err != nil {
 		log.WithError(err).Warn("members list callback render failed")
 	}
 	h.answerCallback(ctx, cb.ID, "")
@@ -94,7 +94,7 @@ func (h *Handler) canRenderMembersList(chatID int64) bool {
 	return h.cfg.MemberSourceChatID != 0 && chatID == h.cfg.MemberSourceChatID
 }
 
-func (h *Handler) renderMembersPage(ctx context.Context, chatID int64, messageID int, ownerUserID int64, page int) error {
+func (h *Handler) renderMembersPage(ctx context.Context, chatID int64, messageID int, ownerUserID int64, page int, limit int) error {
 	withRole, err := h.service.GetUsersWithRole(ctx)
 	if err != nil {
 		return err
@@ -125,6 +125,9 @@ func (h *Handler) renderMembersPage(ctx context.Context, chatID int64, messageID
 		}
 		return ranked[i].balance > ranked[j].balance
 	})
+	if limit > 0 && limit < len(ranked) {
+		ranked = ranked[:limit]
+	}
 
 	totalPages := maxPageCount(len(ranked), membersListPageSize)
 	if page < 0 {
@@ -253,4 +256,15 @@ func (h *Handler) answerCallback(ctx context.Context, callbackID, text string) {
 	if err := h.tgOps.AnswerCallback(ctx, callbackID, text, false); err != nil {
 		log.WithError(err).Debug("ошибка ответа на callback")
 	}
+}
+
+func (h *Handler) sendMembersListValidationError(ctx context.Context, chatID int64, replyToMessageID int) {
+	if h == nil || h.tgOps == nil {
+		return
+	}
+	_, _ = h.tgOps.SendWithOptions(ctx, telegram.SendOptions{
+		ChatID:           chatID,
+		Text:             "❌ Укажите положительное целое число больше нуля: `!список <число>`.",
+		ReplyToMessageID: replyToMessageID,
+	})
 }

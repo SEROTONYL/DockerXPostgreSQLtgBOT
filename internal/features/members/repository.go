@@ -257,6 +257,32 @@ func (r *Repository) GetByUsername(ctx context.Context, username string) (*Membe
 	return &m, nil
 }
 
+// FindByNickname возвращает активного участника по точному совпадению display name.
+func (r *Repository) FindByNickname(ctx context.Context, nickname string) (*Member, error) {
+	query := findByNicknameQuery()
+	rows, err := r.db.Query(ctx, query, nickname, StatusActive)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка поиска участника (nickname=%s): %w", nickname, err)
+	}
+	defer rows.Close()
+
+	var found []*Member
+	for rows.Next() {
+		var m Member
+		if err := scanMember(rows, &m); err != nil {
+			return nil, fmt.Errorf("ошибка чтения участника (nickname=%s): %w", nickname, err)
+		}
+		found = append(found, &m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка чтения участников (nickname=%s): %w", nickname, err)
+	}
+	if len(found) != 1 {
+		return nil, fmt.Errorf("участник не найден (nickname=%s)", nickname)
+	}
+	return found[0], nil
+}
+
 func (r *Repository) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {
 	query := countMembersByStatusQuery()
 	if err := r.db.QueryRow(ctx, query, StatusActive, StatusLeft).Scan(&active, &left); err != nil {
@@ -380,6 +406,20 @@ func getByUsernameQuery() string {
 		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, tag, tag_updated_at, created_at, updated_at
 		FROM members
 		WHERE LOWER(username) = LOWER($1) AND status = $2
+	`
+}
+
+func findByNicknameQuery() string {
+	return `
+		SELECT id, user_id, username, first_name, last_name, role, is_admin, is_bot, is_banned,
+		       status, joined_at, left_at, delete_after, last_seen_at, last_known_name, tag, tag_updated_at, created_at, updated_at
+		FROM members
+		WHERE status = $2
+		  AND (
+		      LOWER(TRIM(CONCAT_WS(' ', COALESCE(first_name, ''), COALESCE(last_name, '')))) = LOWER($1)
+		   OR LOWER(COALESCE(last_known_name, '')) = LOWER($1)
+		  )
+		ORDER BY user_id
 	`
 }
 

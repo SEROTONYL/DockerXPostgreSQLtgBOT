@@ -32,8 +32,8 @@ const (
 	transferStateExpired     = "expired"
 	transferStateFailed      = "failed"
 	transferTTL              = 15 * time.Minute
-	confirmEmojiID           = "5210952531676504517"
-	cancelEmojiID            = "5206607081334906820"
+	confirmEmojiID           = "5206607081334906820"
+	cancelEmojiID            = "5210952531676504517"
 	buttonYesText            = "Да"
 	buttonNoText             = "Нет"
 )
@@ -46,6 +46,8 @@ type handlerService interface {
 
 type memberLookup interface {
 	GetByUsername(ctx context.Context, username string) (*members.Member, error)
+	GetByUserID(ctx context.Context, userID int64) (*members.Member, error)
+	FindByNickname(ctx context.Context, nickname string) (*members.Member, error)
 }
 
 type transferConfirmation struct {
@@ -72,6 +74,11 @@ type transferRequest struct {
 	Target           transferTarget
 }
 
+type balanceTarget struct {
+	UserID  int64
+	Display string
+}
+
 type Handler struct {
 	service       handlerService
 	memberService memberLookup
@@ -93,7 +100,7 @@ func NewHandler(service *Service, memberService memberLookup, tgOps *telegram.Op
 }
 
 func (h *Handler) HandleBalance(ctx context.Context, chatID int64, userID int64, replyToMessageID int) {
-	balance, err := h.service.GetBalance(ctx, userID)
+	balance, err := h.getBalance(ctx, userID)
 	if err != nil {
 		log.WithError(err).Error("ошибка получения баланса")
 		h.sendMessage(ctx, chatID, "❌ Ошибка получения баланса", replyToMessageID)
@@ -101,6 +108,41 @@ func (h *Handler) HandleBalance(ctx context.Context, chatID int64, userID int64,
 	}
 
 	h.sendMessage(ctx, chatID, fmt.Sprintf("У вас: %d🎞️", balance), replyToMessageID)
+}
+
+func (h *Handler) HandleTargetBalanceCommand(ctx context.Context, c commands.Context, args []string) {
+	if len(args) == 0 || normalizeWord(args[0]) != "пленки" {
+		h.sendMessage(ctx, c.ChatID, "❌ Некорректный формат. Используйте `!твои пленки <@username|nickname>` или ответьте `!твои пленки`.", c.MessageID)
+		return
+	}
+	if len(args) > 2 {
+		h.sendMessage(ctx, c.ChatID, "❌ Некорректный формат. Используйте `!твои пленки <@username|nickname>` или ответьте `!твои пленки`.", c.MessageID)
+		return
+	}
+	if c.Message == nil {
+		h.sendMessage(ctx, c.ChatID, "❌ Не удалось прочитать сообщение команды.", c.MessageID)
+		return
+	}
+
+	explicitTarget := ""
+	if len(args) == 2 {
+		explicitTarget = strings.TrimSpace(args[1])
+	}
+
+	target, err := h.resolveBalanceTarget(ctx, c.Message, explicitTarget)
+	if err != nil {
+		h.sendMessage(ctx, c.ChatID, userFacingBalanceTargetError(err), c.MessageID)
+		return
+	}
+
+	balance, err := h.getBalance(ctx, target.UserID)
+	if err != nil {
+		log.WithError(err).WithField("target_user_id", target.UserID).Error("ошибка получения баланса пользователя")
+		h.sendMessage(ctx, c.ChatID, "❌ Ошибка получения баланса", c.MessageID)
+		return
+	}
+
+	h.sendMessage(ctx, c.ChatID, fmt.Sprintf("У %s: %d🎞️", target.Display, balance), c.MessageID)
 }
 
 func (h *Handler) HandleTransferCommand(ctx context.Context, c commands.Context, args []string) {
@@ -274,7 +316,7 @@ func (h *Handler) buildTransferRequest(ctx context.Context, message *models.Mess
 		return nil, common.ErrSelfTransfer
 	}
 
-	balance, err := h.service.GetBalance(ctx, message.From.ID)
+	balance, err := h.getBalance(ctx, message.From.ID)
 	if err != nil {
 		return nil, fmt.Errorf("get balance: %w", err)
 	}
@@ -306,6 +348,76 @@ func (h *Handler) resolveTransferTarget(ctx context.Context, message *models.Mes
 		return transferTarget{UserID: user.ID, Display: visibleUserName(*user)}, nil
 	}
 	return transferTarget{}, errTransferRecipientMissing
+}
+
+func (h *Handler) resolveBalanceTarget(ctx context.Context, message *models.Message, explicitTarget string) (balanceTarget, error) {
+	if message == nil {
+		return balanceTarget{}, errBalanceCommandMalformed
+	}
+
+	explicitTarget = strings.TrimSpace(explicitTarget)
+	if explicitTarget != "" {
+		if isUsernameToken(explicitTarget) {
+			username := normalizeUsernameToken(explicitTarget)
+			if username == "" {
+				return balanceTarget{}, errBalanceCommandMalformed
+			}
+			member, err := h.lookupByUsername(ctx, username)
+			if err != nil {
+				return balanceTarget{}, errBalanceUsernameNotResolved
+			}
+			return balanceTarget{UserID: member.UserID, Display: displayMember(member)}, nil
+		}
+
+		member, err := h.lookupByNickname(ctx, explicitTarget)
+		if err != nil {
+			return balanceTarget{}, errBalanceNicknameNotResolved
+		}
+		return balanceTarget{UserID: member.UserID, Display: displayMember(member)}, nil
+	}
+
+	if message.ReplyToMessage != nil && message.ReplyToMessage.From != nil {
+		member, err := h.lookupByUserID(ctx, message.ReplyToMessage.From.ID)
+		if err != nil {
+			return balanceTarget{}, common.ErrUserNotFound
+		}
+		return balanceTarget{UserID: member.UserID, Display: displayMember(member)}, nil
+	}
+
+	return balanceTarget{}, errBalanceTargetMissing
+}
+
+func (h *Handler) lookupByUsername(ctx context.Context, username string) (*members.Member, error) {
+	if h.memberService == nil {
+		return nil, common.ErrUserNotFound
+	}
+	member, err := h.memberService.GetByUsername(ctx, username)
+	if err != nil || member == nil {
+		return nil, common.ErrUserNotFound
+	}
+	return member, nil
+}
+
+func (h *Handler) lookupByNickname(ctx context.Context, nickname string) (*members.Member, error) {
+	if h.memberService == nil {
+		return nil, common.ErrUserNotFound
+	}
+	member, err := h.memberService.FindByNickname(ctx, nickname)
+	if err != nil || member == nil {
+		return nil, common.ErrUserNotFound
+	}
+	return member, nil
+}
+
+func (h *Handler) lookupByUserID(ctx context.Context, userID int64) (*members.Member, error) {
+	if h.memberService == nil {
+		return nil, common.ErrUserNotFound
+	}
+	member, err := h.memberService.GetByUserID(ctx, userID)
+	if err != nil || member == nil {
+		return nil, common.ErrUserNotFound
+	}
+	return member, nil
 }
 
 func (h *Handler) startTransferConfirmation(ctx context.Context, chatID, ownerUserID int64, replyToMessageID int, req *transferRequest) {
@@ -474,11 +586,13 @@ func transferConfirmationMarkup(token string) *models.InlineKeyboardMarkup {
 				{
 					Text:              buttonYesText,
 					IconCustomEmojiID: confirmEmojiID,
+					Style:             models.ButtonStyleSuccess,
 					CallbackData:      transferCallbackPrefix + token + ":" + transferConfirmYes,
 				},
 				{
 					Text:              buttonNoText,
 					IconCustomEmojiID: cancelEmojiID,
+					Style:             models.ButtonStyleDanger,
 					CallbackData:      transferCallbackPrefix + token + ":" + transferConfirmNo,
 				},
 			},
@@ -487,15 +601,15 @@ func transferConfirmationMarkup(token string) *models.InlineKeyboardMarkup {
 }
 
 func firstTransferConfirmationText(amount int64, recipient string) string {
-	return fmt.Sprintf("Вы уверены, что хотите передать %d  пользователю %s?", amount, recipient)
+	return fmt.Sprintf("Вы уверены, что хотите передать %d пользователю %s?", amount, recipient)
 }
 
 func secondTransferConfirmationText(amount int64, recipient string) string {
-	return fmt.Sprintf("Вы точно уверены, что хотите передать %d  пользователю %s?", amount, recipient)
+	return fmt.Sprintf("Вы точно уверены, что хотите передать %d пользователю %s?", amount, recipient)
 }
 
 func successTransferText(amount int64, recipient string) string {
-	return fmt.Sprintf("✅ Передано %d  пользователю %s.", amount, recipient)
+	return fmt.Sprintf("✅ Передано %d пользователю %s.", amount, recipient)
 }
 
 func userFacingTransferError(err error) string {
@@ -532,11 +646,36 @@ func userFacingTransferExecutionError(err error) string {
 	}
 }
 
+func userFacingBalanceTargetError(err error) string {
+	switch {
+	case errors.Is(err, errBalanceTargetMissing):
+		return "❌ Не указан пользователь. Укажите @username, nickname или ответьте на сообщение пользователя."
+	case errors.Is(err, errBalanceCommandMalformed):
+		return "❌ Некорректный формат. Используйте `!твои пленки <@username|nickname>` или ответьте `!твои пленки`."
+	case errors.Is(err, errBalanceUsernameNotResolved):
+		return "❌ Не удалось найти пользователя по указанному username."
+	case errors.Is(err, errBalanceNicknameNotResolved):
+		return "❌ Не удалось найти пользователя по указанному nickname."
+	case errors.Is(err, common.ErrUserNotFound):
+		return "❌ Пользователь не найден."
+	default:
+		return "❌ Не удалось определить пользователя."
+	}
+}
+
 var (
-	errTransferRecipientMissing = errors.New("transfer recipient missing")
-	errTransferAmountMissing    = errors.New("transfer amount missing")
-	errTransferMalformed        = errors.New("transfer malformed")
+	errTransferRecipientMissing   = errors.New("transfer recipient missing")
+	errTransferAmountMissing      = errors.New("transfer amount missing")
+	errTransferMalformed          = errors.New("transfer malformed")
+	errBalanceTargetMissing       = errors.New("balance target missing")
+	errBalanceCommandMalformed    = errors.New("balance command malformed")
+	errBalanceUsernameNotResolved = errors.New("balance username not resolved")
+	errBalanceNicknameNotResolved = errors.New("balance nickname not resolved")
 )
+
+func (h *Handler) getBalance(ctx context.Context, userID int64) (int64, error) {
+	return h.service.GetBalance(ctx, userID)
+}
 
 func parsePositiveInteger(raw string) (int64, error) {
 	token := strings.TrimSpace(raw)
@@ -572,6 +711,26 @@ func visibleUserName(user models.User) string {
 		return name
 	}
 	return fmt.Sprintf("id:%d", user.ID)
+}
+
+func displayMember(member *members.Member) string {
+	if member == nil {
+		return "id:0"
+	}
+	username := strings.TrimPrefix(strings.TrimSpace(member.Username), "@")
+	if username != "" {
+		return "@" + username
+	}
+	name := strings.TrimSpace(strings.Join([]string{strings.TrimSpace(member.FirstName), strings.TrimSpace(member.LastName)}, " "))
+	if name != "" {
+		return name
+	}
+	if member.LastKnownName != nil {
+		if name = strings.TrimSpace(*member.LastKnownName); name != "" {
+			return name
+		}
+	}
+	return fmt.Sprintf("id:%d", member.UserID)
 }
 
 func randomToken() (string, error) {

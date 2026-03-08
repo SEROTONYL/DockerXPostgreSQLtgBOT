@@ -44,7 +44,7 @@ func (noopBalanceProvider) GetBalance(ctx context.Context, userID int64) (int64,
 
 func TestHandleMembersList_WrongChat_NoPanicNoop(t *testing.T) {
 	h := &Handler{cfg: &config.Config{MemberSourceChatID: 100}}
-	h.HandleMembersList(context.Background(), 200, 77)
+	h.HandleMembersList(context.Background(), 200, 77, 0)
 }
 
 func TestHandleMembersCallback_NonOwnerGetsNotice(t *testing.T) {
@@ -92,6 +92,9 @@ func (f *fakeMembersRepo) GetByUserID(ctx context.Context, userID int64) (*Membe
 	return nil, nil
 }
 func (f *fakeMembersRepo) GetByUsername(ctx context.Context, username string) (*Member, error) {
+	return nil, nil
+}
+func (f *fakeMembersRepo) FindByNickname(ctx context.Context, nickname string) (*Member, error) {
 	return nil, nil
 }
 func (f *fakeMembersRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
@@ -165,7 +168,7 @@ func TestHandleMembersList_SortedAsTopWithoutBodyPageLabelAndDisabledPreview(t *
 	tg := &fakeMembersTGWithOptions{}
 	h := NewHandler(&Service{repo: repo}, fakeMembersBalance{values: map[int64]int64{10: 5, 20: 100, 5: 5}}, telegram.NewOps(tg), &config.Config{MemberSourceChatID: 100})
 
-	h.HandleMembersList(context.Background(), 100, 77)
+	h.HandleMembersList(context.Background(), 100, 77, 0)
 	if len(tg.sentOpts) != 1 {
 		t.Fatalf("expected one send call, got %d", len(tg.sentOpts))
 	}
@@ -193,6 +196,28 @@ func TestHandleMembersList_SortedAsTopWithoutBodyPageLabelAndDisabledPreview(t *
 	pos5a := strings.Index(text, "Гамма")
 	if pos5 == -1 || pos5a == -1 || pos5a > pos5 {
 		t.Fatalf("expected tie-break by user_id asc, got %q", text)
+	}
+}
+
+func TestHandleMembersList_WithLimit_TruncatesSortedLeaderboard(t *testing.T) {
+	repo := &fakeMembersRepo{withRole: []*Member{
+		{UserID: 10, Username: "u10", Role: strPtr("Бета")},
+		{UserID: 20, Username: "u20", Role: strPtr("Альфа")},
+		{UserID: 5, Username: "u5", Role: strPtr("Гамма")},
+	}}
+	tg := &fakeMembersTGWithOptions{}
+	h := NewHandler(&Service{repo: repo}, fakeMembersBalance{values: map[int64]int64{10: 5, 20: 100, 5: 50}}, telegram.NewOps(tg), &config.Config{MemberSourceChatID: 100})
+
+	h.HandleMembersList(context.Background(), 100, 77, 2)
+	if len(tg.sentOpts) != 1 {
+		t.Fatalf("expected one send call, got %d", len(tg.sentOpts))
+	}
+	text := tg.sentOpts[0].Text
+	if !strings.Contains(text, "Альфа") || !strings.Contains(text, "Гамма") {
+		t.Fatalf("expected top two entries in %q", text)
+	}
+	if strings.Contains(text, "Бета") {
+		t.Fatalf("did not expect truncated entry in %q", text)
 	}
 }
 

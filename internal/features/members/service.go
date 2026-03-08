@@ -26,6 +26,7 @@ type memberRepository interface {
 	PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error)
 	GetByUserID(ctx context.Context, userID int64) (*Member, error)
 	GetByUsername(ctx context.Context, username string) (*Member, error)
+	FindByNickname(ctx context.Context, nickname string) (*Member, error)
 	EnsureMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error
 	EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error
 	TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error
@@ -225,6 +226,11 @@ func (s *Service) GetByUserID(ctx context.Context, userID int64) (*Member, error
 // GetByUsername возвращает участника по @username (без @).
 func (s *Service) GetByUsername(ctx context.Context, username string) (*Member, error) {
 	return s.repo.GetByUsername(ctx, username)
+}
+
+// FindByNickname возвращает участника по точному nickname/display name.
+func (s *Service) FindByNickname(ctx context.Context, nickname string) (*Member, error) {
+	return s.repo.FindByNickname(ctx, nickname)
 }
 
 // EnsureMember гарантирует, что пользователь есть в базе и активен.

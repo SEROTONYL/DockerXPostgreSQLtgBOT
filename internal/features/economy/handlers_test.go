@@ -40,8 +40,10 @@ func (f *fakeEconomyService) GetTransactionHistory(ctx context.Context, userID i
 }
 
 type fakeMemberLookup struct {
-	member *members.Member
-	err    error
+	member         *members.Member
+	userByID       *members.Member
+	nicknameMember *members.Member
+	err            error
 }
 
 func (f *fakeMemberLookup) GetByUsername(ctx context.Context, username string) (*members.Member, error) {
@@ -52,6 +54,33 @@ func (f *fakeMemberLookup) GetByUsername(ctx context.Context, username string) (
 		return nil, errors.New("not found")
 	}
 	return f.member, nil
+}
+
+func (f *fakeMemberLookup) GetByUserID(ctx context.Context, userID int64) (*members.Member, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.userByID == nil || f.userByID.UserID != userID {
+		return nil, errors.New("not found")
+	}
+	return f.userByID, nil
+}
+
+func (f *fakeMemberLookup) FindByNickname(ctx context.Context, nickname string) (*members.Member, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.nicknameMember == nil {
+		return nil, errors.New("not found")
+	}
+	fullName := strings.TrimSpace(strings.Join([]string{strings.TrimSpace(f.nicknameMember.FirstName), strings.TrimSpace(f.nicknameMember.LastName)}, " "))
+	if strings.EqualFold(fullName, nickname) {
+		return f.nicknameMember, nil
+	}
+	if f.nicknameMember.LastKnownName != nil && strings.EqualFold(strings.TrimSpace(*f.nicknameMember.LastKnownName), nickname) {
+		return f.nicknameMember, nil
+	}
+	return nil, errors.New("not found")
 }
 
 type fakeEconomyTG struct {
@@ -134,7 +163,7 @@ func TestHandleTransferCommand_ReplyFlowSendsFirstConfirmation(t *testing.T) {
 	if len(tg.sent) != 1 {
 		t.Fatalf("expected one confirmation message, got %d", len(tg.sent))
 	}
-	if tg.sent[0].Text != "Вы уверены, что хотите передать 3  пользователю @Dora_2270?" {
+	if tg.sent[0].Text != "Вы уверены, что хотите передать 3 пользователю @Dora_2270?" {
 		t.Fatalf("unexpected confirmation text: %q", tg.sent[0].Text)
 	}
 	if tg.sent[0].ReplyMarkup == nil || len(tg.sent[0].ReplyMarkup.InlineKeyboard) != 1 || len(tg.sent[0].ReplyMarkup.InlineKeyboard[0]) != 2 {
@@ -219,7 +248,7 @@ func TestHandleEconomyCallback_RequiresOwnerAndRunsTwoSteps(t *testing.T) {
 	if len(tg.editedText) != 1 {
 		t.Fatalf("expected one edit after first confirm, got %d", len(tg.editedText))
 	}
-	if tg.editedText[0].Text != "Вы точно уверены, что хотите передать 7  пользователю @Dora_2270?" {
+	if tg.editedText[0].Text != "Вы точно уверены, что хотите передать 7 пользователю @Dora_2270?" {
 		t.Fatalf("unexpected second step text: %q", tg.editedText[0].Text)
 	}
 	if entry.State != transferStateAwaitSecond {
@@ -235,7 +264,7 @@ func TestHandleEconomyCallback_RequiresOwnerAndRunsTwoSteps(t *testing.T) {
 	if len(tg.editedText) != 2 {
 		t.Fatalf("expected final edit, got %d edits", len(tg.editedText))
 	}
-	if tg.editedText[1].Text != "✅ Передано 7  пользователю @Dora_2270." {
+	if tg.editedText[1].Text != "✅ Передано 7 пользователю @Dora_2270." {
 		t.Fatalf("unexpected final text: %q", tg.editedText[1].Text)
 	}
 }
@@ -342,5 +371,200 @@ func callback(chatID int64, msgID int, userID int64, data string) *models.Callba
 			MessageID: msgID,
 			Chat:      models.Chat{ID: chatID},
 		},
+	}
+}
+
+func TestHandleTargetBalanceCommand_UsernameWinsOverReply(t *testing.T) {
+	tg := &fakeEconomyTG{}
+	h := &Handler{
+		service:       &fakeEconomyService{balance: 5000},
+		memberService: &fakeMemberLookup{member: &members.Member{UserID: 99, Username: "kysxddd"}},
+		tgOps:         telegram.NewOps(tg),
+		confirmBy:     map[string]*transferConfirmation{},
+		now:           func() time.Time { return time.Unix(0, 0).UTC() },
+	}
+
+	msg := &models.Message{
+		MessageID: 11,
+		Chat:      models.Chat{ID: -100},
+		From:      &models.User{ID: 1, Username: "sender"},
+		Text:      "!твои пленки @kysxddd",
+		ReplyToMessage: &models.Message{
+			From: &models.User{ID: 20, Username: "reply_user"},
+		},
+	}
+
+	h.HandleTargetBalanceCommand(context.Background(), commands.Context{ChatID: -100, UserID: 1, MessageID: 11, Message: msg}, []string{"пленки", "@kysxddd"})
+
+	if len(tg.sent) != 1 {
+		t.Fatalf("expected one message, got %d", len(tg.sent))
+	}
+	if tg.sent[0].Text != "У пользователя @kysxddd: 5000🎞️" {
+		t.Fatalf("unexpected text: %q", tg.sent[0].Text)
+	}
+}
+
+func TestHandleTargetBalanceCommand_NicknameLookup(t *testing.T) {
+	tg := &fakeEconomyTG{}
+	h := &Handler{
+		service:       &fakeEconomyService{balance: 250},
+		memberService: &fakeMemberLookup{nicknameMember: &members.Member{UserID: 7, FirstName: "nickname"}},
+		tgOps:         telegram.NewOps(tg),
+		confirmBy:     map[string]*transferConfirmation{},
+		now:           func() time.Time { return time.Unix(0, 0).UTC() },
+	}
+
+	msg := &models.Message{
+		MessageID: 12,
+		Chat:      models.Chat{ID: -100},
+		From:      &models.User{ID: 1, Username: "sender"},
+		Text:      "!твои пленки nickname",
+	}
+
+	h.HandleTargetBalanceCommand(context.Background(), commands.Context{ChatID: -100, UserID: 1, MessageID: 12, Message: msg}, []string{"пленки", "nickname"})
+
+	if len(tg.sent) != 1 {
+		t.Fatalf("expected one message, got %d", len(tg.sent))
+	}
+	if tg.sent[0].Text != "У пользователя nickname: 250🎞️" {
+		t.Fatalf("unexpected text: %q", tg.sent[0].Text)
+	}
+}
+
+func TestHandleTargetBalanceCommand_ReplyLookup(t *testing.T) {
+	tg := &fakeEconomyTG{}
+	h := &Handler{
+		service:       &fakeEconomyService{balance: 42},
+		memberService: &fakeMemberLookup{userByID: &members.Member{UserID: 20, Username: "reply_user"}},
+		tgOps:         telegram.NewOps(tg),
+		confirmBy:     map[string]*transferConfirmation{},
+		now:           func() time.Time { return time.Unix(0, 0).UTC() },
+	}
+
+	msg := &models.Message{
+		MessageID: 13,
+		Chat:      models.Chat{ID: -100},
+		From:      &models.User{ID: 1, Username: "sender"},
+		Text:      "!твои пленки",
+		ReplyToMessage: &models.Message{
+			From: &models.User{ID: 20, Username: "reply_user"},
+		},
+	}
+
+	h.HandleTargetBalanceCommand(context.Background(), commands.Context{ChatID: -100, UserID: 1, MessageID: 13, Message: msg}, []string{"пленки"})
+
+	if len(tg.sent) != 1 {
+		t.Fatalf("expected one message, got %d", len(tg.sent))
+	}
+	if tg.sent[0].Text != "У пользователя @reply_user: 42🎞️" {
+		t.Fatalf("unexpected text: %q", tg.sent[0].Text)
+	}
+}
+
+func TestHandleTargetBalanceCommand_MissingTarget(t *testing.T) {
+	tg := &fakeEconomyTG{}
+	h := &Handler{
+		service:       &fakeEconomyService{balance: 42},
+		memberService: &fakeMemberLookup{},
+		tgOps:         telegram.NewOps(tg),
+		confirmBy:     map[string]*transferConfirmation{},
+		now:           func() time.Time { return time.Unix(0, 0).UTC() },
+	}
+
+	msg := &models.Message{
+		MessageID: 14,
+		Chat:      models.Chat{ID: -100},
+		From:      &models.User{ID: 1, Username: "sender"},
+		Text:      "!твои пленки",
+	}
+
+	h.HandleTargetBalanceCommand(context.Background(), commands.Context{ChatID: -100, UserID: 1, MessageID: 14, Message: msg}, []string{"пленки"})
+
+	if len(tg.sent) != 1 {
+		t.Fatalf("expected one message, got %d", len(tg.sent))
+	}
+	if tg.sent[0].Text != "❌ Не указан пользователь. Укажите @username, nickname или ответьте на сообщение пользователя." {
+		t.Fatalf("unexpected text: %q", tg.sent[0].Text)
+	}
+}
+
+func TestHandleTargetBalanceCommand_InvalidFormat(t *testing.T) {
+	tg := &fakeEconomyTG{}
+	h := &Handler{
+		service:       &fakeEconomyService{balance: 42},
+		memberService: &fakeMemberLookup{},
+		tgOps:         telegram.NewOps(tg),
+		confirmBy:     map[string]*transferConfirmation{},
+		now:           func() time.Time { return time.Unix(0, 0).UTC() },
+	}
+
+	msg := &models.Message{
+		MessageID: 15,
+		Chat:      models.Chat{ID: -100},
+		From:      &models.User{ID: 1, Username: "sender"},
+		Text:      "!твои что-то",
+	}
+
+	h.HandleTargetBalanceCommand(context.Background(), commands.Context{ChatID: -100, UserID: 1, MessageID: 15, Message: msg}, []string{"что-то"})
+
+	if len(tg.sent) != 1 {
+		t.Fatalf("expected one message, got %d", len(tg.sent))
+	}
+	if tg.sent[0].Text != "❌ Некорректный формат. Используйте `!твои пленки <@username|nickname>` или ответьте `!твои пленки`." {
+		t.Fatalf("unexpected text: %q", tg.sent[0].Text)
+	}
+}
+
+func TestHandleTargetBalanceCommand_UsernameNotResolved(t *testing.T) {
+	tg := &fakeEconomyTG{}
+	h := &Handler{
+		service:       &fakeEconomyService{balance: 42},
+		memberService: &fakeMemberLookup{},
+		tgOps:         telegram.NewOps(tg),
+		confirmBy:     map[string]*transferConfirmation{},
+		now:           func() time.Time { return time.Unix(0, 0).UTC() },
+	}
+
+	msg := &models.Message{
+		MessageID: 16,
+		Chat:      models.Chat{ID: -100},
+		From:      &models.User{ID: 1, Username: "sender"},
+		Text:      "!твои пленки @ghost",
+	}
+
+	h.HandleTargetBalanceCommand(context.Background(), commands.Context{ChatID: -100, UserID: 1, MessageID: 16, Message: msg}, []string{"пленки", "@ghost"})
+
+	if len(tg.sent) != 1 {
+		t.Fatalf("expected one message, got %d", len(tg.sent))
+	}
+	if tg.sent[0].Text != "❌ Не удалось найти пользователя по указанному username." {
+		t.Fatalf("unexpected text: %q", tg.sent[0].Text)
+	}
+}
+
+func TestHandleTargetBalanceCommand_NicknameNotResolved(t *testing.T) {
+	tg := &fakeEconomyTG{}
+	h := &Handler{
+		service:       &fakeEconomyService{balance: 42},
+		memberService: &fakeMemberLookup{},
+		tgOps:         telegram.NewOps(tg),
+		confirmBy:     map[string]*transferConfirmation{},
+		now:           func() time.Time { return time.Unix(0, 0).UTC() },
+	}
+
+	msg := &models.Message{
+		MessageID: 17,
+		Chat:      models.Chat{ID: -100},
+		From:      &models.User{ID: 1, Username: "sender"},
+		Text:      "!твои пленки nickname",
+	}
+
+	h.HandleTargetBalanceCommand(context.Background(), commands.Context{ChatID: -100, UserID: 1, MessageID: 17, Message: msg}, []string{"пленки", "nickname"})
+
+	if len(tg.sent) != 1 {
+		t.Fatalf("expected one message, got %d", len(tg.sent))
+	}
+	if tg.sent[0].Text != "❌ Не удалось найти пользователя по указанному nickname." {
+		t.Fatalf("unexpected text: %q", tg.sent[0].Text)
 	}
 }
