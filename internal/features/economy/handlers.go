@@ -15,9 +15,15 @@ import (
 	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
+type handlerService interface {
+	GetBalance(ctx context.Context, userID int64) (int64, error)
+	Transfer(ctx context.Context, fromUserID, toUserID, amount int64) error
+	GetTransactionHistory(ctx context.Context, userID int64) (string, error)
+}
+
 // Handler обрабатывает команды экономики.
 type Handler struct {
-	service       *Service         // Сервис экономики
+	service       handlerService   // Сервис экономики
 	memberService *members.Service // Сервис участников (для поиска получателя)
 	tgOps         *telegram.Ops    // Единый слой Telegram операций
 }
@@ -44,7 +50,7 @@ func (h *Handler) HandleBalance(ctx context.Context, chatID int64, userID int64,
 		return
 	}
 
-	text := fmt.Sprintf("У вас: %d📼", balance)
+	text := fmt.Sprintf("У вас: %d🎞️", balance)
 	h.sendMessage(ctx, chatID, text, replyToMessageID)
 }
 

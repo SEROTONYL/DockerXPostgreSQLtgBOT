@@ -176,6 +176,12 @@ func TestHandleMembersList_SortedAsTopWithoutBodyPageLabelAndDisabledPreview(t *
 	if !strings.Contains(text, "🏆 Топ участников") {
 		t.Fatalf("expected top title, got %q", text)
 	}
+	if strings.Contains(text, "пленок") {
+		t.Fatalf("expected film emoji suffix instead of word, got %q", text)
+	}
+	if !strings.Contains(text, "100 🎞️") || !strings.Contains(text, "5 🎞️") {
+		t.Fatalf("expected 🎞️ suffixes in balances, got %q", text)
+	}
 	if !tg.sentOpts[0].DisableWebPagePreview {
 		t.Fatal("expected link previews disabled")
 	}
