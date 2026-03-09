@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,8 +23,12 @@ const (
 // Config содержит ВСЕ настройки приложения.
 type Config struct {
 	// --- Telegram ---
-	AdminIDsRaw string  `envconfig:"ADMIN_IDS" required:"true"`
-	AdminIDs    []int64 `envconfig:"-"` // заполним вручную
+	AdminIDsRaw     string             `envconfig:"ADMIN_IDS" required:"true"`
+	AdminIDs        []int64            `envconfig:"-"`
+	AdminIDSet      map[int64]struct{} `envconfig:"-"`
+	ModeratorIDsRaw string             `envconfig:"MODERATOR_IDS" default:""`
+	ModeratorIDs    []int64            `envconfig:"-"`
+	ModeratorIDSet  map[int64]struct{} `envconfig:"-"`
 
 	TelegramBotToken string `envconfig:"TELEGRAM_BOT_TOKEN" required:"true"`
 	// ID чата-источника участников (single source of truth для membership/message-driven логики).
@@ -134,11 +139,10 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("не удалось загрузить конфигурацию: %w", err)
 	}
 
-	ids, err := parseInt64CSV(cfg.AdminIDsRaw)
-	if err != nil {
-		return nil, fmt.Errorf("ADMIN_IDS parse: %w", err)
-	}
-	cfg.AdminIDs = ids
+	cfg.AdminIDSet = parseIDList(cfg.AdminIDsRaw)
+	cfg.AdminIDs = sortedIDList(cfg.AdminIDSet)
+	cfg.ModeratorIDSet = parseIDList(cfg.ModeratorIDsRaw)
+	cfg.ModeratorIDs = sortedIDList(cfg.ModeratorIDSet)
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -146,20 +150,30 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
-func parseInt64CSV(s string) ([]int64, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil, nil
-	}
-	parts := strings.Split(s, ",")
-	out := make([]int64, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		v, err := strconv.ParseInt(p, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("bad int64 %q: %w", p, err)
+func parseIDList(envValue string) map[int64]struct{} {
+	ids := make(map[int64]struct{})
+	for _, part := range strings.Split(envValue, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
 		}
-		out = append(out, v)
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err != nil {
+			continue
+		}
+		ids[id] = struct{}{}
 	}
-	return out, nil
+	return ids
+}
+
+func sortedIDList(ids map[int64]struct{}) []int64 {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]int64, 0, len(ids))
+	for id := range ids {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }

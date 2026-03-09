@@ -164,16 +164,16 @@ func TestRiddleWizardValidationAndConfirm(t *testing.T) {
 	if !h.HandleAdminMessage(context.Background(), 77, 77, 501, "   ") {
 		t.Fatal("empty riddle text should be handled")
 	}
-	if last := tg.last("send"); last == nil || !strings.Contains(last.text, "не должен быть пустым") {
+	if last := tg.last("send"); last == nil || !strings.Contains(last.text, "Текст загадки не должен быть пустым.") {
 		t.Fatalf("expected text validation error, got %#v", last)
 	}
 
-	_ = h.HandleAdminMessage(context.Background(), 77, 77, 502, "Тестовая загадка")
-	_ = h.HandleAdminMessage(context.Background(), 77, 77, 503, "\nяблоко\n \nгруша\n")
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, 502, "Текст загадки")
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, 503, "\napple\n \npear\n")
 	_ = h.HandleAdminMessage(context.Background(), 77, 77, 504, "15")
 
 	edit := tg.last("edit")
-	if edit == nil || !strings.Contains(edit.text, "Тестовая загадка") || !strings.Contains(edit.text, "Ответов: 2") || !strings.Contains(edit.text, "Награда: 15") {
+	if edit == nil || !strings.Contains(edit.text, "Текст загадки") || !strings.Contains(edit.text, "Ответов: 2") || !strings.Contains(edit.text, "Награда: 15") {
 		t.Fatalf("expected confirm screen, got %#v", edit)
 	}
 }
@@ -186,9 +186,9 @@ func TestRiddleProcessGuessNormalizesOnceAndClaimsDirectly(t *testing.T) {
 	svc.now = func() time.Time { return now }
 
 	pub, err := svc.CreatePublishing(context.Background(), 77, &RiddleDraftData{
-		PostText:     "Загадка",
+		PostText:     "riddle",
 		RewardAmount: 10,
-		Answers:      []RiddleDraftAnswer{{Raw: "Яблоко", Normalized: "яблоко"}},
+		Answers:      []RiddleDraftAnswer{{Raw: "Apple", Normalized: "apple"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -201,12 +201,12 @@ func TestRiddleProcessGuessNormalizesOnceAndClaimsDirectly(t *testing.T) {
 		MessageID: 101,
 		Chat:      models.Chat{ID: -1001},
 		From:      &models.User{ID: 1, Username: "alice"},
-		Text:      "  ЯБЛОКО \n",
+		Text:      "  APPLE \n",
 	})
 	if err != nil || !matched || res == nil || res.Riddle.State != riddleStateCompleted {
 		t.Fatalf("expected completed single-answer riddle, matched=%v err=%v res=%+v", matched, err, res)
 	}
-	if repo.claimCalls != 1 || repo.lastClaimNormalized != "яблоко" {
+	if repo.claimCalls != 1 || repo.lastClaimNormalized != "apple" {
 		t.Fatalf("expected one direct normalized claim, calls=%d normalized=%q", repo.claimCalls, repo.lastClaimNormalized)
 	}
 	if len(econ.awardTo) != 1 || econ.awardTo[0] != 1 || econ.rewards[0] != 10 {
@@ -222,24 +222,24 @@ func TestRiddleMultiAnswerAndRepeatedSameAnswer(t *testing.T) {
 	svc.now = func() time.Time { return now }
 
 	pub, _ := svc.CreatePublishing(context.Background(), 77, &RiddleDraftData{
-		PostText:     "Загадка",
+		PostText:     "riddle",
 		RewardAmount: 7,
 		Answers: []RiddleDraftAnswer{
-			{Raw: "Яблоко", Normalized: "яблоко"},
-			{Raw: "Груша", Normalized: "груша"},
+			{Raw: "Apple", Normalized: "apple"},
+			{Raw: "Pear", Normalized: "pear"},
 		},
 	})
 	_ = svc.ActivatePublished(context.Background(), pub.Riddle.ID, -1001, 55)
 
-	res, matched, err := svc.ProcessGuess(context.Background(), &models.Message{MessageID: 1, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 10, Username: "u1"}, Text: "яблоко"})
+	res, matched, err := svc.ProcessGuess(context.Background(), &models.Message{MessageID: 1, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 10, Username: "u1"}, Text: "apple"})
 	if err != nil || !matched || res != nil {
 		t.Fatalf("first answer should match without completion: matched=%v err=%v res=%+v", matched, err, res)
 	}
-	res, matched, err = svc.ProcessGuess(context.Background(), &models.Message{MessageID: 2, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 11, Username: "u2"}, Text: "яблоко"})
+	res, matched, err = svc.ProcessGuess(context.Background(), &models.Message{MessageID: 2, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 11, Username: "u2"}, Text: "apple"})
 	if err != nil || matched || res != nil {
 		t.Fatalf("repeated same answer must not win twice: matched=%v err=%v res=%+v", matched, err, res)
 	}
-	res, matched, err = svc.ProcessGuess(context.Background(), &models.Message{MessageID: 3, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 10, Username: "u1"}, Text: "груша"})
+	res, matched, err = svc.ProcessGuess(context.Background(), &models.Message{MessageID: 3, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 10, Username: "u1"}, Text: "pear"})
 	if err != nil || !matched || res == nil || res.Riddle.State != riddleStateCompleted {
 		t.Fatalf("second distinct answer should complete: matched=%v err=%v res=%+v", matched, err, res)
 	}
@@ -256,20 +256,20 @@ func brokenEncodingTestRiddleCompletesWhenSameUserClaimsAllAnswerSlots(t *testin
 	svc.now = func() time.Time { return now }
 
 	pub, _ := svc.CreatePublishing(context.Background(), 77, &RiddleDraftData{
-		PostText:     "Р—Р°РіР°РґРєР°",
+		PostText:     "riddle",
 		RewardAmount: 9,
 		Answers: []RiddleDraftAnswer{
-			{Raw: "РЇР±Р»РѕРєРѕ", Normalized: "СЏР±Р»РѕРєРѕ"},
-			{Raw: "Р“СЂСѓС€Р°", Normalized: "РіСЂСѓС€Р°"},
+			{Raw: "Apple", Normalized: "apple"},
+			{Raw: "Pear", Normalized: "pear"},
 		},
 	})
 	_ = svc.ActivatePublished(context.Background(), pub.Riddle.ID, -1001, 55)
 
-	res, matched, err := svc.ProcessGuess(context.Background(), &models.Message{MessageID: 1, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 10, Username: "u1"}, Text: "СЏР±Р»РѕРєРѕ"})
+	res, matched, err := svc.ProcessGuess(context.Background(), &models.Message{MessageID: 1, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 10, Username: "u1"}, Text: "apple"})
 	if err != nil || !matched || res != nil {
 		t.Fatalf("first answer should claim without completion: matched=%v err=%v res=%+v", matched, err, res)
 	}
-	res, matched, err = svc.ProcessGuess(context.Background(), &models.Message{MessageID: 2, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 10, Username: "u1"}, Text: "РіСЂСѓС€Р°"})
+	res, matched, err = svc.ProcessGuess(context.Background(), &models.Message{MessageID: 2, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 10, Username: "u1"}, Text: "pear"})
 	if err != nil || !matched || res == nil || res.Riddle.State != riddleStateCompleted {
 		t.Fatalf("second claimed slot should complete immediately: matched=%v err=%v res=%+v", matched, err, res)
 	}
@@ -292,11 +292,11 @@ func localizedStringVariantTestRiddleCompletesWhenSameUserClaimsAllAnswerSlots(t
 	svc.now = func() time.Time { return now }
 
 	pub, _ := svc.CreatePublishing(context.Background(), 77, &RiddleDraftData{
-		PostText:     "Р—Р°РіР°РґРєР°",
+		PostText:     "riddle",
 		RewardAmount: 9,
 		Answers: []RiddleDraftAnswer{
-			{Raw: "РЇР±Р»РѕРєРѕ", Normalized: "СЏР±Р»РѕРєРѕ"},
-			{Raw: "Р“СЂСѓС€Р°", Normalized: "РіСЂСѓС€Р°"},
+			{Raw: "Apple", Normalized: "apple"},
+			{Raw: "Pear", Normalized: "pear"},
 		},
 	})
 	_ = svc.ActivatePublished(context.Background(), pub.Riddle.ID, -1001, 55)
@@ -305,7 +305,7 @@ func localizedStringVariantTestRiddleCompletesWhenSameUserClaimsAllAnswerSlots(t
 		MessageID: 1,
 		Chat:      models.Chat{ID: -1001},
 		From:      &models.User{ID: 10, Username: "u1"},
-		Text:      "СЏР±Р»РѕРєРѕ",
+		Text:      "apple",
 	})
 	if err != nil || !matched || res != nil {
 		t.Fatalf("first answer should claim without completion: matched=%v err=%v res=%+v", matched, err, res)
@@ -315,7 +315,7 @@ func localizedStringVariantTestRiddleCompletesWhenSameUserClaimsAllAnswerSlots(t
 		MessageID: 2,
 		Chat:      models.Chat{ID: -1001},
 		From:      &models.User{ID: 10, Username: "u1"},
-		Text:      "РіСЂСѓС€Р°",
+		Text:      "pear",
 	})
 	if err != nil || !matched || res == nil || res.Riddle.State != riddleStateCompleted {
 		t.Fatalf("second claimed slot should complete immediately: matched=%v err=%v res=%+v", matched, err, res)
@@ -391,13 +391,13 @@ func TestRiddleCompletionAndStopAreIdempotent(t *testing.T) {
 	svc.now = func() time.Time { return now }
 
 	pub, _ := svc.CreatePublishing(context.Background(), 77, &RiddleDraftData{
-		PostText:     "Загадка",
+		PostText:     "riddle",
 		RewardAmount: 5,
-		Answers:      []RiddleDraftAnswer{{Raw: "Яблоко", Normalized: "яблоко"}},
+		Answers:      []RiddleDraftAnswer{{Raw: "Apple", Normalized: "apple"}},
 	})
 	_ = svc.ActivatePublished(context.Background(), pub.Riddle.ID, -1001, 55)
 
-	res, matched, err := svc.ProcessGuess(context.Background(), &models.Message{MessageID: 1, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 1, Username: "u"}, Text: "яблоко"})
+	res, matched, err := svc.ProcessGuess(context.Background(), &models.Message{MessageID: 1, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 1, Username: "u"}, Text: "apple"})
 	if err != nil || !matched || res == nil || res.Riddle.State != riddleStateCompleted {
 		t.Fatalf("expected completion on first guess, matched=%v err=%v res=%+v", matched, err, res)
 	}
@@ -405,7 +405,7 @@ func TestRiddleCompletionAndStopAreIdempotent(t *testing.T) {
 		t.Fatalf("expected one reward after completion, got %+v", econ.awardTo)
 	}
 
-	res, matched, err = svc.ProcessGuess(context.Background(), &models.Message{MessageID: 2, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 1, Username: "u"}, Text: "яблоко"})
+	res, matched, err = svc.ProcessGuess(context.Background(), &models.Message{MessageID: 2, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 1, Username: "u"}, Text: "apple"})
 	if err != nil || matched || res != nil {
 		t.Fatalf("completed riddle must ignore repeated completion path, matched=%v err=%v res=%+v", matched, err, res)
 	}
@@ -426,14 +426,14 @@ func TestRiddleStopPreventsFurtherProcessingAndCleanupRemovesAnswers(t *testing.
 	now := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
 	svc.now = func() time.Time { return now }
 
-	pub, _ := svc.CreatePublishing(context.Background(), 77, &RiddleDraftData{PostText: "Загадка", RewardAmount: 5, Answers: []RiddleDraftAnswer{{Raw: "Яблоко", Normalized: "яблоко"}}})
+	pub, _ := svc.CreatePublishing(context.Background(), 77, &RiddleDraftData{PostText: "riddle", RewardAmount: 5, Answers: []RiddleDraftAnswer{{Raw: "Apple", Normalized: "apple"}}})
 	_ = svc.ActivatePublished(context.Background(), pub.Riddle.ID, -1001, 55)
 
 	stop, err := svc.StopActive(context.Background())
 	if err != nil || stop == nil || stop.Riddle.State != riddleStateStopped {
 		t.Fatalf("expected stopped riddle, got err=%v stop=%+v", err, stop)
 	}
-	res, matched, err := svc.ProcessGuess(context.Background(), &models.Message{MessageID: 1, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 1, Username: "u"}, Text: "яблоко"})
+	res, matched, err := svc.ProcessGuess(context.Background(), &models.Message{MessageID: 1, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 1, Username: "u"}, Text: "apple"})
 	if err != nil || matched || res != nil {
 		t.Fatalf("stopped riddle must ignore future answers: matched=%v err=%v res=%+v", matched, err, res)
 	}
@@ -493,9 +493,9 @@ func TestRiddlePublishFailureAbortsPublishingRecord(t *testing.T) {
 	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg), -1001)
 	h.riddleService = riddleSvc
 	h.service.SetState(77, StateRiddleConfirm, &RiddleDraftData{
-		PostText:     "Загадка",
+		PostText:     "riddle",
 		RewardAmount: 10,
-		Answers:      []RiddleDraftAnswer{{Raw: "Яблоко", Normalized: "яблоко"}},
+		Answers:      []RiddleDraftAnswer{{Raw: "Apple", Normalized: "apple"}},
 	})
 
 	h.handleRiddlePublish(context.Background(), 77, 77)
@@ -506,7 +506,7 @@ func TestRiddlePublishFailureAbortsPublishingRecord(t *testing.T) {
 	if riddleRepo.riddle != nil {
 		t.Fatalf("send failure must not leave publishing riddle behind: %+v", riddleRepo.riddle)
 	}
-	if last := tg.last("send"); last == nil || !strings.Contains(last.text, "Не удалось опубликовать загадку") {
+	if last := tg.last("send"); last == nil || !strings.Contains(last.text, "Не удалось опубликовать загадку в основном чате.") {
 		t.Fatalf("expected publish failure message, got %#v", last)
 	}
 }
@@ -518,12 +518,12 @@ func TestRiddleActiveSurvivesRestart(t *testing.T) {
 
 	svc1 := NewRiddleService(repo, econ)
 	svc1.now = func() time.Time { return now }
-	pub, _ := svc1.CreatePublishing(context.Background(), 77, &RiddleDraftData{PostText: "Загадка", RewardAmount: 8, Answers: []RiddleDraftAnswer{{Raw: "Яблоко", Normalized: "яблоко"}}})
+	pub, _ := svc1.CreatePublishing(context.Background(), 77, &RiddleDraftData{PostText: "riddle", RewardAmount: 8, Answers: []RiddleDraftAnswer{{Raw: "Apple", Normalized: "apple"}}})
 	_ = svc1.ActivatePublished(context.Background(), pub.Riddle.ID, -1001, 55)
 
 	svc2 := NewRiddleService(repo, econ)
 	svc2.now = func() time.Time { return now }
-	res, matched, err := svc2.ProcessGuess(context.Background(), &models.Message{MessageID: 1, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 44, Username: "survivor"}, Text: "яблоко"})
+	res, matched, err := svc2.ProcessGuess(context.Background(), &models.Message{MessageID: 1, Chat: models.Chat{ID: -1001}, From: &models.User{ID: 44, Username: "survivor"}, Text: "apple"})
 	if err != nil || !matched || res == nil || res.Riddle.State != riddleStateCompleted {
 		t.Fatalf("restart should not lose active riddle state: matched=%v err=%v res=%+v", matched, err, res)
 	}

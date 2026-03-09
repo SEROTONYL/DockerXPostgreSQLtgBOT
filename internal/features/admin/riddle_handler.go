@@ -41,6 +41,10 @@ func (h *Handler) handleRiddleMessageInput(ctx context.Context, chatID, userID i
 }
 
 func (h *Handler) showRiddlesMenu(ctx context.Context, chatID, userID int64, panelMsgID int) {
+	if !h.service.CanManageRiddles(ctx, userID) {
+		h.denyInsufficientPermissions(ctx, chatID)
+		return
+	}
 	if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "riddles_menu", "Загадки", newInlineKeyboardMarkup(
 		newInlineKeyboardRow(newInlineKeyboardButtonData("Создать загадку", cbRiddleCreate)),
 		newInlineKeyboardRow(newInlineKeyboardButtonData("Остановить загадку", cbRiddleStop)),
@@ -51,6 +55,10 @@ func (h *Handler) showRiddlesMenu(ctx context.Context, chatID, userID int64, pan
 }
 
 func (h *Handler) startRiddleCreate(ctx context.Context, chatID, userID int64, panelMsgID int) {
+	if !h.service.CanManageRiddles(ctx, userID) {
+		h.denyInsufficientPermissions(ctx, chatID)
+		return
+	}
 	h.service.SetState(userID, StateRiddleText, &RiddleDraftData{})
 	if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "riddle_text", "Отправьте текст поста для загадки.", newInlineKeyboardMarkup(
 		newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("Отмена", cbRiddleCancelDraft, "danger")),
@@ -99,7 +107,7 @@ func (h *Handler) handleRiddleAnswersStep(ctx context.Context, chatID, userID in
 	}
 	draft.Answers = answers
 	h.service.SetState(userID, StateRiddleReward, draft)
-	h.renderRiddlePrompt(ctx, chatID, userID, "Введите награду в плёнках: положительное целое число.")
+	h.renderRiddlePrompt(ctx, chatID, userID, "Укажите награду в плёнках: положительное целое число.")
 }
 
 func (h *Handler) handleRiddleRewardStep(ctx context.Context, chatID, userID int64, text string) {
@@ -143,13 +151,17 @@ func (h *Handler) renderRiddleConfirm(ctx context.Context, chatID, userID int64)
 }
 
 func (h *Handler) handleRiddlePublish(ctx context.Context, chatID, userID int64) {
+	if !h.service.CanManageRiddles(ctx, userID) {
+		h.denyInsufficientPermissions(ctx, chatID)
+		return
+	}
 	if h.riddleService == nil {
 		h.sendMessage(ctx, chatID, "Функция загадок сейчас недоступна.")
 		return
 	}
 	draft := h.riddleDraftFromState(userID)
 	if draft == nil || strings.TrimSpace(draft.PostText) == "" || len(draft.Answers) == 0 || draft.RewardAmount <= 0 {
-		h.sendMessage(ctx, chatID, "Черновик загадки повреждён. Начните заново.")
+		h.sendMessage(ctx, chatID, "Черновик загадки поврежден. Начните заново.")
 		h.service.ClearState(userID)
 		h.showRiddlesMenu(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return
@@ -194,11 +206,19 @@ func (h *Handler) handleRiddlePublish(ctx context.Context, chatID, userID int64)
 }
 
 func (h *Handler) handleRiddleCancel(ctx context.Context, chatID, userID int64) {
+	if !h.service.CanManageRiddles(ctx, userID) {
+		h.denyInsufficientPermissions(ctx, chatID)
+		return
+	}
 	h.service.ClearState(userID)
 	h.showRiddlesMenu(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 }
 
 func (h *Handler) handleRiddleStop(ctx context.Context, chatID, userID int64) {
+	if !h.service.CanManageRiddles(ctx, userID) {
+		h.denyInsufficientPermissions(ctx, chatID)
+		return
+	}
 	if h.riddleService == nil {
 		h.sendMessage(ctx, chatID, "Функция загадок сейчас недоступна.")
 		return
@@ -241,7 +261,7 @@ func (h *Handler) HandleRiddleMessage(ctx context.Context, message *models.Messa
 		_ = h.ops.UnpinChatMessage(ctx, *result.Riddle.GroupChatID, int(*result.Riddle.MessageID))
 	}
 	winners := summarizeRiddleWinners(result.Answers)
-	text := fmt.Sprintf("Загадка завершена.\nПобедители: %s\nНаграда: %d %s", strings.Join(winners, ", "), result.Riddle.RewardAmount, pluralizeRiddleReward(result.Riddle.RewardAmount))
+	text := fmt.Sprintf("Загадка завершена.\nПобедители: %s\nНаграда: %d \U0001F39E\uFE0F", strings.Join(winners, ", "), result.Riddle.RewardAmount)
 	_, _ = h.ops.Send(ctx, message.Chat.ID, text, nil)
 	return false
 }
@@ -258,7 +278,7 @@ func (h *Handler) riddleDraftFromState(userID int64) *RiddleDraftData {
 func pluralizeRiddleReward(amount int64) string {
 	switch {
 	case amount%10 == 1 && amount%100 != 11:
-		return "плёнку"
+		return "плёнка"
 	case amount%10 >= 2 && amount%10 <= 4 && (amount%100 < 12 || amount%100 > 14):
 		return "плёнки"
 	default:

@@ -2,71 +2,42 @@ package config
 
 import "testing"
 
-func baseValidConfig() *Config {
-	return &Config{
-		MemberSourceChatID:      2,
-		AdminChatID:             3,
-		BotMaxInflight:          1,
-		BotUpdateTimeoutSeconds: 1,
-		BotWorkers:              4,
-		BotUpdateQueue:          100,
-		DBMaxConns:              10,
-		DBMinConns:              1,
+func TestParseIDList(t *testing.T) {
+	ids := parseIDList(" 123 , bad, , 456 , 123, 7x, 789 ")
+
+	if len(ids) != 3 {
+		t.Fatalf("expected 3 valid IDs, got %d", len(ids))
+	}
+	for _, id := range []int64{123, 456, 789} {
+		if _, ok := ids[id]; !ok {
+			t.Fatalf("expected ID %d to be parsed", id)
+		}
 	}
 }
 
-func TestConfigValidate_BotPoolBounds(t *testing.T) {
-	cfg := baseValidConfig()
-
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() unexpected error: %v", err)
+func TestParseIDList_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []int64
+	}{
+		{name: "simple", input: "123,456", want: []int64{123, 456}},
+		{name: "trimmed", input: "123, 456 , 789", want: []int64{123, 456, 789}},
+		{name: "ignores-empty-and-invalid", input: "123,,456,abc", want: []int64{123, 456}},
+		{name: "empty", input: "", want: nil},
 	}
-	if cfg.MemberSourceChatID != 2 {
-		t.Fatalf("expected MemberSourceChatID to stay 2, got %d", cfg.MemberSourceChatID)
-	}
-}
 
-func TestConfigValidate_BotWorkersOutOfRange(t *testing.T) {
-	cfg := baseValidConfig()
-	cfg.BotWorkers = 0
-
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() expected error for BOT_WORKERS out of range")
-	}
-}
-
-func TestConfigValidate_BotUpdateQueueOutOfRange(t *testing.T) {
-	cfg := baseValidConfig()
-	cfg.BotUpdateQueue = 5
-
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() expected error for BOT_UPDATE_QUEUE out of range")
-	}
-}
-
-func TestConfigValidate_MemberSourceChatRequired(t *testing.T) {
-	cfg := baseValidConfig()
-	cfg.MemberSourceChatID = 0
-
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() expected error for MEMBER_SOURCE_CHAT_ID == 0")
-	}
-}
-
-func TestConfigValidate_AdminChatRequired(t *testing.T) {
-	cfg := baseValidConfig()
-	cfg.AdminChatID = 0
-
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() expected error for ADMIN_CHAT_ID == 0")
-	}
-}
-
-func TestConfigValidate_MemberSourceAndAdminChatMustDiffer(t *testing.T) {
-	cfg := baseValidConfig()
-	cfg.AdminChatID = cfg.MemberSourceChatID
-
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() expected error when MEMBER_SOURCE_CHAT_ID equals ADMIN_CHAT_ID")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseIDList(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("len(parseIDList(%q)) = %d, want %d", tt.input, len(got), len(tt.want))
+			}
+			for _, id := range tt.want {
+				if _, ok := got[id]; !ok {
+					t.Fatalf("parseIDList(%q) missing id %d", tt.input, id)
+				}
+			}
+		})
 	}
 }

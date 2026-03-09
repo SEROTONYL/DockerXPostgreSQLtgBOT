@@ -149,28 +149,53 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 	if state != nil {
 		switch state.State {
 		case StateAssignRoleSelect:
+			if !h.service.CanManageRoles(ctx, userID) {
+				h.denyInsufficientPermissions(ctx, chatID)
+				h.service.ClearState(userID)
+				return true
+			}
 			h.handleAssignRoleSelect(ctx, chatID, userID, text)
 			h.deleteAdminInputMessage(ctx, chatID, messageID)
 			return true
 		case StateAssignRoleText:
+			if !h.service.CanManageRoles(ctx, userID) {
+				h.denyInsufficientPermissions(ctx, chatID)
+				h.service.ClearState(userID)
+				return true
+			}
 			h.handleAssignRoleText(ctx, chatID, userID, text)
 			h.deleteAdminInputMessage(ctx, chatID, messageID)
 			return true
 		case StateChangeRoleSelect:
+			if !h.service.CanManageRoles(ctx, userID) {
+				h.denyInsufficientPermissions(ctx, chatID)
+				h.service.ClearState(userID)
+				return true
+			}
 			h.handleChangeRoleSelect(ctx, chatID, userID, text)
 			h.deleteAdminInputMessage(ctx, chatID, messageID)
 			return true
 		case StateChangeRoleText:
+			if !h.service.CanManageRoles(ctx, userID) {
+				h.denyInsufficientPermissions(ctx, chatID)
+				h.service.ClearState(userID)
+				return true
+			}
 			h.handleChangeRoleText(ctx, chatID, userID, text)
 			h.deleteAdminInputMessage(ctx, chatID, messageID)
 			return true
 		case StateBalanceAdjustAmount, StateBalanceDeltaName, StateBalanceDeltaAmount:
+			if !h.service.CanManageBalance(ctx, userID) {
+				h.denyInsufficientPermissions(ctx, chatID)
+				h.service.ClearState(userID)
+				return true
+			}
 			if h.handleBalanceAdjustManualAmount(ctx, chatID, userID, strings.TrimSpace(text)) {
 				h.deleteAdminInputMessage(ctx, chatID, messageID)
 				return true
 			}
 		}
-		if h.handleRiddleMessageInput(ctx, chatID, userID, messageID, text) {
+		if h.service.CanManageRiddles(ctx, userID) && h.handleRiddleMessageInput(ctx, chatID, userID, messageID, text) {
 			return true
 		}
 	}
@@ -178,15 +203,31 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 	// Обрабатываем кнопки клавиатуры
 	switch text {
 	case "Назначить роль":
+		if !h.service.CanManageRoles(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.startAssignRole(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return true
 	case "Сменить роль":
+		if !h.service.CanManageRoles(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.startChangeRole(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return true
 	case "Изменить баланс", "Баланс":
+		if !h.service.CanManageBalance(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.startBalanceAdjustMode(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return true
 	case "Управление кредитами":
+		if !h.service.CanManageCredits(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.showCreditMenu(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return true
 	case "Выдать кредит", "Отменить кредит":
@@ -240,33 +281,73 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 
 	switch data {
 	case cbAdminAssignRole:
+		if !h.service.CanManageRoles(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.startAssignRole(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAdminChangeRole:
+		if !h.service.CanManageRoles(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.startChangeRole(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAdminBalanceAdjust:
+		if !h.service.CanManageBalance(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.startBalanceAdjustMode(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAdminRiddlesMenu:
+		if !h.service.CanManageRiddles(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.showRiddlesMenu(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbRiddleCreate:
+		if !h.service.CanManageRiddles(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.startRiddleCreate(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbRiddleStop:
+		if !h.service.CanManageRiddles(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.handleRiddleStop(ctx, chatID, userID)
 		return true
 	case cbRiddlePublish:
+		if !h.service.CanManageRiddles(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.handleRiddlePublish(ctx, chatID, userID)
 		return true
 	case cbRiddleCancelDraft:
+		if !h.service.CanManageRiddles(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.handleRiddleCancel(ctx, chatID, userID)
 		return true
 	case cbAdminCreditMenu:
+		if !h.service.CanManageCredits(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.showCreditMenu(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAdminCreditIssue, cbAdminCreditCancel:
+		if !h.service.CanManageCredits(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "credit_stub", "🔧 Функция в разработке", h.creditMenuMarkup()); err != nil {
 			h.sendUIErrorHint(ctx, chatID, err)
 		}
@@ -279,6 +360,10 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAdminUndoLast:
+		if !h.service.CanManageRoles(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.handleUndoLastRole(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAdminReturnPanel:
@@ -286,11 +371,19 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 		h.showKeyboardSafe(ctx, chatID, userID, panelMsgID)
 		return true
 	case cbAssignRefresh:
+		if !h.service.CanManageRoles(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.refreshAssignRolePicker(ctx, chatID, userID, panelMsgID)
 		return true
 	}
 
 	if strings.HasPrefix(data, "admin:balmode:") || strings.HasPrefix(data, "admin:balpick:") || strings.HasPrefix(data, "admin:balamt:") || strings.HasPrefix(data, "admin:balconfirm:") || data == cbBalUndo {
+		if !h.service.CanManageBalance(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
 		h.handleBalanceAdjustCallback(ctx, chatID, userID, panelMsgID, data)
 		return true
 	}
@@ -320,6 +413,17 @@ func (h *Handler) handlePasswordInput(ctx context.Context, chatID int64, userID 
 
 // showKeyboard отображает клавиатуру админ-панели.
 func (h *Handler) showKeyboard(ctx context.Context, chatID int64, userID int64, panelMsgID int) error {
+	if !h.service.CanManageRoles(ctx, userID) {
+		keyboard := newInlineKeyboardMarkup(
+			newInlineKeyboardRow(
+				newInlineKeyboardButtonData("Создать загадку", cbRiddleCreate),
+			),
+			newInlineKeyboardRow(
+				newInlineKeyboardButtonData("Остановить загадку", cbRiddleStop),
+			),
+		)
+		return h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "moderator_panel", "Панель модератора", keyboard)
+	}
 
 	keyboard := newInlineKeyboardMarkup(
 		newInlineKeyboardRow(
@@ -637,6 +741,10 @@ func (h *Handler) handleUserPickerCallback(ctx context.Context, chatID, userID i
 	}
 
 	mode := UserPickerMode(parts[2])
+	if (mode == UserPickerAssignWithoutRole || mode == UserPickerChangeWithRole) && !h.service.CanManageRoles(ctx, userID) {
+		h.denyInsufficientPermissions(ctx, chatID)
+		return
+	}
 	action := parts[3]
 	stateName := StateAssignRoleSelect
 	if mode == UserPickerChangeWithRole {
@@ -879,6 +987,10 @@ func (h *Handler) answerCallback(ctx context.Context, callbackID, text string) {
 
 func (h *Handler) sendMessage(ctx context.Context, chatID int64, text string) {
 	_, _ = h.ops.Send(ctx, chatID, text, nil)
+}
+
+func (h *Handler) denyInsufficientPermissions(ctx context.Context, chatID int64) {
+	h.sendMessage(ctx, chatID, "Недостаточно прав для этого действия.")
 }
 
 func (h *Handler) logAdminUIError(adminID, chatID int64, panelMessageID int, screenName, action string, tgCode int, tgText string, err error) {

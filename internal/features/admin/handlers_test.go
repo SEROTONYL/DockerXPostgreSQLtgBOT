@@ -386,6 +386,22 @@ func newAdminHandlerForFlowWithRepo(t *testing.T, stateRepo *fakeAdminRepoHandle
 	return NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg), 0)
 }
 
+func newModeratorHandlerForFlow(t *testing.T, memberRepo *fakeMemberRepoHandlers, tg *fakeTG) *Handler {
+	t.Helper()
+	svc := NewService(&fakeAdminRepoHandlers{hasSession: true}, memberRepo, &config.Config{ModeratorIDs: []int64{77}})
+	return NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg), -1001)
+}
+
+func newModeratorHandlerWithRiddles(t *testing.T, tg *fakeTG, repo *fakeRiddleRepo) *Handler {
+	t.Helper()
+	svc := NewService(&fakeAdminRepoHandlers{hasSession: true}, &fakeMemberRepoHandlers{members: map[int64]*members.Member{}}, &config.Config{ModeratorIDs: []int64{77}})
+	riddleSvc := NewRiddleService(repo, &fakeRiddleEconomy{})
+	svc.SetRiddleService(riddleSvc)
+	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg), -1001)
+	h.riddleService = riddleSvc
+	return h
+}
+
 func newAdminHandlerWithEconomy(t *testing.T, memberRepo *fakeMemberRepoHandlers, tg *fakeTG, econ *fakeEconomy) *Handler {
 	t.Helper()
 	svc := NewService(&fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
@@ -564,6 +580,107 @@ func TestOpenAdminPanel_ShowsKeyboard(t *testing.T) {
 	}
 	if hasButton(s.markup, "💳 Выдать кредит", cbAdminCreditIssue) || hasButton(s.markup, "🚫 Отменить кредит", cbAdminCreditCancel) || hasButton(s.markup, "✂️ Создать сокращ.", "admin:stub") || hasButton(s.markup, "🗑 Удалить сокращ.", "admin:stub") {
 		t.Fatalf("did not expect old top-level shortcuts")
+	}
+}
+
+func TestOpenAdminPanel_ModeratorSeesOnlyRiddleControls(t *testing.T) {
+	tg := &fakeTG{}
+	h := newModeratorHandlerForFlow(t, &fakeMemberRepoHandlers{members: map[int64]*members.Member{}}, tg)
+
+	handled := h.HandleAdminMessage(context.Background(), 77, 77, 0, "/login")
+	if !handled {
+		t.Fatalf("expected handled=true")
+	}
+
+	s := tg.last("send")
+	if s == nil {
+		t.Fatalf("expected SendMessage")
+	}
+	if !hasButton(s.markup, "Создать загадку", cbRiddleCreate) || !hasButton(s.markup, "Остановить загадку", cbRiddleStop) {
+		t.Fatalf("expected moderator riddle buttons, got %#v", s.markup)
+	}
+	if hasButton(s.markup, "", cbAdminAssignRole) || hasButton(s.markup, "", cbAdminBalanceAdjust) || hasButton(s.markup, "", cbAdminCreditMenu) {
+		t.Fatalf("moderator panel must hide admin-only controls")
+	}
+}
+
+func TestModeratorCannotAccessBalanceOrCreditsOrRoleManagement(t *testing.T) {
+	tg := &fakeTG{}
+	h := newModeratorHandlerForFlow(t, &fakeMemberRepoHandlers{members: map[int64]*members.Member{}}, tg)
+
+	for _, data := range []string{cbAdminAssignRole, cbAdminBalanceAdjust, cbAdminCreditMenu} {
+		if !h.HandleAdminCallback(context.Background(), callback(77, 42, 77, data)) {
+			t.Fatalf("expected callback %q handled", data)
+		}
+	}
+
+	if !hasCallText(tg.calls, "send", "Недостаточно прав") {
+		t.Fatalf("expected permission denial message")
+	}
+	if st := h.service.GetState(77); st != nil {
+		t.Fatalf("forbidden callbacks must not enter protected flows, got %+v", st)
+	}
+}
+
+func TestModeratorForbiddenCraftedCallbackIsRejected(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{
+			1001: {UserID: 1001, Username: "u1", Role: &role},
+		},
+	}
+	econ := &fakeEconomy{}
+	svc := NewService(&fakeAdminRepoHandlers{hasSession: true}, repo, &config.Config{ModeratorIDs: []int64{77}})
+	h := NewHandler(svc, nil, econ, telegram.NewOps(tg), -1001)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalConfirmApply))
+
+	if econ.addCalls != 0 || econ.deductCalls != 0 {
+		t.Fatalf("forbidden crafted callback must not touch economy")
+	}
+	if !hasCallText(tg.calls, "send", "Недостаточно прав") {
+		t.Fatalf("expected denial for forged admin callback")
+	}
+}
+
+func TestModeratorCanCreateAndPublishRiddle(t *testing.T) {
+	tg := &fakeTG{}
+	riddleRepo := &fakeRiddleRepo{}
+	h := newModeratorHandlerWithRiddles(t, tg, riddleRepo)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbRiddleCreate))
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, 1, "Текст загадки")
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, 2, "apple\npear")
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, 3, "15")
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbRiddlePublish))
+
+	if riddleRepo.riddle == nil || riddleRepo.riddle.State != riddleStateActive {
+		t.Fatalf("expected moderator-published active riddle, got %+v", riddleRepo.riddle)
+	}
+}
+
+func TestModeratorCanStopRiddle(t *testing.T) {
+	tg := &fakeTG{}
+	riddleRepo := &fakeRiddleRepo{}
+	h := newModeratorHandlerWithRiddles(t, tg, riddleRepo)
+
+	pub, err := h.riddleService.CreatePublishing(context.Background(), 77, &RiddleDraftData{
+		PostText:     "riddle",
+		RewardAmount: 5,
+		Answers:      []RiddleDraftAnswer{{Raw: "Apple", Normalized: "apple"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.riddleService.ActivatePublished(context.Background(), pub.Riddle.ID, -1001, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbRiddleStop))
+
+	if riddleRepo.riddle == nil || riddleRepo.riddle.State != riddleStateStopped {
+		t.Fatalf("expected stopped riddle, got %+v", riddleRepo.riddle)
 	}
 }
 

@@ -17,10 +17,11 @@ import (
 )
 
 type Service struct {
-	repo       adminRepo
-	memberRepo memberRepo
-	cfg        *config.Config
-	riddles    *RiddleService
+	repo        adminRepo
+	memberRepo  memberRepo
+	cfg         *config.Config
+	riddles     *RiddleService
+	permissions *permissionSet
 }
 
 type adminRepo interface {
@@ -52,9 +53,10 @@ type memberRepo interface {
 
 func NewService(repo adminRepo, memberRepo memberRepo, cfg *config.Config) *Service {
 	return &Service{
-		repo:       repo,
-		memberRepo: memberRepo,
-		cfg:        cfg,
+		repo:        repo,
+		memberRepo:  memberRepo,
+		cfg:         cfg,
+		permissions: newPermissionSet(cfg),
 	}
 }
 
@@ -63,28 +65,12 @@ func (s *Service) SetRiddleService(riddles *RiddleService) {
 }
 
 func (s *Service) CanEnterAdmin(ctx context.Context, userID int64) bool {
-	if s.isConfiguredAdmin(userID) {
+	if s.permissions.isEnvAdmin(userID) && s.memberRepo != nil {
 		if err := s.memberRepo.UpdateAdminFlag(ctx, userID, true); err != nil {
 			log.WithError(err).WithField("user_id", userID).Warn("не удалось проставить is_admin для ADMIN_IDS")
 		}
-		return true
 	}
-
-	member, err := s.memberRepo.GetByUserID(ctx, userID)
-	if err != nil || member == nil {
-		return false
-	}
-
-	return member.IsAdmin
-}
-
-func (s *Service) isConfiguredAdmin(userID int64) bool {
-	for _, id := range s.cfg.AdminIDs {
-		if id == userID {
-			return true
-		}
-	}
-	return false
+	return s.CanAccessAdminPanel(ctx, userID)
 }
 
 func (s *Service) VerifyPassword(ctx context.Context, userID int64, password string) error {

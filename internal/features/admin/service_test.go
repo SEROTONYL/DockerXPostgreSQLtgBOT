@@ -141,6 +141,29 @@ func TestCanEnterAdmin_AllowWhenMemberIsAdmin(t *testing.T) {
 	}
 }
 
+func TestCanEnterAdmin_AllowModeratorFromEnv(t *testing.T) {
+	svc := NewService(newFakeAdminRepo(), &fakeMemberRepo{}, &config.Config{ModeratorIDs: []int64{555}})
+
+	if !svc.CanEnterAdmin(context.Background(), 555) {
+		t.Fatalf("expected moderator to access admin panel login flow")
+	}
+}
+
+func TestPermissionCapabilities_AdminVsModerator(t *testing.T) {
+	adminSvc := NewService(newFakeAdminRepo(), &fakeMemberRepo{}, &config.Config{AdminIDs: []int64{42}})
+	if !adminSvc.CanManageRiddles(context.Background(), 42) || !adminSvc.CanManageRoles(context.Background(), 42) || !adminSvc.CanManageBalance(context.Background(), 42) || !adminSvc.CanManageCredits(context.Background(), 42) {
+		t.Fatalf("admin should have all capabilities")
+	}
+
+	moderatorSvc := NewService(newFakeAdminRepo(), &fakeMemberRepo{}, &config.Config{ModeratorIDs: []int64{77}})
+	if !moderatorSvc.CanManageRiddles(context.Background(), 77) {
+		t.Fatalf("moderator should manage riddles")
+	}
+	if moderatorSvc.CanManageRoles(context.Background(), 77) || moderatorSvc.CanManageBalance(context.Background(), 77) || moderatorSvc.CanManageCredits(context.Background(), 77) {
+		t.Fatalf("moderator must not have non-riddle capabilities")
+	}
+}
+
 type fakeAdminRepoAttempts struct {
 	*fakeAdminRepo
 	attempts int
