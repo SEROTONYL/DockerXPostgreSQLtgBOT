@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	models "github.com/mymmrac/telego"
 	log "github.com/sirupsen/logrus"
 
@@ -51,12 +52,15 @@ var userPickerPageLabelPattern = regexp.MustCompile(`(?i)^\s*стр\s*\d+\s*/\s*
 type economyService interface {
 	AddBalance(ctx context.Context, userID int64, amount int64, txType, description string) error
 	DeductBalance(ctx context.Context, userID int64, amount int64, txType, description string) error
+	WithTransaction(ctx context.Context, fn func(context.Context, pgx.Tx) error) error
+	AddBalanceTx(ctx context.Context, tx pgx.Tx, userID int64, amount int64, txType, description string) error
 }
 
 type Handler struct {
 	service            *Service
 	memberService      *members.Service
 	economyService     economyService
+	riddleService      *RiddleService
 	ops                *telegram.Ops
 	memberSourceChatID int64
 	undoMu             sync.Mutex
@@ -74,10 +78,15 @@ type roleUndoData struct {
 
 // NewHandler создаёт обработчик админ-панели.
 func NewHandler(service *Service, memberService *members.Service, economyService economyService, ops *telegram.Ops, memberSourceChatID int64) *Handler {
+	var riddles *RiddleService
+	if service != nil {
+		riddles = service.riddles
+	}
 	return &Handler{
 		service:            service,
 		memberService:      memberService,
 		economyService:     economyService,
+		riddleService:      riddles,
 		ops:                ops,
 		memberSourceChatID: memberSourceChatID,
 		lastRoleUndo:       make(map[int64]*roleUndoData),
@@ -161,6 +170,9 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 				return true
 			}
 		}
+		if h.handleRiddleMessageInput(ctx, chatID, userID, messageID, text) {
+			return true
+		}
 	}
 
 	// Обрабатываем кнопки клавиатуры
@@ -236,6 +248,21 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 	case cbAdminBalanceAdjust:
 		h.startBalanceAdjustMode(ctx, chatID, userID, panelMsgID)
 		return true
+	case cbAdminRiddlesMenu:
+		h.showRiddlesMenu(ctx, chatID, userID, panelMsgID)
+		return true
+	case cbRiddleCreate:
+		h.startRiddleCreate(ctx, chatID, userID, panelMsgID)
+		return true
+	case cbRiddleStop:
+		h.handleRiddleStop(ctx, chatID, userID)
+		return true
+	case cbRiddlePublish:
+		h.handleRiddlePublish(ctx, chatID, userID)
+		return true
+	case cbRiddleCancelDraft:
+		h.handleRiddleCancel(ctx, chatID, userID)
+		return true
 	case cbAdminCreditMenu:
 		h.showCreditMenu(ctx, chatID, userID, panelMsgID)
 		return true
@@ -303,6 +330,9 @@ func (h *Handler) showKeyboard(ctx context.Context, chatID int64, userID int64, 
 		),
 		newInlineKeyboardRow(
 			newInlineKeyboardButtonData("💸 Баланс", cbAdminBalanceAdjust),
+		),
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonData("Загадки", cbAdminRiddlesMenu),
 		),
 		newInlineKeyboardRow(
 			newInlineKeyboardButtonData("💳 Управление кредитами", cbAdminCreditMenu),

@@ -31,6 +31,12 @@ func marshalAdminStateData(stateName string, data interface{}) ([]byte, error) {
 			return nil, fmt.Errorf("unexpected admin state payload for %s", stateName)
 		}
 		return json.Marshal(v)
+	case StateRiddleText, StateRiddleAnswers, StateRiddleReward, StateRiddleConfirm:
+		v, ok := data.(*RiddleDraftData)
+		if !ok {
+			return nil, fmt.Errorf("unexpected admin state payload for %s", stateName)
+		}
+		return json.Marshal(v)
 	default:
 		return nil, fmt.Errorf("unsupported admin state %s", stateName)
 	}
@@ -56,6 +62,12 @@ func unmarshalAdminStateData(stateName string, raw []byte) (interface{}, error) 
 		return &v, nil
 	case StateBalanceAdjustMode, StateBalanceAdjustPicker, StateBalanceAdjustAmount, StateBalanceAdjustConfirm, StateBalanceDeltaName, StateBalanceDeltaAmount:
 		var v BalanceAdjustData
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, err
+		}
+		return &v, nil
+	case StateRiddleText, StateRiddleAnswers, StateRiddleReward, StateRiddleConfirm:
+		var v RiddleDraftData
 		if err := json.Unmarshal(raw, &v); err != nil {
 			return nil, err
 		}

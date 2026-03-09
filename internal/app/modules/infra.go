@@ -26,6 +26,7 @@ type Infra struct {
 	KarmaRepo   *karma.Repository
 	CasinoRepo  *casino.Repository
 	AdminRepo   *admin.Repository
+	RiddleRepo  *admin.RiddleRepository
 
 	MemberService  *members.Service
 	EconomyService *economy.Service
@@ -33,6 +34,7 @@ type Infra struct {
 	KarmaService   *karma.Service
 	CasinoService  *casino.Service
 	AdminService   *admin.Service
+	RiddleService  *admin.RiddleService
 }
 
 func BuildInfra(ctx context.Context, cfg *config.Config) (*Infra, error) {
@@ -51,6 +53,7 @@ func BuildInfra(ctx context.Context, cfg *config.Config) (*Infra, error) {
 	karmaRepo := karma.NewRepository(pool)
 	casinoRepo := casino.NewRepository(pool)
 	adminRepo := admin.NewRepository(pool)
+	riddleRepo := admin.NewRiddleRepository(pool)
 
 	memberService := members.NewService(memberRepo)
 	economyService := economy.NewService(economyRepo)
@@ -58,6 +61,7 @@ func BuildInfra(ctx context.Context, cfg *config.Config) (*Infra, error) {
 	karmaService := karma.NewService(karmaRepo, economyService, memberService, cfg)
 	casinoService := casino.NewService(casinoRepo, economyService, cfg)
 	adminService := admin.NewService(adminRepo, memberRepo, cfg)
+	riddleService := admin.NewRiddleService(riddleRepo, economyService)
 
 	return &Infra{
 		DB:             pool,
@@ -67,11 +71,13 @@ func BuildInfra(ctx context.Context, cfg *config.Config) (*Infra, error) {
 		KarmaRepo:      karmaRepo,
 		CasinoRepo:     casinoRepo,
 		AdminRepo:      adminRepo,
+		RiddleRepo:     riddleRepo,
 		MemberService:  memberService,
 		EconomyService: economyService,
 		StreakService:  streakService,
 		KarmaService:   karmaService,
 		CasinoService:  casinoService,
 		AdminService:   adminService,
+		RiddleService:  riddleService,
 	}, nil
 }

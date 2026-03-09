@@ -20,6 +20,7 @@ type BotHandlers struct {
 	Admin interface {
 		HandleAdminMessage(ctx context.Context, chatID int64, userID int64, messageID int, text string) bool
 		HandleAdminCallback(ctx context.Context, q *models.CallbackQuery) bool
+		HandleRiddleMessage(ctx context.Context, message *models.Message) bool
 	}
 	Members interface {
 		HandleMembersCallback(ctx context.Context, q *models.CallbackQuery) bool

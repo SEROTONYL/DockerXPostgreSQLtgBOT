@@ -20,6 +20,7 @@ type Service struct {
 	repo       adminRepo
 	memberRepo memberRepo
 	cfg        *config.Config
+	riddles    *RiddleService
 }
 
 type adminRepo interface {
@@ -55,6 +56,10 @@ func NewService(repo adminRepo, memberRepo memberRepo, cfg *config.Config) *Serv
 		memberRepo: memberRepo,
 		cfg:        cfg,
 	}
+}
+
+func (s *Service) SetRiddleService(riddles *RiddleService) {
+	s.riddles = riddles
 }
 
 func (s *Service) CanEnterAdmin(ctx context.Context, userID int64) bool {
@@ -201,6 +206,11 @@ func (s *Service) CleanupStaleAuthState(ctx context.Context, now time.Time) erro
 	_, err := s.repo.CleanupStaleAuthState(ctx, now)
 	if err != nil {
 		return fmt.Errorf("cleanup admin auth state: %w", err)
+	}
+	if s.riddles != nil {
+		if err := s.riddles.CleanupExpired(ctx, now); err != nil {
+			return fmt.Errorf("cleanup riddles: %w", err)
+		}
 	}
 	return nil
 }

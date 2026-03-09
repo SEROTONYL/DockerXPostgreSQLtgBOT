@@ -11,6 +11,7 @@ import (
 type AdminHandler interface {
 	HandleAdminCallback(ctx context.Context, cb *models.CallbackQuery) bool
 	HandleAdminMessage(ctx context.Context, chatID int64, userID int64, messageID int, text string) bool
+	HandleRiddleMessage(ctx context.Context, message *models.Message) bool
 }
 
 // MembersHandler описывает обработку callback-ов пользовательского списка участников.

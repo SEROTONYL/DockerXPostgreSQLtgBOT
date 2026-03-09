@@ -15,6 +15,8 @@ type Client interface {
 	EditMessage(chatID int64, messageID int, text string, markup *botapi.InlineKeyboardMarkup) error
 	EditReplyMarkup(chatID int64, messageID int, markup *botapi.InlineKeyboardMarkup) error
 	DeleteMessage(chatID int64, messageID int) error
+	PinChatMessage(chatID int64, messageID int, disableNotification bool) error
+	UnpinChatMessage(chatID int64, messageID int) error
 	GetChatMember(chatID int64, userID int64) (member botapi.ChatMember, err error)
 }
 
@@ -138,6 +140,21 @@ func (a *botClient) EditReplyMarkup(chatID int64, messageID int, markup *botapi.
 
 func (a *botClient) DeleteMessage(chatID int64, messageID int) error {
 	return a.bot.DeleteMessage(context.Background(), &botapi.DeleteMessageParams{ChatID: botapi.ChatID{ID: chatID}, MessageID: messageID})
+}
+
+func (a *botClient) PinChatMessage(chatID int64, messageID int, disableNotification bool) error {
+	return a.bot.PinChatMessage(context.Background(), &botapi.PinChatMessageParams{
+		ChatID:              botapi.ChatID{ID: chatID},
+		MessageID:           messageID,
+		DisableNotification: disableNotification,
+	})
+}
+
+func (a *botClient) UnpinChatMessage(chatID int64, messageID int) error {
+	return a.bot.UnpinChatMessage(context.Background(), &botapi.UnpinChatMessageParams{
+		ChatID:    botapi.ChatID{ID: chatID},
+		MessageID: messageID,
+	})
 }
 
 func (a *botClient) GetChatMember(chatID int64, userID int64) (botapi.ChatMember, error) {
@@ -341,6 +358,22 @@ func (o *Ops) DeleteMessage(ctx context.Context, chatID int64, messageID int) er
 	err := o.c.DeleteMessage(chatID, messageID)
 	if err != nil {
 		o.log.WithContext(ctx).WithError(err).WithFields(logrus.Fields{"chat_id": chatID, "message_id": messageID}).Warn("telegram delete failed")
+	}
+	return err
+}
+
+func (o *Ops) PinChatMessage(ctx context.Context, chatID int64, messageID int, disableNotification bool) error {
+	err := o.c.PinChatMessage(chatID, messageID, disableNotification)
+	if err != nil {
+		o.log.WithContext(ctx).WithError(err).WithFields(logrus.Fields{"chat_id": chatID, "message_id": messageID}).Warn("telegram pin failed")
+	}
+	return err
+}
+
+func (o *Ops) UnpinChatMessage(ctx context.Context, chatID int64, messageID int) error {
+	err := o.c.UnpinChatMessage(chatID, messageID)
+	if err != nil {
+		o.log.WithContext(ctx).WithError(err).WithFields(logrus.Fields{"chat_id": chatID, "message_id": messageID}).Warn("telegram unpin failed")
 	}
 	return err
 }

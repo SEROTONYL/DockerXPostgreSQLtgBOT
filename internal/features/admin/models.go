@@ -121,4 +121,8 @@ const (
 	StateBalanceAdjustConfirm = "admin:balance_adjust_confirm"
 	StateBalanceDeltaName     = "admin:balance_delta_name"
 	StateBalanceDeltaAmount   = "admin:balance_delta_amount"
+	StateRiddleText           = "admin:riddle_text"
+	StateRiddleAnswers        = "admin:riddle_answers"
+	StateRiddleReward         = "admin:riddle_reward"
+	StateRiddleConfirm        = "admin:riddle_confirm"
 )

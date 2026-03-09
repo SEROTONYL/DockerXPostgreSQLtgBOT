@@ -14,6 +14,7 @@ type Deps struct {
 	Cfg            *config.Config
 	Ops            *telegram.Ops
 	Service        *Service
+	RiddleService  *RiddleService
 	MemberService  *members.Service
 	EconomyService *economy.Service
 	PurgeMetrics   func() jobs.PurgeMetrics
@@ -30,6 +31,12 @@ func NewModule(deps Deps) (*Module, error) {
 	var memberSourceChatID int64
 	if deps.Cfg != nil {
 		memberSourceChatID = deps.Cfg.MemberSourceChatID
+	}
+	if deps.Service != nil {
+		deps.Service.SetRiddleService(deps.RiddleService)
+	}
+	if deps.RiddleService != nil {
+		deps.RiddleService.SetOps(deps.Ops)
 	}
 	h := NewHandler(deps.Service, deps.MemberService, deps.EconomyService, deps.Ops, memberSourceChatID)
 	f := NewFeature(deps.Cfg, deps.Ops, h, deps.MemberService, deps.PurgeMetrics)

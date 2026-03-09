@@ -26,14 +26,17 @@ type tgCall struct {
 
 type fakeTG struct {
 	calls            []tgCall
+	sendErr          error
 	editErr          error
 	deleteErr        error
+	pinErr           error
+	unpinErr         error
 	chatMemberByUser map[int64]models.User
 }
 
 func (f *fakeTG) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
 	f.calls = append(f.calls, tgCall{kind: "send", chatID: chatID, text: text, markup: markup})
-	return 100 + len(f.calls), nil
+	return 100 + len(f.calls), f.sendErr
 }
 
 func (f *fakeTG) EditMessage(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {

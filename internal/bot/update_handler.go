@@ -172,6 +172,10 @@ func (b *Bot) handleMessageUpdate(ctx context.Context, uc UpdateContext) {
 		return
 	}
 
+	if b.adminHandler != nil && b.adminHandler.HandleRiddleMessage(ctx, message) {
+		return
+	}
+
 	if b.isMessageIngestChat(chatID) && b.cfg.FeatureStreaksEnabled {
 		if err := b.streakService.CountMessage(ctx, userID, int64(message.MessageID), messageText); err != nil {
 			log.WithError(err).WithFields(log.Fields{

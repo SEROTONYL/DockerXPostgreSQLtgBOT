@@ -43,6 +43,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		Cfg:            cfg,
 		Ops:            tg.Ops,
 		Service:        infra.AdminService,
+		RiddleService:  infra.RiddleService,
 		MemberService:  infra.MemberService,
 		EconomyService: infra.EconomyService,
 		PurgeMetrics: func() jobs.PurgeMetrics {
