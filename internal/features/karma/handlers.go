@@ -199,11 +199,20 @@ func tgUserLink(userID int64, label string) string {
 }
 
 func (h *Handler) sendThanksSuccessMessage(ctx context.Context, chatID int64, replyToMessageID int, senderUserID int64, senderLabel string, targetUserID int64, targetLabel string) {
+	remainingToday, dailyLimit, err := h.service.GetThanksDailyStatus(ctx, senderUserID)
+	if err != nil {
+		log.WithError(err).Debug("failed to get thanks daily status")
+		remainingToday = 0
+		dailyLimit = h.service.dailyLimit()
+	}
 	text := fmt.Sprintf(
-		"%s поблагодарил(а) %s и подарил(а) %s.",
+		"❤️ %s сказал(а) спасибо - %s\n+%d %s. Сегодня осталось: %d/%d",
 		tgUserLink(senderUserID, senderLabel),
 		tgUserLink(targetUserID, targetLabel),
-		html.EscapeString(common.FormatBalance(ThanksReward)),
+		ThanksReward,
+		html.EscapeString(common.PluralizeFilms(ThanksReward)),
+		remainingToday,
+		dailyLimit,
 	)
 	_, _ = h.tgOps.SendWithOptions(ctx, telegram.SendOptions{
 		ChatID:                chatID,

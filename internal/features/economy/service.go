@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	log "github.com/sirupsen/logrus"
@@ -42,6 +43,17 @@ func (s *Service) AddBalanceWithHook(ctx context.Context, userID int64, amount i
 		return common.ErrInvalidAmount
 	}
 	return s.repo.AddBalanceWithHook(ctx, userID, amount, txType, description, hook)
+}
+
+func (s *Service) WithTransaction(ctx context.Context, fn func(context.Context, pgx.Tx) error) error {
+	return s.repo.WithTransaction(ctx, fn)
+}
+
+func (s *Service) AddBalanceTx(ctx context.Context, tx pgx.Tx, userID int64, amount int64, txType, description string) error {
+	if amount <= 0 {
+		return common.ErrInvalidAmount
+	}
+	return s.repo.AddBalanceTx(ctx, tx, userID, amount, txType, description)
 }
 
 // DeductBalance списывает пленки.
@@ -86,6 +98,26 @@ func (s *Service) Transfer(ctx context.Context, fromUserID, toUserID, amount int
 	}).Info("Перевод выполнен")
 
 	return nil
+}
+
+func (s *Service) CreateTransferConfirmation(ctx context.Context, entry *transferConfirmation) error {
+	return s.repo.CreateTransferConfirmation(ctx, entry)
+}
+
+func (s *Service) GetTransferConfirmation(ctx context.Context, token string) (*transferConfirmation, error) {
+	return s.repo.GetTransferConfirmation(ctx, token)
+}
+
+func (s *Service) TransitionTransferConfirmation(ctx context.Context, token string, fromStates []string, toState string) (bool, error) {
+	return s.repo.TransitionTransferConfirmation(ctx, token, fromStates, toState)
+}
+
+func (s *Service) MarkTransferConfirmationExpired(ctx context.Context, token string) error {
+	return s.repo.MarkTransferConfirmationExpired(ctx, token)
+}
+
+func (s *Service) ExecuteTransferConfirmation(ctx context.Context, token string, now time.Time) (*transferConfirmation, error) {
+	return s.repo.ExecuteTransferConfirmation(ctx, token, now)
 }
 
 // GetTransactionHistory возвращает форматированную историю транзакций.

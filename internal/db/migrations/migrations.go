@@ -15,6 +15,7 @@ import (
 )
 
 const migrationsGlob = "migrations/*.sql"
+const migrationsAdvisoryLockKey int64 = 8_617_423_511
 
 var upMigrationPattern = regexp.MustCompile(`^\d{4}_.+\.sql$`)
 
@@ -25,6 +26,15 @@ type migrationFile struct {
 }
 
 func Apply(ctx context.Context, pool *pgxpool.Pool) error {
+	if _, err := pool.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationsAdvisoryLockKey); err != nil {
+		return fmt.Errorf("acquire migration advisory lock: %w", err)
+	}
+	defer func() {
+		if _, err := pool.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationsAdvisoryLockKey); err != nil {
+			log.WithError(err).Error("release migration advisory lock failed")
+		}
+	}()
+
 	if _, err := pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version INTEGER PRIMARY KEY,

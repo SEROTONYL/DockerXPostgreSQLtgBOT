@@ -46,7 +46,7 @@ type EconomyService interface {
 
 // StreakService описывает операции streak, используемые ботом.
 type StreakService interface {
-	CountMessage(ctx context.Context, userID int64, text string)
+	CountMessage(ctx context.Context, userID int64, messageID int64, text string) error
 	CreateStreak(ctx context.Context, userID int64) error
 }
 

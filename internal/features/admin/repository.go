@@ -1,11 +1,13 @@
-// Package admin — repository.go работает с таблицами admin_sessions и admin_login_attempts.
+// Package admin: repository.go работает с таблицами admin_sessions и admin_login_attempts.
 package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -17,6 +19,17 @@ type Repository struct {
 // NewRepository создаёт репозиторий.
 func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
+}
+
+const (
+	adminLoginAttemptRetention = 30 * 24 * time.Hour
+	adminFlowStateRetention    = 30 * 24 * time.Hour
+)
+
+type CleanupResult struct {
+	ExpiredSessions  int64
+	OldLoginAttempts int64
+	StaleFlowStates  int64
 }
 
 // CreateSession создаёт новую сессию администратора.
@@ -73,6 +86,44 @@ func (r *Repository) LogAttempt(ctx context.Context, userID int64, success bool)
 	return err
 }
 
+func (r *Repository) CleanupStaleAuthState(ctx context.Context, now time.Time) (CleanupResult, error) {
+	var result CleanupResult
+
+	sessionsCmd, err := r.db.Exec(ctx, `
+		DELETE FROM admin_sessions
+		WHERE expires_at IS NOT NULL AND expires_at < $1
+	`, now.UTC())
+	if err != nil {
+		return result, fmt.Errorf("cleanup expired admin sessions: %w", err)
+	}
+	result.ExpiredSessions = sessionsCmd.RowsAffected()
+
+	attemptsCmd, err := r.db.Exec(ctx, `
+		DELETE FROM admin_login_attempts
+		WHERE attempt_time < $1
+	`, now.UTC().Add(-adminLoginAttemptRetention))
+	if err != nil {
+		return result, fmt.Errorf("cleanup old admin login attempts: %w", err)
+	}
+	result.OldLoginAttempts = attemptsCmd.RowsAffected()
+
+	flowCmd, err := r.db.Exec(ctx, `
+		DELETE FROM admin_flow_states
+		WHERE (state_expires_at IS NOT NULL AND state_expires_at < $1)
+		   OR (
+		        state_expires_at IS NULL
+		    AND COALESCE(state_name, '') = ''
+		    AND COALESCE(panel_updated_at, updated_at) < $2
+		   )
+	`, now.UTC(), now.UTC().Add(-adminFlowStateRetention))
+	if err != nil {
+		return result, fmt.Errorf("cleanup stale admin flow states: %w", err)
+	}
+	result.StaleFlowStates = flowCmd.RowsAffected()
+
+	return result, nil
+}
+
 // GetRecentAttempts возвращает количество неудачных попыток за указанный период.
 func (r *Repository) GetRecentAttempts(ctx context.Context, userID int64, period time.Duration) (int, error) {
 	since := time.Now().Add(-period)
@@ -105,6 +156,9 @@ func (r *Repository) ListBalanceDeltas(ctx context.Context, chatID int64) ([]*Ba
 		}
 		result = append(result, &d)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка итерации дельт: %w", err)
+	}
 	return result, nil
 }
 
@@ -129,6 +183,116 @@ func (r *Repository) DeleteBalanceDelta(ctx context.Context, chatID int64, delta
 	}
 	if cmd.RowsAffected() == 0 {
 		return fmt.Errorf("дельта не найдена")
+	}
+	return nil
+}
+
+func (r *Repository) SaveFlowState(ctx context.Context, userID int64, state *AdminState) error {
+	if state == nil {
+		return r.ClearFlowState(ctx, userID)
+	}
+
+	payload, err := marshalAdminStateData(state.State, state.Data)
+	if err != nil {
+		return fmt.Errorf("marshal admin flow state: %w", err)
+	}
+
+	_, err = r.db.Exec(ctx, `
+		INSERT INTO admin_flow_states (user_id, state_name, state_payload, state_expires_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (user_id) DO UPDATE
+		SET state_name = EXCLUDED.state_name,
+		    state_payload = EXCLUDED.state_payload,
+		    state_expires_at = EXCLUDED.state_expires_at,
+		    updated_at = NOW()
+	`, userID, state.State, payload, state.ExpiresAt)
+	if err != nil {
+		return fmt.Errorf("save admin flow state: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) GetFlowState(ctx context.Context, userID int64) (*AdminState, error) {
+	var (
+		stateName string
+		payload   []byte
+		expiresAt *time.Time
+	)
+	err := r.db.QueryRow(ctx, `
+		SELECT state_name, state_payload, state_expires_at
+		FROM admin_flow_states
+		WHERE user_id = $1
+	`, userID).Scan(&stateName, &payload, &expiresAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get admin flow state: %w", err)
+	}
+	if stateName == "" || expiresAt == nil {
+		return nil, nil
+	}
+	data, err := unmarshalAdminStateData(stateName, payload)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal admin flow state: %w", err)
+	}
+	return &AdminState{State: stateName, Data: data, ExpiresAt: *expiresAt}, nil
+}
+
+func (r *Repository) ClearFlowState(ctx context.Context, userID int64) error {
+	_, err := r.db.Exec(ctx, `
+		DELETE FROM admin_flow_states
+		WHERE user_id = $1
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("clear admin flow state: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) SetPanelMessage(ctx context.Context, userID int64, panel AdminPanelMessage) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO admin_flow_states (user_id, panel_chat_id, panel_message_id, panel_updated_at, updated_at)
+		VALUES ($1, $2, $3, NOW(), NOW())
+		ON CONFLICT (user_id) DO UPDATE
+		SET panel_chat_id = EXCLUDED.panel_chat_id,
+		    panel_message_id = EXCLUDED.panel_message_id,
+		    panel_updated_at = NOW(),
+		    updated_at = NOW()
+	`, userID, panel.ChatID, panel.MessageID)
+	if err != nil {
+		return fmt.Errorf("set admin panel message: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) GetPanelMessage(ctx context.Context, userID int64) (AdminPanelMessage, error) {
+	var panel AdminPanelMessage
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(panel_chat_id, 0), COALESCE(panel_message_id, 0)
+		FROM admin_flow_states
+		WHERE user_id = $1
+	`, userID).Scan(&panel.ChatID, &panel.MessageID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AdminPanelMessage{}, nil
+		}
+		return AdminPanelMessage{}, fmt.Errorf("get admin panel message: %w", err)
+	}
+	return panel, nil
+}
+
+func (r *Repository) ClearPanelMessage(ctx context.Context, userID int64) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE admin_flow_states
+		SET panel_chat_id = NULL,
+		    panel_message_id = NULL,
+		    panel_updated_at = NULL,
+		    updated_at = NOW()
+		WHERE user_id = $1
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("clear admin panel message: %w", err)
 	}
 	return nil
 }

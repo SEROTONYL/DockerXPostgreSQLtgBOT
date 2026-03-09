@@ -35,16 +35,16 @@ type BotHandlers struct {
 
 type StreakServiceAdapter struct {
 	Service interface {
-		CountMessage(ctx context.Context, userID int64, text string) error
+		CountMessage(ctx context.Context, userID int64, messageID int64, text string) error
 		CreateStreak(ctx context.Context, userID int64) error
 	}
 }
 
-func (a StreakServiceAdapter) CountMessage(ctx context.Context, userID int64, text string) {
+func (a StreakServiceAdapter) CountMessage(ctx context.Context, userID int64, messageID int64, text string) error {
 	if a.Service == nil {
-		return
+		return nil
 	}
-	_ = a.Service.CountMessage(ctx, userID, text)
+	return a.Service.CountMessage(ctx, userID, messageID, text)
 }
 
 func (a StreakServiceAdapter) CreateStreak(ctx context.Context, userID int64) error {
@@ -84,5 +84,5 @@ func BuildBot(cfg *config.Config, infra *Infra, tg *Telegram, cmdRouter *command
 }
 
 func BuildScheduler(cfg *config.Config, infra *Infra, tg *Telegram, b *bot.Bot) *jobs.Scheduler {
-	return jobs.NewScheduler(cfg, infra.StreakService, infra.MemberService, b.SendMessageToUser, tg.Ops)
+	return jobs.NewScheduler(cfg, infra.StreakService, infra.MemberService, infra.AdminService, b.SendMessageToUser, tg.Ops)
 }

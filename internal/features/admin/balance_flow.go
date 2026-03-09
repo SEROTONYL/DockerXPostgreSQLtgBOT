@@ -168,7 +168,7 @@ func (h *Handler) renderBalancePicker(chatID, userID int64) {
 		if data.SelectedUserIDs[u.UserID] {
 			mark = "☑"
 		}
-		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData(fmt.Sprintf("%s %s", mark, shortenForButton(formatMemberIdentityCompact(u), 36)), fmt.Sprintf("%s:%d", cbBalPickToggle, u.UserID))))
+		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData(fmt.Sprintf("%s %s", mark, shortenForButton(formatBalancePickerLabel(u), 36)), fmt.Sprintf("%s:%d", cbBalPickToggle, u.UserID))))
 	}
 	rows = append(rows, newInlineKeyboardRow(
 		newInlineKeyboardButtonData(userPickerPrevButton, cbBalPickPrev),
@@ -182,8 +182,43 @@ func (h *Handler) renderBalancePicker(chatID, userID int64) {
 		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData("Выберите хотя бы одного", "admin:balpick:noop")))
 	}
 	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalPickBack, "danger")))
-	text := fmt.Sprintf("Выберите пользователей (только с ролью).\nФормат: тег • @username, иначе тег • ник • id.\nВыбрано: %d", len(data.SelectedUserIDs))
+	text := fmt.Sprintf("Выберите пользователей\n\nВыбрано: %d", len(data.SelectedUserIDs))
 	h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_picker", text, newInlineKeyboardMarkup(rows...))
+}
+
+func formatBalancePickerLabel(user *members.Member) string {
+	if user != nil && user.Role != nil {
+		if role := strings.TrimSpace(*user.Role); role != "" {
+			return role
+		}
+	}
+	if user != nil && user.Tag != nil {
+		if tag := strings.TrimSpace(*user.Tag); tag != "" {
+			return tag
+		}
+	}
+	if user != nil {
+		username := strings.TrimSpace(strings.TrimPrefix(user.Username, "@"))
+		if username != "" {
+			return "@" + username
+		}
+
+		displayName := strings.TrimSpace(strings.Join([]string{
+			strings.TrimSpace(user.FirstName),
+			strings.TrimSpace(user.LastName),
+		}, " "))
+		if displayName != "" {
+			return displayName
+		}
+		if user.LastKnownName != nil {
+			if lastKnownName := strings.TrimSpace(*user.LastKnownName); lastKnownName != "" {
+				return lastKnownName
+			}
+		}
+		return fmt.Sprintf("id:%d", user.UserID)
+	}
+
+	return "id:0"
 }
 
 func (h *Handler) handleBalancePicker(chatID, userID int64, cb string) {
@@ -201,15 +236,18 @@ func (h *Handler) handleBalancePicker(chatID, userID int64, cb string) {
 		if data.PageIndex > 0 {
 			data.PageIndex--
 		}
+		h.service.SetState(userID, StateBalanceAdjustPicker, data)
 		h.renderBalancePicker(chatID, userID)
 	case cb == cbBalPickNext:
 		totalPages := (len(data.UsersSnapshot) + data.PageSize - 1) / data.PageSize
 		if data.PageIndex < totalPages-1 {
 			data.PageIndex++
 		}
+		h.service.SetState(userID, StateBalanceAdjustPicker, data)
 		h.renderBalancePicker(chatID, userID)
 	case cb == cbBalPickClear:
 		data.SelectedUserIDs = map[int64]bool{}
+		h.service.SetState(userID, StateBalanceAdjustPicker, data)
 		h.renderBalancePicker(chatID, userID)
 	case cb == cbBalPickDone:
 		if !h.isBalanceSelectionReady(data) {
@@ -230,11 +268,15 @@ func (h *Handler) handleBalancePicker(chatID, userID int64, cb string) {
 			h.resetBalanceFlow(chatID, userID, data)
 			return
 		}
+		if data.SelectedUserIDs == nil {
+			data.SelectedUserIDs = map[int64]bool{}
+		}
 		if data.SelectedUserIDs[id] {
 			delete(data.SelectedUserIDs, id)
 		} else {
 			data.SelectedUserIDs[id] = true
 		}
+		h.service.SetState(userID, StateBalanceAdjustPicker, data)
 		h.renderBalancePicker(chatID, userID)
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -21,10 +20,6 @@ type Service struct {
 	repo       adminRepo
 	memberRepo memberRepo
 	cfg        *config.Config
-	states     map[int64]*AdminState
-	panelMsgs  map[int64]AdminPanelMessage
-	panelMsgAt map[int64]time.Time
-	statesMu   sync.RWMutex
 }
 
 type adminRepo interface {
@@ -34,9 +29,16 @@ type adminRepo interface {
 	UpdateActivity(ctx context.Context, userID int64) error
 	LogAttempt(ctx context.Context, userID int64, success bool) error
 	GetRecentAttempts(ctx context.Context, userID int64, period time.Duration) (int, error)
+	CleanupStaleAuthState(ctx context.Context, now time.Time) (CleanupResult, error)
 	ListBalanceDeltas(ctx context.Context, chatID int64) ([]*BalanceDelta, error)
 	CreateBalanceDelta(ctx context.Context, chatID int64, name string, amount int64, createdBy int64) error
 	DeleteBalanceDelta(ctx context.Context, chatID int64, deltaID int64) error
+	SaveFlowState(ctx context.Context, userID int64, state *AdminState) error
+	GetFlowState(ctx context.Context, userID int64) (*AdminState, error)
+	ClearFlowState(ctx context.Context, userID int64) error
+	SetPanelMessage(ctx context.Context, userID int64, panel AdminPanelMessage) error
+	GetPanelMessage(ctx context.Context, userID int64) (AdminPanelMessage, error)
+	ClearPanelMessage(ctx context.Context, userID int64) error
 }
 
 type memberRepo interface {
@@ -52,9 +54,6 @@ func NewService(repo adminRepo, memberRepo memberRepo, cfg *config.Config) *Serv
 		repo:       repo,
 		memberRepo: memberRepo,
 		cfg:        cfg,
-		states:     make(map[int64]*AdminState),
-		panelMsgs:  make(map[int64]AdminPanelMessage),
-		panelMsgAt: make(map[int64]time.Time),
 	}
 }
 
@@ -116,10 +115,8 @@ func (s *Service) HasActiveSession(ctx context.Context, userID int64) bool {
 }
 
 func (s *Service) GetState(userID int64) *AdminState {
-	s.statesMu.RLock()
-	state, ok := s.states[userID]
-	s.statesMu.RUnlock()
-	if !ok {
+	state, err := s.repo.GetFlowState(context.Background(), userID)
+	if err != nil || state == nil {
 		return nil
 	}
 	if time.Now().After(state.ExpiresAt) {
@@ -130,40 +127,35 @@ func (s *Service) GetState(userID int64) *AdminState {
 }
 
 func (s *Service) SetState(userID int64, stateName string, data interface{}) {
-	s.statesMu.Lock()
-	defer s.statesMu.Unlock()
-
-	s.states[userID] = &AdminState{
+	state := &AdminState{
 		State:     stateName,
 		Data:      data,
 		ExpiresAt: time.Now().Add(5 * time.Minute),
 	}
+	if err := s.repo.SaveFlowState(context.Background(), userID, state); err != nil {
+		log.WithError(err).WithField("user_id", userID).Warn("не удалось сохранить admin flow state")
+	}
 }
 
 func (s *Service) ClearState(userID int64) {
-	s.statesMu.Lock()
-	defer s.statesMu.Unlock()
-	delete(s.states, userID)
-	delete(s.panelMsgs, userID)
-	delete(s.panelMsgAt, userID)
+	if err := s.repo.ClearFlowState(context.Background(), userID); err != nil {
+		log.WithError(err).WithField("user_id", userID).Warn("не удалось очистить admin flow state")
+	}
 }
 
 func (s *Service) ClearPanelMessage(userID int64) {
-	s.statesMu.Lock()
-	defer s.statesMu.Unlock()
-	delete(s.panelMsgs, userID)
-	delete(s.panelMsgAt, userID)
+	if err := s.repo.ClearPanelMessage(context.Background(), userID); err != nil {
+		log.WithError(err).WithField("user_id", userID).Warn("не удалось очистить admin panel message")
+	}
 }
 
 func (s *Service) SetPanelMessage(userID, chatID int64, messageID int) {
 	if chatID == 0 || messageID <= 0 {
 		return
 	}
-	s.statesMu.Lock()
-	defer s.statesMu.Unlock()
-	s.cleanupPanelMessagesLocked()
-	s.panelMsgs[userID] = AdminPanelMessage{ChatID: chatID, MessageID: messageID}
-	s.panelMsgAt[userID] = time.Now()
+	if err := s.repo.SetPanelMessage(context.Background(), userID, AdminPanelMessage{ChatID: chatID, MessageID: messageID}); err != nil {
+		log.WithError(err).WithField("user_id", userID).Warn("не удалось сохранить admin panel message")
+	}
 }
 
 func (s *Service) SetPanelMessageID(userID int64, messageID int) {
@@ -171,23 +163,16 @@ func (s *Service) SetPanelMessageID(userID int64, messageID int) {
 }
 
 func (s *Service) GetPanelMessage(userID int64) AdminPanelMessage {
-	s.statesMu.RLock()
-	defer s.statesMu.RUnlock()
-	return s.panelMsgs[userID]
+	panel, err := s.repo.GetPanelMessage(context.Background(), userID)
+	if err != nil {
+		log.WithError(err).WithField("user_id", userID).Warn("не удалось получить admin panel message")
+		return AdminPanelMessage{}
+	}
+	return panel
 }
 
 func (s *Service) GetPanelMessageID(userID int64) int {
 	return s.GetPanelMessage(userID).MessageID
-}
-
-func (s *Service) cleanupPanelMessagesLocked() {
-	cutoff := time.Now().Add(-24 * time.Hour)
-	for userID, ts := range s.panelMsgAt {
-		if ts.Before(cutoff) {
-			delete(s.panelMsgs, userID)
-			delete(s.panelMsgAt, userID)
-		}
-	}
 }
 
 func (s *Service) GetUsersWithoutRole(ctx context.Context) ([]*members.Member, error) {
@@ -210,6 +195,14 @@ func (s *Service) DeleteBalanceDelta(ctx context.Context, chatID int64, deltaID 
 		return fmt.Errorf("некорректные параметры удаления дельты")
 	}
 	return s.repo.DeleteBalanceDelta(ctx, chatID, deltaID)
+}
+
+func (s *Service) CleanupStaleAuthState(ctx context.Context, now time.Time) error {
+	_, err := s.repo.CleanupStaleAuthState(ctx, now)
+	if err != nil {
+		return fmt.Errorf("cleanup admin auth state: %w", err)
+	}
+	return nil
 }
 
 func verifyArgon2id(password, encodedHash string) bool {

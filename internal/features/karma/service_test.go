@@ -17,6 +17,7 @@ type fakeThanksRepo struct {
 	sentCount         int
 	reciprocalBlocked bool
 	stats             *ThanksStats
+	lastSince         time.Time
 	logged            struct {
 		from   int64
 		to     int64
@@ -25,7 +26,8 @@ type fakeThanksRepo struct {
 }
 
 func (f *fakeThanksRepo) Create(context.Context, int64) error { return nil }
-func (f *fakeThanksRepo) CountSentSince(context.Context, int64, time.Time) (int, error) {
+func (f *fakeThanksRepo) CountSentSince(_ context.Context, _ int64, since time.Time) (int, error) {
+	f.lastSince = since
 	return f.sentCount, nil
 }
 func (f *fakeThanksRepo) HasReciprocalSince(context.Context, int64, int64, time.Time) (bool, error) {
@@ -144,5 +146,31 @@ func TestServiceGiveThanksRejectsBot(t *testing.T) {
 	err := service.GiveThanks(context.Background(), 1, 2)
 	if !errors.Is(err, common.ErrThanksTargetIsBot) {
 		t.Fatalf("expected ErrThanksTargetIsBot, got %v", err)
+	}
+}
+
+func TestGetThanksDailyStatusUsesConfiguredTimezone(t *testing.T) {
+	repo := &fakeThanksRepo{}
+	service := &Service{
+		repo:     repo,
+		cfg:      &config.Config{AppTimezone: "Asia/Tokyo", ThanksDailyLimit: 3},
+		economy:  &fakeRewarder{},
+		members:  fakeMemberLookup{},
+		location: time.FixedZone("JST", 9*60*60),
+		now:      func() time.Time { return time.Date(2026, 3, 8, 18, 30, 0, 0, time.UTC) },
+	}
+
+	if _, _, err := service.GetThanksDailyStatus(context.Background(), 1); err != nil {
+		t.Fatalf("GetThanksDailyStatus() error = %v", err)
+	}
+
+	if repo.lastSince.Location().String() != "JST" {
+		t.Fatalf("expected configured timezone, got %s", repo.lastSince.Location())
+	}
+	if repo.lastSince.Year() != 2026 || repo.lastSince.Month() != time.March || repo.lastSince.Day() != 9 {
+		t.Fatalf("expected local day start for 2026-03-09, got %v", repo.lastSince)
+	}
+	if repo.lastSince.Hour() != 0 || repo.lastSince.Minute() != 0 || repo.lastSince.Second() != 0 {
+		t.Fatalf("expected start of day, got %v", repo.lastSince)
 	}
 }

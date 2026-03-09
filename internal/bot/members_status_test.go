@@ -1,12 +1,15 @@
 package bot
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	models "github.com/mymmrac/telego"
+	log "github.com/sirupsen/logrus"
 
 	"serotonyl.ru/telegram-bot/internal/bot/middleware"
 	"serotonyl.ru/telegram-bot/internal/commands"
@@ -18,7 +21,11 @@ import (
 )
 
 type fakeTGStatus struct {
-	sent []string
+	sent              []string
+	callbackAckCalls  int
+	lastCallbackID    string
+	lastCallbackText  string
+	lastCallbackAlert bool
 }
 
 type policyChatFilterStatus struct {
@@ -43,6 +50,10 @@ func (f *fakeTGStatus) EditMessage(chatID int64, messageID int, text string, mar
 	return nil
 }
 func (f *fakeTGStatus) AnswerCallbackQuery(callbackID string, text string, showAlert bool) error {
+	f.callbackAckCalls++
+	f.lastCallbackID = callbackID
+	f.lastCallbackText = text
+	f.lastCallbackAlert = showAlert
 	return nil
 }
 func (f *fakeTGStatus) GetChatMember(chatID int64, userID int64) (member models.ChatMember, err error) {
@@ -88,6 +99,9 @@ func (f *fakeMembersRepoStatus) GetByUserID(ctx context.Context, userID int64) (
 func (f *fakeMembersRepoStatus) GetByUsername(ctx context.Context, username string) (*members.Member, error) {
 	return &members.Member{}, nil
 }
+func (f *fakeMembersRepoStatus) FindByNickname(ctx context.Context, nickname string) (*members.Member, error) {
+	return &members.Member{}, nil
+}
 func (f *fakeMembersRepoStatus) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	f.ensureSeenCalls++
 	return nil
@@ -128,13 +142,15 @@ func (f fakePurgeMetricsProvider) GetPurgeMetrics() jobs.PurgeMetrics { return f
 type fakeStreakServiceStatus struct {
 	calls     int
 	callOrder *[]string
+	err       error
 }
 
-func (s *fakeStreakServiceStatus) CountMessage(ctx context.Context, userID int64, text string) {
+func (s *fakeStreakServiceStatus) CountMessage(ctx context.Context, userID int64, messageID int64, text string) error {
 	s.calls++
 	if s.callOrder != nil {
 		*s.callOrder = append(*s.callOrder, "count_message")
 	}
+	return s.err
 }
 
 func (s *fakeStreakServiceStatus) CreateStreak(ctx context.Context, userID int64) error { return nil }
@@ -550,6 +566,99 @@ func TestHandleUpdate_MemberSourceChatNonTextMessage_DoesNotCountStreakMessage(t
 	}
 	if streakSvc.calls != 0 {
 		t.Fatalf("expected no CountMessage call for non-text messages, got %d", streakSvc.calls)
+	}
+}
+
+func TestHandleUpdate_CallbackWithoutMessage_AcksAndReturns(t *testing.T) {
+	tg := &fakeTGStatus{}
+	b := &Bot{ops: telegram.NewOps(tg)}
+
+	handled := b.handleCallbackUpdate(context.Background(), UpdateContext{
+		Callback: &models.CallbackQuery{
+			ID:   "cb-no-message",
+			From: models.User{ID: 55},
+		},
+	})
+
+	if !handled {
+		t.Fatal("expected callback without message to be handled")
+	}
+	if tg.callbackAckCalls != 1 {
+		t.Fatalf("expected one callback ack, got %d", tg.callbackAckCalls)
+	}
+	if tg.lastCallbackID != "cb-no-message" {
+		t.Fatalf("unexpected callback id: %q", tg.lastCallbackID)
+	}
+	if tg.lastCallbackText != "" || tg.lastCallbackAlert {
+		t.Fatalf("expected harmless ack, got text=%q alert=%v", tg.lastCallbackText, tg.lastCallbackAlert)
+	}
+}
+
+func TestHandleUpdate_CallbackWithInaccessibleMessage_AcksAndReturns(t *testing.T) {
+	tg := &fakeTGStatus{}
+	b := &Bot{ops: telegram.NewOps(tg)}
+
+	handled := b.handleCallbackUpdate(context.Background(), UpdateContext{
+		Callback: &models.CallbackQuery{
+			ID:   "cb-inaccessible",
+			From: models.User{ID: 55},
+			Message: &models.InaccessibleMessage{
+				Chat:      models.Chat{ID: -1001, Type: models.ChatTypeSupergroup},
+				MessageID: 42,
+			},
+		},
+	})
+
+	if !handled {
+		t.Fatal("expected inaccessible callback to be handled")
+	}
+	if tg.callbackAckCalls != 1 {
+		t.Fatalf("expected one callback ack, got %d", tg.callbackAckCalls)
+	}
+	if tg.lastCallbackID != "cb-inaccessible" {
+		t.Fatalf("unexpected callback id: %q", tg.lastCallbackID)
+	}
+}
+
+func TestHandleUpdate_CountMessageErrorIsLogged(t *testing.T) {
+	tg := &fakeTGStatus{}
+	repo := &fakeMembersRepoStatus{}
+	memberSvc := members.NewService(repo)
+	streakSvc := &fakeStreakServiceStatus{err: errors.New("count failed")}
+	b := &Bot{
+		cfg: &config.Config{
+			MemberSourceChatID:    -1001,
+			AdminChatID:           -2002,
+			RateLimitRequests:     100,
+			RateLimitWindow:       time.Minute,
+			FeatureStreaksEnabled: true,
+		},
+		ops:           telegram.NewOps(tg),
+		memberService: memberSvc,
+		streakService: streakSvc,
+		chatFilter:    policyChatFilterStatus{memberSourceChatID: -1001, adminChatID: -2002},
+		rateLimiter:   middleware.NewRateLimiter(100, time.Minute),
+		parser:        NewCommandParser(),
+		cmdRouter:     commands.NewRouter(),
+	}
+
+	var logBuf bytes.Buffer
+	prevOut := log.StandardLogger().Out
+	prevLevel := log.StandardLogger().Level
+	log.SetOutput(&logBuf)
+	log.SetLevel(log.ErrorLevel)
+	defer log.SetOutput(prevOut)
+	defer log.SetLevel(prevLevel)
+
+	upd := models.Update{Message: &models.Message{MessageID: 321, Chat: models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, From: &models.User{ID: 55, Username: "u", FirstName: "User"}, Text: "hello there now please"}}
+	b.handleUpdate(context.Background(), upd)
+
+	logged := logBuf.String()
+	if !strings.Contains(logged, "streak count failed") {
+		t.Fatalf("expected streak count error log, got %q", logged)
+	}
+	if !strings.Contains(logged, "user_id=55") || !strings.Contains(logged, "message_id=321") {
+		t.Fatalf("expected user and message context in log, got %q", logged)
 	}
 }
 

@@ -1,36 +1,52 @@
-// Package streak — counter.go отвечает за подсчёт слов в сообщениях.
-// Сообщение засчитывается для стрика только если содержит 3+ слов.
 package streak
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
-// CountWords подсчитывает количество слов в тексте.
-// Слова разделяются пробелами (включая множественные пробелы, табы и т.д.).
-//
-// Примеры:
-//
-//	CountWords("привет как дела") → 3 (засчитывается)
-//	CountWords("ок")              → 1 (НЕ засчитывается)
-//	CountWords("  пробелы  лишние  ") → 2 (НЕ засчитывается)
 func CountWords(text string) int {
-	// strings.Fields разбивает строку по пробельным символам
-	// и автоматически игнорирует лишние пробелы
-	words := strings.Fields(text)
-	return len(words)
+	return len(strings.Fields(text))
 }
 
-// IsValidForStreak проверяет, подходит ли сообщение для подсчёта стрика.
-// Условия:
-//   - Минимум 3 слова
-//   - Не является командой (не начинается с !, . или /)
+func IsIgnoredCommand(text string) bool {
+	text = strings.TrimSpace(text)
+	return strings.HasPrefix(text, "/")
+}
+
+func IsEmojiOnly(text string) bool {
+	hasVisible := false
+	hasLetterOrDigit := false
+	for _, r := range strings.TrimSpace(text) {
+		if unicode.IsSpace(r) {
+			continue
+		}
+		hasVisible = true
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			hasLetterOrDigit = true
+			break
+		}
+	}
+	return hasVisible && !hasLetterOrDigit
+}
+
+func normalizeMessageText(text string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(text)), " "))
+}
+
 func IsValidForStreak(text string) bool {
 	text = strings.TrimSpace(text)
-
-	// Игнорируем команды
-	if strings.HasPrefix(text, "!") || strings.HasPrefix(text, ".") || strings.HasPrefix(text, "/") {
+	if text == "" {
 		return false
 	}
-
-	// Проверяем количество слов
-	return CountWords(text) >= 3
+	if IsIgnoredCommand(text) {
+		return false
+	}
+	if CountWords(text) <= 4 {
+		return false
+	}
+	if IsEmojiOnly(text) {
+		return false
+	}
+	return true
 }

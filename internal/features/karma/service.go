@@ -3,6 +3,7 @@ package karma
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -30,20 +31,28 @@ type balanceRewarder interface {
 }
 
 type Service struct {
-	repo    thanksRepository
-	cfg     *config.Config
-	economy balanceRewarder
-	members memberLookup
-	now     func() time.Time
+	repo     thanksRepository
+	cfg      *config.Config
+	economy  balanceRewarder
+	members  memberLookup
+	location *time.Location
+	now      func() time.Time
 }
 
 func NewService(repo *Repository, economyService *economy.Service, membersService *members.Service, cfg *config.Config) *Service {
+	loc := time.UTC
+	if cfg != nil && strings.TrimSpace(cfg.AppTimezone) != "" {
+		if loaded, err := time.LoadLocation(cfg.AppTimezone); err == nil {
+			loc = loaded
+		}
+	}
 	return &Service{
-		repo:    repo,
-		cfg:     cfg,
-		economy: economyService,
-		members: membersService,
-		now:     func() time.Time { return time.Now().UTC() },
+		repo:     repo,
+		cfg:      cfg,
+		economy:  economyService,
+		members:  membersService,
+		location: loc,
+		now:      time.Now,
 	}
 }
 
@@ -60,7 +69,7 @@ func (s *Service) GiveThanks(ctx context.Context, fromUserID, toUserID int64) er
 		return common.ErrThanksTargetIsBot
 	}
 
-	sentToday, err := s.repo.CountSentSince(ctx, fromUserID, common.GetMoscowDate())
+	sentToday, err := s.repo.CountSentSince(ctx, fromUserID, s.dayStart(s.now()))
 	if err != nil {
 		return err
 	}
@@ -86,6 +95,19 @@ func (s *Service) GetThanksStats(ctx context.Context, userID int64) (*ThanksStat
 	return s.repo.GetStats(ctx, userID)
 }
 
+func (s *Service) GetThanksDailyStatus(ctx context.Context, userID int64) (remaining int, limit int, err error) {
+	sentToday, err := s.repo.CountSentSince(ctx, userID, s.dayStart(s.now()))
+	if err != nil {
+		return 0, 0, err
+	}
+	limit = s.dailyLimit()
+	remaining = limit - sentToday
+	if remaining < 0 {
+		remaining = 0
+	}
+	return remaining, limit, nil
+}
+
 func (s *Service) CreateKarma(ctx context.Context, userID int64) error {
 	return s.repo.Create(ctx, userID)
 }
@@ -95,4 +117,13 @@ func (s *Service) dailyLimit() int {
 		return s.cfg.ThanksDailyLimit
 	}
 	return DefaultThanksDailyLimit
+}
+
+func (s *Service) dayStart(now time.Time) time.Time {
+	loc := s.location
+	if loc == nil {
+		loc = time.UTC
+	}
+	localNow := now.In(loc)
+	return time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
 }

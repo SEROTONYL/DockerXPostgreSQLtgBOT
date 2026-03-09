@@ -26,6 +26,11 @@ type Repository struct {
 	db *pgxpool.Pool
 }
 
+var (
+	ErrNicknameNotFound  = errors.New("member nickname not found")
+	ErrNicknameAmbiguous = errors.New("member nickname ambiguous")
+)
+
 func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
@@ -277,10 +282,14 @@ func (r *Repository) FindByNickname(ctx context.Context, nickname string) (*Memb
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("ошибка чтения участников (nickname=%s): %w", nickname, err)
 	}
-	if len(found) != 1 {
-		return nil, fmt.Errorf("участник не найден (nickname=%s)", nickname)
+	switch len(found) {
+	case 0:
+		return nil, fmt.Errorf("nickname lookup miss (%s): %w", nickname, ErrNicknameNotFound)
+	case 1:
+		return found[0], nil
+	default:
+		return nil, fmt.Errorf("nickname lookup ambiguous (%s): %w", nickname, ErrNicknameAmbiguous)
 	}
-	return found[0], nil
 }
 
 func (r *Repository) CountMembersByStatus(ctx context.Context) (active int, left int, err error) {

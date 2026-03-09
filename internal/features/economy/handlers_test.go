@@ -22,6 +22,7 @@ type fakeEconomyService struct {
 	transferCalls   int
 	lastTransferTo  int64
 	lastTransferAmt int64
+	confirmations   map[string]*transferConfirmation
 }
 
 func (f *fakeEconomyService) GetBalance(ctx context.Context, userID int64) (int64, error) {
@@ -39,10 +40,81 @@ func (f *fakeEconomyService) GetTransactionHistory(ctx context.Context, userID i
 	return "", nil
 }
 
+func (f *fakeEconomyService) CreateTransferConfirmation(ctx context.Context, entry *transferConfirmation) error {
+	if f.confirmations == nil {
+		f.confirmations = map[string]*transferConfirmation{}
+	}
+	cp := *entry
+	f.confirmations[entry.Token] = &cp
+	return nil
+}
+
+func (f *fakeEconomyService) GetTransferConfirmation(ctx context.Context, token string) (*transferConfirmation, error) {
+	if f.confirmations == nil {
+		return nil, ErrTransferConfirmationNotFound
+	}
+	entry := f.confirmations[token]
+	if entry == nil {
+		return nil, ErrTransferConfirmationNotFound
+	}
+	cp := *entry
+	return &cp, nil
+}
+
+func (f *fakeEconomyService) TransitionTransferConfirmation(ctx context.Context, token string, fromStates []string, toState string) (bool, error) {
+	entry, err := f.GetTransferConfirmation(ctx, token)
+	if err != nil {
+		return false, err
+	}
+	for _, state := range fromStates {
+		if entry.State == state {
+			entry.State = toState
+			f.confirmations[token] = entry
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeEconomyService) MarkTransferConfirmationExpired(ctx context.Context, token string) error {
+	entry, err := f.GetTransferConfirmation(ctx, token)
+	if err != nil {
+		return err
+	}
+	entry.State = transferStateExpired
+	f.confirmations[token] = entry
+	return nil
+}
+
+func (f *fakeEconomyService) ExecuteTransferConfirmation(ctx context.Context, token string, now time.Time) (*transferConfirmation, error) {
+	entry, err := f.GetTransferConfirmation(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if entry.State != transferStateAwaitSecond || entry.ConsumedAt != nil {
+		return entry, ErrTransferConfirmationStateConflict
+	}
+	entry.State = transferStateExecuting
+	entry.ConsumedAt = &now
+	f.confirmations[token] = entry
+	f.transferCalls++
+	f.lastTransferTo = entry.ToUserID
+	f.lastTransferAmt = entry.Amount
+	if f.transferErr != nil {
+		entry.State = transferStateFailed
+		f.confirmations[token] = entry
+		return entry, f.transferErr
+	}
+	entry.State = transferStateCompleted
+	f.confirmations[token] = entry
+	return entry, nil
+}
+
 type fakeMemberLookup struct {
 	member         *members.Member
 	userByID       *members.Member
 	nicknameMember *members.Member
+	nicknameErr    error
 	err            error
 }
 
@@ -67,6 +139,9 @@ func (f *fakeMemberLookup) GetByUserID(ctx context.Context, userID int64) (*memb
 }
 
 func (f *fakeMemberLookup) FindByNickname(ctx context.Context, nickname string) (*members.Member, error) {
+	if f.nicknameErr != nil {
+		return nil, f.nicknameErr
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -123,7 +198,7 @@ func (f *fakeEconomyTG) AnswerCallbackQuery(callbackID string, text string, show
 
 func TestHandleBalance_SendsReplyWithFilmEmoji(t *testing.T) {
 	tg := &fakeEconomyTG{}
-	h := &Handler{service: &fakeEconomyService{balance: 384655}, tgOps: telegram.NewOps(tg), confirmBy: map[string]*transferConfirmation{}, now: func() time.Time { return time.Unix(0, 0).UTC() }}
+	h := &Handler{service: &fakeEconomyService{balance: 384655}, tgOps: telegram.NewOps(tg), now: func() time.Time { return time.Unix(0, 0).UTC() }}
 
 	h.HandleBalance(context.Background(), 100, 55, 777)
 
@@ -144,7 +219,6 @@ func TestHandleTransferCommand_ReplyFlowSendsFirstConfirmation(t *testing.T) {
 		service:       &fakeEconomyService{balance: 10},
 		memberService: &fakeMemberLookup{},
 		tgOps:         telegram.NewOps(tg),
-		confirmBy:     map[string]*transferConfirmation{},
 		now:           func() time.Time { return time.Unix(100, 0).UTC() },
 	}
 
@@ -185,7 +259,6 @@ func TestHandleEconomyMessage_ParsesUsernamePhrase(t *testing.T) {
 		service:       &fakeEconomyService{balance: 50},
 		memberService: &fakeMemberLookup{member: &members.Member{UserID: 20, Username: "Dora_2270"}},
 		tgOps:         telegram.NewOps(tg),
-		confirmBy:     map[string]*transferConfirmation{},
 		now:           func() time.Time { return time.Unix(100, 0).UTC() },
 	}
 
@@ -213,7 +286,6 @@ func TestHandleEconomyCallback_RequiresOwnerAndRunsTwoSteps(t *testing.T) {
 		service:       svc,
 		memberService: &fakeMemberLookup{},
 		tgOps:         telegram.NewOps(tg),
-		confirmBy:     map[string]*transferConfirmation{},
 		now:           func() time.Time { return time.Unix(100, 0).UTC() },
 	}
 	entry := &transferConfirmation{
@@ -228,7 +300,7 @@ func TestHandleEconomyCallback_RequiresOwnerAndRunsTwoSteps(t *testing.T) {
 		State:            transferStateAwaitFirst,
 		ExpiresAt:        time.Unix(200, 0).UTC(),
 	}
-	h.confirmBy[entry.Token] = entry
+	svc.confirmations = map[string]*transferConfirmation{entry.Token: entry}
 
 	wrongUserHandled := h.HandleEconomyCallback(context.Background(), callback(-10, 42, 99, transferCallbackPrefix+"abc:"+transferConfirmYes))
 	if !wrongUserHandled {
@@ -251,8 +323,8 @@ func TestHandleEconomyCallback_RequiresOwnerAndRunsTwoSteps(t *testing.T) {
 	if tg.editedText[0].Text != "Вы точно уверены, что хотите передать 7 пользователю @Dora_2270?" {
 		t.Fatalf("unexpected second step text: %q", tg.editedText[0].Text)
 	}
-	if entry.State != transferStateAwaitSecond {
-		t.Fatalf("expected second-step state, got %q", entry.State)
+	if svc.confirmations["abc"].State != transferStateAwaitSecond {
+		t.Fatalf("expected second-step state, got %q", svc.confirmations["abc"].State)
 	}
 
 	if !h.HandleEconomyCallback(context.Background(), callback(-10, 42, 1, transferCallbackPrefix+"abc:"+transferConfirmYes)) {
@@ -267,6 +339,13 @@ func TestHandleEconomyCallback_RequiresOwnerAndRunsTwoSteps(t *testing.T) {
 	if tg.editedText[1].Text != "✅ Передано 7 пользователю @Dora_2270." {
 		t.Fatalf("unexpected final text: %q", tg.editedText[1].Text)
 	}
+
+	if !h.HandleEconomyCallback(context.Background(), callback(-10, 42, 1, transferCallbackPrefix+"abc:"+transferConfirmYes)) {
+		t.Fatal("expected duplicate confirm handled")
+	}
+	if svc.transferCalls != 1 {
+		t.Fatalf("expected duplicate callback to stay idempotent, got %d transfers", svc.transferCalls)
+	}
 }
 
 func TestHandleTransferCommand_UsernameOverridesReply(t *testing.T) {
@@ -275,7 +354,6 @@ func TestHandleTransferCommand_UsernameOverridesReply(t *testing.T) {
 		service:       &fakeEconomyService{balance: 50},
 		memberService: &fakeMemberLookup{member: &members.Member{UserID: 99, Username: "named_user"}},
 		tgOps:         telegram.NewOps(tg),
-		confirmBy:     map[string]*transferConfirmation{},
 		now:           func() time.Time { return time.Unix(100, 0).UTC() },
 	}
 
@@ -305,7 +383,6 @@ func TestHandleTransferCommand_ShowsInsufficientBalance(t *testing.T) {
 		service:       &fakeEconomyService{balance: 1},
 		memberService: &fakeMemberLookup{},
 		tgOps:         telegram.NewOps(tg),
-		confirmBy:     map[string]*transferConfirmation{},
 		now:           func() time.Time { return time.Unix(100, 0).UTC() },
 	}
 
@@ -336,10 +413,9 @@ func TestHandleEconomyCallback_ExecutionErrorEditsMessage(t *testing.T) {
 		service:       svc,
 		memberService: &fakeMemberLookup{},
 		tgOps:         telegram.NewOps(tg),
-		confirmBy:     map[string]*transferConfirmation{},
 		now:           func() time.Time { return time.Unix(100, 0).UTC() },
 	}
-	h.confirmBy["abc"] = &transferConfirmation{
+	svc.confirmations = map[string]*transferConfirmation{"abc": {
 		Token:            "abc",
 		ChatID:           -10,
 		MessageID:        42,
@@ -350,7 +426,7 @@ func TestHandleEconomyCallback_ExecutionErrorEditsMessage(t *testing.T) {
 		RecipientDisplay: "@Dora_2270",
 		State:            transferStateAwaitSecond,
 		ExpiresAt:        time.Unix(200, 0).UTC(),
-	}
+	}}
 
 	h.HandleEconomyCallback(context.Background(), callback(-10, 42, 1, transferCallbackPrefix+"abc:"+transferConfirmYes))
 
@@ -380,7 +456,6 @@ func TestHandleTargetBalanceCommand_UsernameWinsOverReply(t *testing.T) {
 		service:       &fakeEconomyService{balance: 5000},
 		memberService: &fakeMemberLookup{member: &members.Member{UserID: 99, Username: "kysxddd"}},
 		tgOps:         telegram.NewOps(tg),
-		confirmBy:     map[string]*transferConfirmation{},
 		now:           func() time.Time { return time.Unix(0, 0).UTC() },
 	}
 
@@ -399,7 +474,7 @@ func TestHandleTargetBalanceCommand_UsernameWinsOverReply(t *testing.T) {
 	if len(tg.sent) != 1 {
 		t.Fatalf("expected one message, got %d", len(tg.sent))
 	}
-	if tg.sent[0].Text != "У пользователя @kysxddd: 5000🎞️" {
+	if tg.sent[0].Text != "У @kysxddd: 5000🎞️" {
 		t.Fatalf("unexpected text: %q", tg.sent[0].Text)
 	}
 }
@@ -410,7 +485,6 @@ func TestHandleTargetBalanceCommand_NicknameLookup(t *testing.T) {
 		service:       &fakeEconomyService{balance: 250},
 		memberService: &fakeMemberLookup{nicknameMember: &members.Member{UserID: 7, FirstName: "nickname"}},
 		tgOps:         telegram.NewOps(tg),
-		confirmBy:     map[string]*transferConfirmation{},
 		now:           func() time.Time { return time.Unix(0, 0).UTC() },
 	}
 
@@ -426,7 +500,7 @@ func TestHandleTargetBalanceCommand_NicknameLookup(t *testing.T) {
 	if len(tg.sent) != 1 {
 		t.Fatalf("expected one message, got %d", len(tg.sent))
 	}
-	if tg.sent[0].Text != "У пользователя nickname: 250🎞️" {
+	if tg.sent[0].Text != "У nickname: 250🎞️" {
 		t.Fatalf("unexpected text: %q", tg.sent[0].Text)
 	}
 }
@@ -437,7 +511,6 @@ func TestHandleTargetBalanceCommand_ReplyLookup(t *testing.T) {
 		service:       &fakeEconomyService{balance: 42},
 		memberService: &fakeMemberLookup{userByID: &members.Member{UserID: 20, Username: "reply_user"}},
 		tgOps:         telegram.NewOps(tg),
-		confirmBy:     map[string]*transferConfirmation{},
 		now:           func() time.Time { return time.Unix(0, 0).UTC() },
 	}
 
@@ -456,7 +529,7 @@ func TestHandleTargetBalanceCommand_ReplyLookup(t *testing.T) {
 	if len(tg.sent) != 1 {
 		t.Fatalf("expected one message, got %d", len(tg.sent))
 	}
-	if tg.sent[0].Text != "У пользователя @reply_user: 42🎞️" {
+	if tg.sent[0].Text != "У @reply_user: 42🎞️" {
 		t.Fatalf("unexpected text: %q", tg.sent[0].Text)
 	}
 }
@@ -467,7 +540,6 @@ func TestHandleTargetBalanceCommand_MissingTarget(t *testing.T) {
 		service:       &fakeEconomyService{balance: 42},
 		memberService: &fakeMemberLookup{},
 		tgOps:         telegram.NewOps(tg),
-		confirmBy:     map[string]*transferConfirmation{},
 		now:           func() time.Time { return time.Unix(0, 0).UTC() },
 	}
 
@@ -494,7 +566,6 @@ func TestHandleTargetBalanceCommand_InvalidFormat(t *testing.T) {
 		service:       &fakeEconomyService{balance: 42},
 		memberService: &fakeMemberLookup{},
 		tgOps:         telegram.NewOps(tg),
-		confirmBy:     map[string]*transferConfirmation{},
 		now:           func() time.Time { return time.Unix(0, 0).UTC() },
 	}
 
@@ -521,7 +592,6 @@ func TestHandleTargetBalanceCommand_UsernameNotResolved(t *testing.T) {
 		service:       &fakeEconomyService{balance: 42},
 		memberService: &fakeMemberLookup{},
 		tgOps:         telegram.NewOps(tg),
-		confirmBy:     map[string]*transferConfirmation{},
 		now:           func() time.Time { return time.Unix(0, 0).UTC() },
 	}
 
@@ -548,7 +618,6 @@ func TestHandleTargetBalanceCommand_NicknameNotResolved(t *testing.T) {
 		service:       &fakeEconomyService{balance: 42},
 		memberService: &fakeMemberLookup{},
 		tgOps:         telegram.NewOps(tg),
-		confirmBy:     map[string]*transferConfirmation{},
 		now:           func() time.Time { return time.Unix(0, 0).UTC() },
 	}
 
@@ -565,6 +634,32 @@ func TestHandleTargetBalanceCommand_NicknameNotResolved(t *testing.T) {
 		t.Fatalf("expected one message, got %d", len(tg.sent))
 	}
 	if tg.sent[0].Text != "❌ Не удалось найти пользователя по указанному nickname." {
+		t.Fatalf("unexpected text: %q", tg.sent[0].Text)
+	}
+}
+
+func TestHandleTargetBalanceCommand_NicknameAmbiguous(t *testing.T) {
+	tg := &fakeEconomyTG{}
+	h := &Handler{
+		service:       &fakeEconomyService{balance: 42},
+		memberService: &fakeMemberLookup{nicknameErr: members.ErrNicknameAmbiguous},
+		tgOps:         telegram.NewOps(tg),
+		now:           func() time.Time { return time.Unix(0, 0).UTC() },
+	}
+
+	msg := &models.Message{
+		MessageID: 18,
+		Chat:      models.Chat{ID: -100},
+		From:      &models.User{ID: 1, Username: "sender"},
+		Text:      "!\u0442\u0432\u043e\u0438 \u043f\u043b\u0435\u043d\u043a\u0438 nickname",
+	}
+
+	h.HandleTargetBalanceCommand(context.Background(), commands.Context{ChatID: -100, UserID: 1, MessageID: 18, Message: msg}, []string{"\u043f\u043b\u0435\u043d\u043a\u0438", "nickname"})
+
+	if len(tg.sent) != 1 {
+		t.Fatalf("expected one message, got %d", len(tg.sent))
+	}
+	if tg.sent[0].Text != "\u274c \u041d\u0430\u0439\u0434\u0435\u043d\u043e \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439 \u0441 \u0442\u0430\u043a\u0438\u043c nickname." {
 		t.Fatalf("unexpected text: %q", tg.sent[0].Text)
 	}
 }

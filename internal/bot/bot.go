@@ -159,9 +159,10 @@ func (b *Bot) sendMessage(ctx context.Context, chatID int64, text string) {
 }
 
 // SendMessageToUser отправляет сообщение пользователю (для напоминаний).
-func (b *Bot) SendMessageToUser(userID int64, text string) {
+func (b *Bot) SendMessageToUser(ctx context.Context, userID int64, text string) error {
 	if b.ops == nil {
-		return
+		return fmt.Errorf("telegram send unavailable: bot ops is nil")
 	}
-	_, _ = b.ops.Send(context.Background(), userID, text, nil)
+	_, err := b.ops.Send(ctx, userID, text, nil)
+	return err
 }

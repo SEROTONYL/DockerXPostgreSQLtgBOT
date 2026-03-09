@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +52,16 @@ func (f *fakeMemberPurger) ScanAndUpdateMemberTags(ctx context.Context, tgOps *t
 	return 0, nil
 }
 
+type fakeAdminCleaner struct {
+	calls int
+	err   error
+}
+
+func (f *fakeAdminCleaner) CleanupStaleAuthState(ctx context.Context, now time.Time) error {
+	f.calls++
+	return f.err
+}
+
 func TestRunPurgeTick_LoopsUntilZero(t *testing.T) {
 	purger := &fakeMemberPurger{returns: []int{500, 120, 0}}
 	s := &Scheduler{memberService: purger}
@@ -74,6 +85,18 @@ func TestRunPurgeTick_StopsAtMaxIterations(t *testing.T) {
 
 	if purger.calls != purgeMaxIterations {
 		t.Fatalf("calls = %d, want %d", purger.calls, purgeMaxIterations)
+	}
+}
+
+func TestRunPurgeTick_RunsAdminCleanupOnce(t *testing.T) {
+	purger := &fakeMemberPurger{returns: []int{0}}
+	cleaner := &fakeAdminCleaner{}
+	s := &Scheduler{memberService: purger, adminService: cleaner}
+
+	s.runPurgeTick(context.Background(), time.Now().UTC())
+
+	if cleaner.calls != 1 {
+		t.Fatalf("admin cleanup calls = %d, want 1", cleaner.calls)
 	}
 }
 
@@ -132,6 +155,23 @@ func TestRunPurgeTick_StoresLastError(t *testing.T) {
 	}
 	if m.TotalDeleted != 0 {
 		t.Fatalf("TotalDeleted = %d, want 0", m.TotalDeleted)
+	}
+	if m.LastError == "" {
+		t.Fatal("LastError expected non-empty")
+	}
+}
+
+func TestRunPurgeTick_StoresAdminCleanupError(t *testing.T) {
+	now := time.Now().UTC()
+	purger := &fakeMemberPurger{returns: []int{0}}
+	cleaner := &fakeAdminCleaner{err: errors.New("admin cleanup failed")}
+	s := &Scheduler{memberService: purger, adminService: cleaner}
+
+	s.runPurgeTick(context.Background(), now)
+	m := s.GetPurgeMetrics()
+
+	if cleaner.calls != 1 {
+		t.Fatalf("admin cleanup calls = %d, want 1", cleaner.calls)
 	}
 	if m.LastError == "" {
 		t.Fatal("LastError expected non-empty")

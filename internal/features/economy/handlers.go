@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	models "github.com/mymmrac/telego"
@@ -42,6 +41,11 @@ type handlerService interface {
 	GetBalance(ctx context.Context, userID int64) (int64, error)
 	Transfer(ctx context.Context, fromUserID, toUserID, amount int64) error
 	GetTransactionHistory(ctx context.Context, userID int64) (string, error)
+	CreateTransferConfirmation(ctx context.Context, entry *transferConfirmation) error
+	GetTransferConfirmation(ctx context.Context, token string) (*transferConfirmation, error)
+	TransitionTransferConfirmation(ctx context.Context, token string, fromStates []string, toState string) (bool, error)
+	MarkTransferConfirmationExpired(ctx context.Context, token string) error
+	ExecuteTransferConfirmation(ctx context.Context, token string, now time.Time) (*transferConfirmation, error)
 }
 
 type memberLookup interface {
@@ -52,6 +56,7 @@ type memberLookup interface {
 
 type transferConfirmation struct {
 	Token            string
+	CreatedAt        time.Time
 	ChatID           int64
 	MessageID        int
 	OwnerUserID      int64
@@ -61,6 +66,7 @@ type transferConfirmation struct {
 	RecipientDisplay string
 	State            string
 	ExpiresAt        time.Time
+	ConsumedAt       *time.Time
 }
 
 type transferTarget struct {
@@ -83,10 +89,7 @@ type Handler struct {
 	service       handlerService
 	memberService memberLookup
 	tgOps         *telegram.Ops
-
-	mu        sync.Mutex
-	confirmBy map[string]*transferConfirmation
-	now       func() time.Time
+	now           func() time.Time
 }
 
 func NewHandler(service *Service, memberService memberLookup, tgOps *telegram.Ops) *Handler {
@@ -94,7 +97,6 @@ func NewHandler(service *Service, memberService memberLookup, tgOps *telegram.Op
 		service:       service,
 		memberService: memberService,
 		tgOps:         tgOps,
-		confirmBy:     make(map[string]*transferConfirmation),
 		now:           func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -193,7 +195,7 @@ func (h *Handler) HandleEconomyCallback(ctx context.Context, q *models.CallbackQ
 	}
 
 	now := h.now()
-	entry, state, allowed, alertText := h.prepareTransferCallback(token, q.From.ID, msg.Chat.ID, msg.MessageID, now)
+	entry, state, allowed, alertText := h.prepareTransferCallback(ctx, token, q.From.ID, msg.Chat.ID, msg.MessageID, now)
 	if alertText != "" {
 		h.answerCallback(ctx, q.ID, alertText)
 	} else {
@@ -208,6 +210,15 @@ func (h *Handler) HandleEconomyCallback(ctx context.Context, q *models.CallbackQ
 
 	switch action {
 	case transferConfirmNo:
+		ok, err := h.service.TransitionTransferConfirmation(ctx, entry.Token, []string{transferStateAwaitFirst, transferStateAwaitSecond}, transferStateCanceled)
+		if err != nil {
+			log.WithError(err).Warn("transfer cancel transition failed")
+			return true
+		}
+		if !ok {
+			return true
+		}
+		entry.State = transferStateCanceled
 		h.finishTransferMessage(ctx, entry, "Передача плёнок отменена.", transferStateCanceled)
 		return true
 	case transferConfirmYes:
@@ -371,6 +382,9 @@ func (h *Handler) resolveBalanceTarget(ctx context.Context, message *models.Mess
 
 		member, err := h.lookupByNickname(ctx, explicitTarget)
 		if err != nil {
+			if errors.Is(err, errBalanceNicknameAmbiguous) {
+				return balanceTarget{}, errBalanceNicknameAmbiguous
+			}
 			return balanceTarget{}, errBalanceNicknameNotResolved
 		}
 		return balanceTarget{UserID: member.UserID, Display: displayMember(member)}, nil
@@ -403,7 +417,13 @@ func (h *Handler) lookupByNickname(ctx context.Context, nickname string) (*membe
 		return nil, common.ErrUserNotFound
 	}
 	member, err := h.memberService.FindByNickname(ctx, nickname)
-	if err != nil || member == nil {
+	if err != nil {
+		if errors.Is(err, members.ErrNicknameAmbiguous) {
+			return nil, errBalanceNicknameAmbiguous
+		}
+		return nil, common.ErrUserNotFound
+	}
+	if member == nil {
 		return nil, common.ErrUserNotFound
 	}
 	return member, nil
@@ -435,6 +455,7 @@ func (h *Handler) startTransferConfirmation(ctx context.Context, chatID, ownerUs
 
 	confirm := &transferConfirmation{
 		Token:            token,
+		CreatedAt:        h.now(),
 		ChatID:           chatID,
 		OwnerUserID:      ownerUserID,
 		FromUserID:       ownerUserID,
@@ -458,41 +479,58 @@ func (h *Handler) startTransferConfirmation(ctx context.Context, chatID, ownerUs
 	}
 
 	confirm.MessageID = messageID
-	h.storeTransferConfirmation(confirm)
+	if err := h.service.CreateTransferConfirmation(ctx, confirm); err != nil {
+		log.WithError(err).WithField("token", token).Warn("transfer confirmation persist failed")
+		if editErr := h.tgOps.Edit(ctx, chatID, messageID, "❌ Не удалось сохранить подтверждение перевода", nil); editErr != nil && !telegram.IsEditNotModified(editErr) {
+			log.WithError(editErr).Warn("transfer confirmation persist failure edit failed")
+		}
+	}
 }
 
 func (h *Handler) handleTransferConfirmYes(ctx context.Context, entry *transferConfirmation) bool {
 	switch entry.State {
 	case transferStateAwaitFirst:
-		h.setTransferState(entry.Token, transferStateAwaitSecond)
+		ok, err := h.service.TransitionTransferConfirmation(ctx, entry.Token, []string{transferStateAwaitFirst}, transferStateAwaitSecond)
+		if err != nil {
+			log.WithError(err).Warn("transfer first confirm transition failed")
+			return true
+		}
+		if ok {
+			entry.State = transferStateAwaitSecond
+		} else {
+			reloaded, reloadErr := h.service.GetTransferConfirmation(ctx, entry.Token)
+			if reloadErr != nil || reloaded == nil || reloaded.State != transferStateAwaitSecond {
+				return true
+			}
+			entry = reloaded
+		}
 		if err := h.tgOps.Edit(ctx, entry.ChatID, entry.MessageID, secondTransferConfirmationText(entry.Amount, entry.RecipientDisplay), transferConfirmationMarkup(entry.Token)); err != nil && !telegram.IsEditNotModified(err) {
 			log.WithError(err).Warn("transfer first confirm edit failed")
 		}
 		return true
 	case transferStateAwaitSecond:
-		if !h.tryStartTransferExecution(entry.Token) {
-			return true
-		}
-		err := h.service.Transfer(ctx, entry.FromUserID, entry.ToUserID, entry.Amount)
+		executed, err := h.service.ExecuteTransferConfirmation(ctx, entry.Token, h.now())
 		if err != nil {
+			if executed != nil {
+				entry = executed
+			}
+			if errors.Is(err, ErrTransferConfirmationStateConflict) || errors.Is(err, ErrTransferConfirmationNotFound) {
+				return true
+			}
 			finalText := userFacingTransferExecutionError(err)
 			h.finishTransferMessage(ctx, entry, finalText, transferStateFailed)
 			return true
 		}
-		h.finishTransferMessage(ctx, entry, successTransferText(entry.Amount, entry.RecipientDisplay), transferStateCompleted)
+		h.finishTransferMessage(ctx, executed, successTransferText(executed.Amount, executed.RecipientDisplay), transferStateCompleted)
 		return true
 	default:
 		return true
 	}
 }
 
-func (h *Handler) prepareTransferCallback(token string, actorUserID, chatID int64, messageID int, now time.Time) (*transferConfirmation, string, bool, string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	h.cleanupExpiredLocked(now)
-	entry := h.confirmBy[token]
-	if entry == nil {
+func (h *Handler) prepareTransferCallback(ctx context.Context, token string, actorUserID, chatID int64, messageID int, now time.Time) (*transferConfirmation, string, bool, string) {
+	entry, err := h.service.GetTransferConfirmation(ctx, token)
+	if err != nil || entry == nil {
 		return nil, transferStateExpired, false, "Подтверждение устарело."
 	}
 	if entry.ChatID != chatID || entry.MessageID != messageID {
@@ -502,6 +540,7 @@ func (h *Handler) prepareTransferCallback(token string, actorUserID, chatID int6
 		return entry, entry.State, false, "Подтверждать или отменять перевод может только отправитель."
 	}
 	if now.After(entry.ExpiresAt) {
+		_ = h.service.MarkTransferConfirmationExpired(ctx, token)
 		entry.State = transferStateExpired
 		return entry, transferStateExpired, false, "Подтверждение устарело."
 	}
@@ -521,52 +560,13 @@ func (h *Handler) prepareTransferCallback(token string, actorUserID, chatID int6
 	}
 }
 
-func (h *Handler) tryStartTransferExecution(token string) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	entry := h.confirmBy[token]
-	if entry == nil || entry.State != transferStateAwaitSecond {
-		return false
-	}
-	entry.State = transferStateExecuting
-	return true
-}
-
-func (h *Handler) setTransferState(token, state string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if entry := h.confirmBy[token]; entry != nil {
-		entry.State = state
-	}
-}
-
 func (h *Handler) finishTransferMessage(ctx context.Context, entry *transferConfirmation, text, finalState string) {
 	if entry == nil {
 		return
 	}
-	h.setTransferState(entry.Token, finalState)
+	entry.State = finalState
 	if err := h.tgOps.Edit(ctx, entry.ChatID, entry.MessageID, text, nil); err != nil && !telegram.IsEditNotModified(err) {
 		log.WithError(err).Warn("transfer final edit failed")
-	}
-}
-
-func (h *Handler) storeTransferConfirmation(entry *transferConfirmation) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.cleanupExpiredLocked(h.now())
-	h.confirmBy[entry.Token] = entry
-}
-
-func (h *Handler) cleanupExpiredLocked(now time.Time) {
-	for token, entry := range h.confirmBy {
-		if entry == nil {
-			delete(h.confirmBy, token)
-			continue
-		}
-		if now.After(entry.ExpiresAt.Add(5 * time.Minute)) {
-			delete(h.confirmBy, token)
-		}
 	}
 }
 
@@ -654,6 +654,8 @@ func userFacingBalanceTargetError(err error) string {
 		return "❌ Некорректный формат. Используйте `!твои пленки <@username|nickname>` или ответьте `!твои пленки`."
 	case errors.Is(err, errBalanceUsernameNotResolved):
 		return "❌ Не удалось найти пользователя по указанному username."
+	case errors.Is(err, errBalanceNicknameAmbiguous):
+		return "❌ Найдено несколько пользователей с таким nickname."
 	case errors.Is(err, errBalanceNicknameNotResolved):
 		return "❌ Не удалось найти пользователя по указанному nickname."
 	case errors.Is(err, common.ErrUserNotFound):
@@ -670,6 +672,7 @@ var (
 	errBalanceTargetMissing       = errors.New("balance target missing")
 	errBalanceCommandMalformed    = errors.New("balance command malformed")
 	errBalanceUsernameNotResolved = errors.New("balance username not resolved")
+	errBalanceNicknameAmbiguous   = errors.New("balance nickname ambiguous")
 	errBalanceNicknameNotResolved = errors.New("balance nickname not resolved")
 )
 

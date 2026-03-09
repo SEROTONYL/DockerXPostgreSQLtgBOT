@@ -61,7 +61,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		return nil, err
 	}
 
-	streakModule, err := streak.NewModule(streak.Deps{Cfg: cfg, Ops: tg.Ops, Service: infra.StreakService})
+	streakModule, err := streak.NewModule(streak.Deps{Cfg: cfg, Ops: tg.Ops, Service: infra.StreakService, Members: infra.MemberService})
 	if err != nil {
 		return nil, err
 	}

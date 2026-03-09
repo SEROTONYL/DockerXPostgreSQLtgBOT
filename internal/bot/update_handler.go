@@ -65,11 +65,21 @@ func (b *Bot) handleCallbackUpdate(ctx context.Context, uc UpdateContext) bool {
 		return false
 	}
 	if uc.Callback.Message == nil {
+		if b.ops != nil {
+			if err := b.ops.AnswerCallback(ctx, uc.Callback.ID); err != nil {
+				log.WithError(err).WithField("callback_id", uc.Callback.ID).Debug("callback ack failed for missing message")
+			}
+		}
 		return true
 	}
 
 	message := uc.Callback.Message.Message()
 	if message == nil {
+		if b.ops != nil {
+			if err := b.ops.AnswerCallback(ctx, uc.Callback.ID); err != nil {
+				log.WithError(err).WithField("callback_id", uc.Callback.ID).Debug("callback ack failed for inaccessible message")
+			}
+		}
 		return true
 	}
 	middleware.LogMessage(message)
@@ -163,6 +173,12 @@ func (b *Bot) handleMessageUpdate(ctx context.Context, uc UpdateContext) {
 	}
 
 	if b.isMessageIngestChat(chatID) && b.cfg.FeatureStreaksEnabled {
-		b.streakService.CountMessage(ctx, userID, messageText)
+		if err := b.streakService.CountMessage(ctx, userID, int64(message.MessageID), messageText); err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"user_id":    userID,
+				"message_id": message.MessageID,
+				"chat_id":    chatID,
+			}).Error("streak count failed")
+		}
 	}
 }

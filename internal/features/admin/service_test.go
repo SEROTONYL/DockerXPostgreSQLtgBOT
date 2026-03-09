@@ -11,7 +11,18 @@ import (
 	"serotonyl.ru/telegram-bot/internal/features/members"
 )
 
-type fakeAdminRepo struct{}
+type fakeAdminRepo struct {
+	mu     sync.Mutex
+	states map[int64]*AdminState
+	panels map[int64]AdminPanelMessage
+}
+
+func newFakeAdminRepo() *fakeAdminRepo {
+	return &fakeAdminRepo{
+		states: make(map[int64]*AdminState),
+		panels: make(map[int64]AdminPanelMessage),
+	}
+}
 
 func (f *fakeAdminRepo) CreateSession(ctx context.Context, session *AdminSession) error { return nil }
 func (f *fakeAdminRepo) GetActiveSession(ctx context.Context, userID int64) (*AdminSession, error) {
@@ -23,6 +34,9 @@ func (f *fakeAdminRepo) LogAttempt(ctx context.Context, userID int64, success bo
 func (f *fakeAdminRepo) GetRecentAttempts(ctx context.Context, userID int64, period time.Duration) (int, error) {
 	return 0, nil
 }
+func (f *fakeAdminRepo) CleanupStaleAuthState(ctx context.Context, now time.Time) (CleanupResult, error) {
+	return CleanupResult{}, nil
+}
 func (f *fakeAdminRepo) ListBalanceDeltas(ctx context.Context, chatID int64) ([]*BalanceDelta, error) {
 	return nil, nil
 }
@@ -30,6 +44,41 @@ func (f *fakeAdminRepo) CreateBalanceDelta(ctx context.Context, chatID int64, na
 	return nil
 }
 func (f *fakeAdminRepo) DeleteBalanceDelta(ctx context.Context, chatID int64, deltaID int64) error {
+	return nil
+}
+func (f *fakeAdminRepo) SaveFlowState(ctx context.Context, userID int64, state *AdminState) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.states[userID] = state
+	return nil
+}
+func (f *fakeAdminRepo) GetFlowState(ctx context.Context, userID int64) (*AdminState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.states[userID], nil
+}
+func (f *fakeAdminRepo) ClearFlowState(ctx context.Context, userID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.states, userID)
+	delete(f.panels, userID)
+	return nil
+}
+func (f *fakeAdminRepo) SetPanelMessage(ctx context.Context, userID int64, panel AdminPanelMessage) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.panels[userID] = panel
+	return nil
+}
+func (f *fakeAdminRepo) GetPanelMessage(ctx context.Context, userID int64) (AdminPanelMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.panels[userID], nil
+}
+func (f *fakeAdminRepo) ClearPanelMessage(ctx context.Context, userID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.panels, userID)
 	return nil
 }
 
@@ -59,7 +108,7 @@ func (f *fakeMemberRepo) UpdateAdminFlag(ctx context.Context, userID int64, isAd
 }
 
 func TestCanEnterAdmin_DenyWhenNotAdminAndNotInConfig(t *testing.T) {
-	svc := NewService(&fakeAdminRepo{}, &fakeMemberRepo{member: &members.Member{IsAdmin: false}}, &config.Config{AdminIDs: []int64{111}})
+	svc := NewService(newFakeAdminRepo(), &fakeMemberRepo{member: &members.Member{IsAdmin: false}}, &config.Config{AdminIDs: []int64{111}})
 
 	allowed := svc.CanEnterAdmin(context.Background(), 999)
 	if allowed {
@@ -69,7 +118,7 @@ func TestCanEnterAdmin_DenyWhenNotAdminAndNotInConfig(t *testing.T) {
 
 func TestCanEnterAdmin_AllowFromAdminIDsAndBootstrapFlag(t *testing.T) {
 	mr := &fakeMemberRepo{}
-	svc := NewService(&fakeAdminRepo{}, mr, &config.Config{AdminIDs: []int64{42}})
+	svc := NewService(newFakeAdminRepo(), mr, &config.Config{AdminIDs: []int64{42}})
 
 	allowed := svc.CanEnterAdmin(context.Background(), 42)
 	if !allowed {
@@ -84,7 +133,7 @@ func TestCanEnterAdmin_AllowFromAdminIDsAndBootstrapFlag(t *testing.T) {
 }
 
 func TestCanEnterAdmin_AllowWhenMemberIsAdmin(t *testing.T) {
-	svc := NewService(&fakeAdminRepo{}, &fakeMemberRepo{member: &members.Member{IsAdmin: true}}, &config.Config{})
+	svc := NewService(newFakeAdminRepo(), &fakeMemberRepo{member: &members.Member{IsAdmin: true}}, &config.Config{})
 
 	allowed := svc.CanEnterAdmin(context.Background(), 555)
 	if !allowed {
@@ -92,7 +141,10 @@ func TestCanEnterAdmin_AllowWhenMemberIsAdmin(t *testing.T) {
 	}
 }
 
-type fakeAdminRepoAttempts struct{ attempts int }
+type fakeAdminRepoAttempts struct {
+	*fakeAdminRepo
+	attempts int
+}
 
 func (f *fakeAdminRepoAttempts) CreateSession(ctx context.Context, session *AdminSession) error {
 	return nil
@@ -110,6 +162,9 @@ func (f *fakeAdminRepoAttempts) LogAttempt(ctx context.Context, userID int64, su
 func (f *fakeAdminRepoAttempts) GetRecentAttempts(ctx context.Context, userID int64, period time.Duration) (int, error) {
 	return f.attempts, nil
 }
+func (f *fakeAdminRepoAttempts) CleanupStaleAuthState(ctx context.Context, now time.Time) (CleanupResult, error) {
+	return CleanupResult{}, nil
+}
 func (f *fakeAdminRepoAttempts) ListBalanceDeltas(ctx context.Context, chatID int64) ([]*BalanceDelta, error) {
 	return nil, nil
 }
@@ -121,7 +176,7 @@ func (f *fakeAdminRepoAttempts) DeleteBalanceDelta(ctx context.Context, chatID i
 }
 
 func TestVerifyPassword_NoMojibakeInErrors(t *testing.T) {
-	svc := NewService(&fakeAdminRepoAttempts{attempts: 3}, &fakeMemberRepo{}, &config.Config{})
+	svc := NewService(&fakeAdminRepoAttempts{fakeAdminRepo: newFakeAdminRepo(), attempts: 3}, &fakeMemberRepo{}, &config.Config{})
 	err := svc.VerifyPassword(context.Background(), 1, "any")
 	if err == nil {
 		t.Fatalf("expected error")
@@ -137,7 +192,7 @@ func TestVerifyPassword_NoMojibakeInErrors(t *testing.T) {
 }
 
 func TestPanelMessageID_ConcurrentSetGetRaceSafe(t *testing.T) {
-	svc := NewService(&fakeAdminRepo{}, &fakeMemberRepo{}, &config.Config{})
+	svc := NewService(newFakeAdminRepo(), &fakeMemberRepo{}, &config.Config{})
 
 	var wg sync.WaitGroup
 	for i := 0; i < 32; i++ {
@@ -152,4 +207,21 @@ func TestPanelMessageID_ConcurrentSetGetRaceSafe(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func TestStateAndPanelPersistAcrossServiceInstances(t *testing.T) {
+	repo := newFakeAdminRepo()
+	svcA := NewService(repo, &fakeMemberRepo{}, &config.Config{})
+	svcA.SetState(77, StateAwaitingPassword, nil)
+	svcA.SetPanelMessage(77, 77, 42)
+
+	svcB := NewService(repo, &fakeMemberRepo{}, &config.Config{})
+	state := svcB.GetState(77)
+	if state == nil || state.State != StateAwaitingPassword {
+		t.Fatalf("expected persisted state, got %+v", state)
+	}
+	panel := svcB.GetPanelMessage(77)
+	if panel.ChatID != 77 || panel.MessageID != 42 {
+		t.Fatalf("expected persisted panel message, got %+v", panel)
+	}
 }

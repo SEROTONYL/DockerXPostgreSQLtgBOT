@@ -86,32 +86,40 @@ type fakeAdminRepoHandlers struct {
 	deltaStore     map[int64][]*BalanceDelta
 	nextDeltaID    int64
 	deleteDeltaErr error
+	states         map[int64]*AdminState
+	panels         map[int64]AdminPanelMessage
+	roundTripState bool
 }
 
-func (r fakeAdminRepoHandlers) CreateSession(ctx context.Context, session *AdminSession) error {
+func (r *fakeAdminRepoHandlers) CreateSession(ctx context.Context, session *AdminSession) error {
 	return nil
 }
-func (r fakeAdminRepoHandlers) GetActiveSession(ctx context.Context, userID int64) (*AdminSession, error) {
+func (r *fakeAdminRepoHandlers) GetActiveSession(ctx context.Context, userID int64) (*AdminSession, error) {
 	if !r.hasSession {
 		return nil, nil
 	}
 	return &AdminSession{UserID: userID}, nil
 }
-func (r fakeAdminRepoHandlers) DeactivateSession(ctx context.Context, userID int64) error { return nil }
-func (r fakeAdminRepoHandlers) UpdateActivity(ctx context.Context, userID int64) error    { return nil }
-func (r fakeAdminRepoHandlers) LogAttempt(ctx context.Context, userID int64, success bool) error {
+func (r *fakeAdminRepoHandlers) DeactivateSession(ctx context.Context, userID int64) error {
 	return nil
 }
-func (r fakeAdminRepoHandlers) GetRecentAttempts(ctx context.Context, userID int64, period time.Duration) (int, error) {
+func (r *fakeAdminRepoHandlers) UpdateActivity(ctx context.Context, userID int64) error { return nil }
+func (r *fakeAdminRepoHandlers) LogAttempt(ctx context.Context, userID int64, success bool) error {
+	return nil
+}
+func (r *fakeAdminRepoHandlers) GetRecentAttempts(ctx context.Context, userID int64, period time.Duration) (int, error) {
 	return 0, nil
 }
-func (r fakeAdminRepoHandlers) ListBalanceDeltas(ctx context.Context, chatID int64) ([]*BalanceDelta, error) {
+func (r *fakeAdminRepoHandlers) CleanupStaleAuthState(ctx context.Context, now time.Time) (CleanupResult, error) {
+	return CleanupResult{}, nil
+}
+func (r *fakeAdminRepoHandlers) ListBalanceDeltas(ctx context.Context, chatID int64) ([]*BalanceDelta, error) {
 	if r.deltaStore == nil {
 		return nil, nil
 	}
 	return r.deltaStore[chatID], nil
 }
-func (r fakeAdminRepoHandlers) CreateBalanceDelta(ctx context.Context, chatID int64, name string, amount int64, createdBy int64) error {
+func (r *fakeAdminRepoHandlers) CreateBalanceDelta(ctx context.Context, chatID int64, name string, amount int64, createdBy int64) error {
 	if r.deltaStore == nil {
 		r.deltaStore = map[int64][]*BalanceDelta{}
 	}
@@ -119,7 +127,7 @@ func (r fakeAdminRepoHandlers) CreateBalanceDelta(ctx context.Context, chatID in
 	r.deltaStore[chatID] = append(r.deltaStore[chatID], &BalanceDelta{ID: r.nextDeltaID, Name: name, Amount: amount, ChatID: chatID, CreatedBy: createdBy, CreatedAt: time.Now()})
 	return nil
 }
-func (r fakeAdminRepoHandlers) DeleteBalanceDelta(ctx context.Context, chatID int64, deltaID int64) error {
+func (r *fakeAdminRepoHandlers) DeleteBalanceDelta(ctx context.Context, chatID int64, deltaID int64) error {
 	if r.deleteDeltaErr != nil {
 		return r.deleteDeltaErr
 	}
@@ -131,6 +139,60 @@ func (r fakeAdminRepoHandlers) DeleteBalanceDelta(ctx context.Context, chatID in
 		}
 	}
 	return errors.New("not found")
+}
+func (r *fakeAdminRepoHandlers) SaveFlowState(ctx context.Context, userID int64, state *AdminState) error {
+	if r.states == nil {
+		r.states = map[int64]*AdminState{}
+	}
+	if state != nil && r.roundTripState {
+		payload, err := marshalAdminStateData(state.State, state.Data)
+		if err != nil {
+			return err
+		}
+		state = &AdminState{State: state.State, Data: payload, ExpiresAt: state.ExpiresAt}
+	}
+	r.states[userID] = state
+	return nil
+}
+func (r *fakeAdminRepoHandlers) GetFlowState(ctx context.Context, userID int64) (*AdminState, error) {
+	if r.states == nil {
+		return nil, nil
+	}
+	state := r.states[userID]
+	if state == nil {
+		return nil, nil
+	}
+	if !r.roundTripState {
+		return state, nil
+	}
+	payload, _ := state.Data.([]byte)
+	data, err := unmarshalAdminStateData(state.State, payload)
+	if err != nil {
+		return nil, err
+	}
+	return &AdminState{State: state.State, Data: data, ExpiresAt: state.ExpiresAt}, nil
+}
+func (r *fakeAdminRepoHandlers) ClearFlowState(ctx context.Context, userID int64) error {
+	delete(r.states, userID)
+	delete(r.panels, userID)
+	return nil
+}
+func (r *fakeAdminRepoHandlers) SetPanelMessage(ctx context.Context, userID int64, panel AdminPanelMessage) error {
+	if r.panels == nil {
+		r.panels = map[int64]AdminPanelMessage{}
+	}
+	r.panels[userID] = panel
+	return nil
+}
+func (r *fakeAdminRepoHandlers) GetPanelMessage(ctx context.Context, userID int64) (AdminPanelMessage, error) {
+	if r.panels == nil {
+		return AdminPanelMessage{}, nil
+	}
+	return r.panels[userID], nil
+}
+func (r *fakeAdminRepoHandlers) ClearPanelMessage(ctx context.Context, userID int64) error {
+	delete(r.panels, userID)
+	return nil
 }
 
 type econCall struct {
@@ -203,6 +265,9 @@ func (r *fakeMemberSyncRepo) GetByUserID(ctx context.Context, userID int64) (*me
 	return nil, nil
 }
 func (r *fakeMemberSyncRepo) GetByUsername(ctx context.Context, username string) (*members.Member, error) {
+	return nil, nil
+}
+func (r *fakeMemberSyncRepo) FindByNickname(ctx context.Context, nickname string) (*members.Member, error) {
 	return nil, nil
 }
 func (r *fakeMemberSyncRepo) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
@@ -305,19 +370,28 @@ func (r *fakeMemberRepoHandlers) UpdateAdminFlag(ctx context.Context, userID int
 
 func newAdminHandlerForFlow(t *testing.T, memberRepo *fakeMemberRepoHandlers, tg *fakeTG) *Handler {
 	t.Helper()
-	svc := NewService(fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
+	svc := NewService(&fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
+	return NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg), 0)
+}
+
+func newAdminHandlerForFlowWithRepo(t *testing.T, stateRepo *fakeAdminRepoHandlers, memberRepo *fakeMemberRepoHandlers, tg *fakeTG) *Handler {
+	t.Helper()
+	if stateRepo.deltaStore == nil {
+		stateRepo.deltaStore = map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}
+	}
+	svc := NewService(stateRepo, memberRepo, &config.Config{AdminIDs: []int64{77}})
 	return NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg), 0)
 }
 
 func newAdminHandlerWithEconomy(t *testing.T, memberRepo *fakeMemberRepoHandlers, tg *fakeTG, econ *fakeEconomy) *Handler {
 	t.Helper()
-	svc := NewService(fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
+	svc := NewService(&fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
 	return NewHandler(svc, nil, econ, telegram.NewOps(tg), 0)
 }
 
 func newAdminHandlerWithRefresh(t *testing.T, memberRepo *fakeMemberRepoHandlers, syncRepo *fakeMemberSyncRepo, tg *fakeTG) *Handler {
 	t.Helper()
-	svc := NewService(fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
+	svc := NewService(&fakeAdminRepoHandlers{hasSession: true, deltaStore: map[int64][]*BalanceDelta{77: {&BalanceDelta{Name: "Test", Amount: 10, ChatID: 77}}}}, memberRepo, &config.Config{AdminIDs: []int64{77}})
 	h := NewHandler(svc, members.NewService(syncRepo), &fakeEconomy{}, telegram.NewOps(tg), 123)
 	h.refreshTimeout = 20 * time.Millisecond
 	return h
@@ -493,7 +567,7 @@ func TestOpenAdminPanel_ShowsKeyboard(t *testing.T) {
 func TestHandleAdminMessage_DeniedLogin_SendsSingleMessage(t *testing.T) {
 	tg := &fakeTG{}
 	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{}}
-	svc := NewService(fakeAdminRepoHandlers{hasSession: false}, repo, &config.Config{AdminIDs: []int64{}})
+	svc := NewService(&fakeAdminRepoHandlers{hasSession: false}, repo, &config.Config{AdminIDs: []int64{}})
 	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg), 0)
 
 	handled := h.HandleAdminMessage(context.Background(), 77, 77, 0, "/login")
@@ -1044,6 +1118,21 @@ func TestFormatUserPickerButton_KeepsAssignPickerFormat(t *testing.T) {
 	}
 }
 
+func TestFormatBalancePickerLabel(t *testing.T) {
+	role := "Администратор"
+	tag := "TEAM-A"
+
+	if got := formatBalancePickerLabel(&members.Member{UserID: 1001, Role: &role, Tag: &tag, Username: "u1"}); got != role {
+		t.Fatalf("expected role-only label, got %q", got)
+	}
+	if got := formatBalancePickerLabel(&members.Member{UserID: 1002, Tag: &tag, Username: "u2", FirstName: "Ivan"}); got != tag {
+		t.Fatalf("expected tag fallback label, got %q", got)
+	}
+	if got := formatBalancePickerLabel(&members.Member{UserID: 1003, Username: "u3", FirstName: "Ivan"}); got != "@u3" {
+		t.Fatalf("expected username fallback label, got %q", got)
+	}
+}
+
 func TestChangeRole_SubmitRole_ShowsSingleSuccessScreenWithActions(t *testing.T) {
 	tg := &fakeTG{}
 	role := "old_role"
@@ -1271,7 +1360,7 @@ func TestBackButton_Works_FromRoleInput(t *testing.T) {
 func TestUnauthorizedUser_CannotOpenAdminPanel(t *testing.T) {
 	tg := &fakeTG{}
 	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: false}}}
-	svc := NewService(fakeAdminRepoHandlers{hasSession: true}, repo, &config.Config{})
+	svc := NewService(&fakeAdminRepoHandlers{hasSession: true}, repo, &config.Config{})
 	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg), 0)
 
 	handled := h.HandleAdminMessage(context.Background(), 77, 77, 0, "/login")
@@ -1420,6 +1509,47 @@ func TestBalanceAdjust_FilterOnlyUsersWithRole(t *testing.T) {
 	}
 	if strings.Contains(e.text, "norole") {
 		t.Fatalf("user without role must not be present")
+	}
+}
+
+func TestBalanceAdjust_PickerUsesMinimalHeaderAndSingleLabelButtons(t *testing.T) {
+	tg := &fakeTG{}
+	role := "Модератор"
+	tag := "TEAM-A"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with: []*members.Member{
+			{UserID: 1001, Role: &role, Tag: &tag, Username: "with_role"},
+			{UserID: 1002, Tag: &tag, Username: "tag_only", FirstName: "Ivan"},
+		},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+
+	e := tg.last("edit")
+	if e == nil {
+		t.Fatalf("expected picker")
+	}
+	if e.text != "Выберите пользователей\n\nВыбрано: 0" {
+		t.Fatalf("unexpected picker header: %q", e.text)
+	}
+	if strings.Contains(e.text, "(только с ролью)") || strings.Contains(e.text, "Формат:") {
+		t.Fatalf("old explanatory text must be removed: %q", e.text)
+	}
+
+	first := buttonByCallbackData(e.markup, fmt.Sprintf("%s:%d", cbBalPickToggle, int64(1001)))
+	if first == nil || first.Text != "☐ Модератор" {
+		t.Fatalf("expected role-only button label, got %#v", first)
+	}
+
+	second := buttonByCallbackData(e.markup, fmt.Sprintf("%s:%d", cbBalPickToggle, int64(1002)))
+	if second == nil || second.Text != "☐ TEAM-A" {
+		t.Fatalf("expected tag-only button label, got %#v", second)
+	}
+	if second != nil && (strings.Contains(second.Text, "@") || strings.Contains(second.Text, "•") || strings.Contains(second.Text, "id:")) {
+		t.Fatalf("expected single primary label without mixed formatting, got %q", second.Text)
 	}
 }
 
@@ -1594,6 +1724,8 @@ func TestBalanceUndo_ClearsOperation_SecondUndoShowsEmpty(t *testing.T) {
 type fakeAdminRepoAuth struct {
 	hasSession bool
 	attempts   int
+	state      *AdminState
+	panel      AdminPanelMessage
 }
 
 func (r *fakeAdminRepoAuth) CreateSession(ctx context.Context, session *AdminSession) error {
@@ -1617,6 +1749,9 @@ func (r *fakeAdminRepoAuth) LogAttempt(ctx context.Context, userID int64, succes
 func (r *fakeAdminRepoAuth) GetRecentAttempts(ctx context.Context, userID int64, period time.Duration) (int, error) {
 	return r.attempts, nil
 }
+func (r *fakeAdminRepoAuth) CleanupStaleAuthState(ctx context.Context, now time.Time) (CleanupResult, error) {
+	return CleanupResult{}, nil
+}
 func (r *fakeAdminRepoAuth) ListBalanceDeltas(ctx context.Context, chatID int64) ([]*BalanceDelta, error) {
 	return nil, nil
 }
@@ -1624,6 +1759,29 @@ func (r *fakeAdminRepoAuth) CreateBalanceDelta(ctx context.Context, chatID int64
 	return nil
 }
 func (r *fakeAdminRepoAuth) DeleteBalanceDelta(ctx context.Context, chatID int64, deltaID int64) error {
+	return nil
+}
+func (r *fakeAdminRepoAuth) SaveFlowState(ctx context.Context, userID int64, state *AdminState) error {
+	r.state = state
+	return nil
+}
+func (r *fakeAdminRepoAuth) GetFlowState(ctx context.Context, userID int64) (*AdminState, error) {
+	return r.state, nil
+}
+func (r *fakeAdminRepoAuth) ClearFlowState(ctx context.Context, userID int64) error {
+	r.state = nil
+	r.panel = AdminPanelMessage{}
+	return nil
+}
+func (r *fakeAdminRepoAuth) SetPanelMessage(ctx context.Context, userID int64, panel AdminPanelMessage) error {
+	r.panel = panel
+	return nil
+}
+func (r *fakeAdminRepoAuth) GetPanelMessage(ctx context.Context, userID int64) (AdminPanelMessage, error) {
+	return r.panel, nil
+}
+func (r *fakeAdminRepoAuth) ClearPanelMessage(ctx context.Context, userID int64) error {
+	r.panel = AdminPanelMessage{}
 	return nil
 }
 
@@ -1686,4 +1844,89 @@ func (f *fakeMemberSyncRepo) GetUsersWithRole(ctx context.Context) ([]*members.M
 
 func (f *fakeMemberSyncRepo) GetUsersWithoutRole(ctx context.Context) ([]*members.Member, error) {
 	return nil, nil
+}
+
+func TestBalanceAdjust_TogglePersistsAcrossReloadAndRerender(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{
+			77:         {UserID: 77, IsAdmin: true},
+			6899309136: {UserID: 6899309136, Username: "picked", Role: &role},
+		},
+		with: []*members.Member{{UserID: 6899309136, Username: "picked", Role: &role}},
+	}
+	stateRepo := &fakeAdminRepoHandlers{hasSession: true, roundTripState: true}
+	h := newAdminHandlerForFlowWithRepo(t, stateRepo, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+
+	initial := tg.last("edit")
+	if initial == nil {
+		t.Fatalf("expected initial picker render")
+	}
+	initialEdit := *initial
+	initialButton := buttonByCallbackData(initialEdit.markup, cbBalPickToggle+":6899309136")
+	if initialButton == nil {
+		t.Fatalf("expected picker toggle button")
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickToggle+":6899309136"))
+
+	stateOn := h.service.GetState(77)
+	if stateOn == nil || stateOn.State != StateBalanceAdjustPicker {
+		t.Fatalf("expected picker state after toggle on, got %+v", stateOn)
+	}
+	dataOn, _ := stateOn.Data.(*BalanceAdjustData)
+	if dataOn == nil || len(dataOn.SelectedUserIDs) != 1 || !dataOn.SelectedUserIDs[6899309136] {
+		t.Fatalf("expected persisted selected user after toggle on, got %+v", dataOn)
+	}
+
+	afterOn := tg.last("edit")
+	if afterOn == nil {
+		t.Fatalf("expected rerender after toggle on")
+	}
+	if !strings.HasSuffix(afterOn.text, "1") {
+		t.Fatalf("expected selected count 1 after toggle on, text=%q", afterOn.text)
+	}
+	if afterOn.text == initialEdit.text {
+		t.Fatalf("expected picker text to change after toggle on")
+	}
+	if !hasButton(afterOn.markup, "", cbBalPickDone) {
+		t.Fatalf("expected done button after toggle on")
+	}
+	afterOnButton := buttonByCallbackData(afterOn.markup, cbBalPickToggle+":6899309136")
+	if afterOnButton == nil || afterOnButton.Text == initialButton.Text {
+		t.Fatalf("expected user button text to change after toggle on")
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickToggle+":6899309136"))
+
+	stateOff := h.service.GetState(77)
+	if stateOff == nil || stateOff.State != StateBalanceAdjustPicker {
+		t.Fatalf("expected picker state after toggle off, got %+v", stateOff)
+	}
+	dataOff, _ := stateOff.Data.(*BalanceAdjustData)
+	if dataOff == nil || len(dataOff.SelectedUserIDs) != 0 {
+		t.Fatalf("expected persisted deselection after toggle off, got %+v", dataOff)
+	}
+
+	afterOff := tg.last("edit")
+	if afterOff == nil {
+		t.Fatalf("expected rerender after toggle off")
+	}
+	if !strings.HasSuffix(afterOff.text, "0") {
+		t.Fatalf("expected selected count 0 after toggle off, text=%q", afterOff.text)
+	}
+	if afterOff.text == afterOn.text {
+		t.Fatalf("expected picker text to change after toggle off")
+	}
+	if hasButton(afterOff.markup, "", cbBalPickDone) {
+		t.Fatalf("did not expect done button after toggle off")
+	}
+	afterOffButton := buttonByCallbackData(afterOff.markup, cbBalPickToggle+":6899309136")
+	if afterOffButton == nil || afterOffButton.Text != initialButton.Text {
+		t.Fatalf("expected user button text to revert after toggle off")
+	}
 }

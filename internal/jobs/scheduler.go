@@ -16,12 +16,12 @@ import (
 )
 
 const (
-	cronWarnLoadLocation = "Failed to load Europe/Moscow, using UTC+3"
+	cronWarnLoadLocation = "Failed to load scheduler timezone, using UTC"
 	cronInfoDailyReset   = "[CRON] Daily streak reset"
 	cronErrorDailyReset  = "[CRON] Daily reset failed"
 	cronDebugReminders   = "[CRON] Checking reminders"
 	cronErrorReminders   = "[CRON] Reminder run failed"
-	cronInfoStarted      = "Scheduler started (Europe/Moscow)"
+	cronInfoStarted      = "Scheduler started"
 	cronInfoStopped      = "Scheduler stopped"
 
 	purgeTickInterval    = time.Hour
@@ -33,6 +33,10 @@ const (
 type memberPurger interface {
 	PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error)
 	ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, memberSourceChatID int64, now time.Time) (int, error)
+}
+
+type adminCleaner interface {
+	CleanupStaleAuthState(ctx context.Context, now time.Time) error
 }
 
 type PurgeMetrics struct {
@@ -82,7 +86,8 @@ type Scheduler struct {
 	cron               *cron.Cron
 	streakService      *streak.Service
 	memberService      memberPurger
-	sendFunc           func(userID int64, text string)
+	adminService       adminCleaner
+	sendFunc           func(ctx context.Context, userID int64, text string) error
 	tgOps              *telegram.Ops
 	memberSourceChatID int64
 
@@ -91,12 +96,16 @@ type Scheduler struct {
 	purgeState  purgeMetricsStore
 }
 
-// NewScheduler creates a scheduler configured for Europe/Moscow.
-func NewScheduler(cfg *config.Config, streakService *streak.Service, memberService *members.Service, sendFunc func(userID int64, text string), tgOps *telegram.Ops) *Scheduler {
-	loc, err := time.LoadLocation("Europe/Moscow")
+// NewScheduler creates a scheduler configured for application timezone.
+func NewScheduler(cfg *config.Config, streakService *streak.Service, memberService *members.Service, adminService adminCleaner, sendFunc func(ctx context.Context, userID int64, text string) error, tgOps *telegram.Ops) *Scheduler {
+	locationName := "UTC"
+	if cfg != nil && cfg.AppTimezone != "" {
+		locationName = cfg.AppTimezone
+	}
+	loc, err := time.LoadLocation(locationName)
 	if err != nil {
 		log.WithError(err).Warn(cronWarnLoadLocation)
-		loc = time.FixedZone("MSK", 3*60*60)
+		loc = time.UTC
 	}
 
 	c := cron.New(cron.WithLocation(loc))
@@ -110,6 +119,7 @@ func NewScheduler(cfg *config.Config, streakService *streak.Service, memberServi
 		cron:               c,
 		streakService:      streakService,
 		memberService:      memberService,
+		adminService:       adminService,
 		sendFunc:           sendFunc,
 		tgOps:              tgOps,
 		memberSourceChatID: memberSourceChatID,
@@ -142,7 +152,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 	}
 
 	s.cron.Start()
-	log.Info(cronInfoStarted)
+	log.WithField("timezone", s.cron.Location().String()).Info(cronInfoStarted)
 
 	purgeCtx, cancel := context.WithCancel(ctx)
 	s.purgeCancel = cancel
@@ -187,6 +197,12 @@ func (s *Scheduler) runPurgeTick(ctx context.Context, now time.Time) {
 		totalDeleted += deleted
 		if deleted == 0 {
 			break
+		}
+	}
+	if runErr == nil && s.adminService != nil {
+		if err := s.adminService.CleanupStaleAuthState(ctx, now); err != nil {
+			runErr = err
+			log.WithError(err).Error("cleanup admin auth state failed")
 		}
 	}
 
