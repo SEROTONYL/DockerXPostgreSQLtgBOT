@@ -10,6 +10,7 @@ import (
 
 	models "github.com/mymmrac/telego"
 
+	"serotonyl.ru/telegram-bot/internal/audit"
 	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/telegram"
@@ -22,11 +23,14 @@ type tgCall struct {
 	text       string
 	markup     *models.InlineKeyboardMarkup
 	callbackID string
+	parseMode  *string
+	noPreview  bool
 }
 
 type fakeTG struct {
 	calls            []tgCall
 	sendErr          error
+	sendErrByChat    map[int64]error
 	editErr          error
 	deleteErr        error
 	pinErr           error
@@ -36,11 +40,46 @@ type fakeTG struct {
 
 func (f *fakeTG) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
 	f.calls = append(f.calls, tgCall{kind: "send", chatID: chatID, text: text, markup: markup})
+	if f.sendErrByChat != nil {
+		if err := f.sendErrByChat[chatID]; err != nil {
+			return 100 + len(f.calls), err
+		}
+	}
 	return 100 + len(f.calls), f.sendErr
 }
 
 func (f *fakeTG) EditMessage(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
 	f.calls = append(f.calls, tgCall{kind: "edit", chatID: chatID, messageID: messageID, text: text, markup: markup})
+	return f.editErr
+}
+
+func (f *fakeTG) SendMessageWithOptions(opts telegram.SendOptions) (int, error) {
+	f.calls = append(f.calls, tgCall{
+		kind:      "send",
+		chatID:    opts.ChatID,
+		text:      opts.Text,
+		markup:    opts.ReplyMarkup,
+		parseMode: opts.ParseMode,
+		noPreview: opts.DisableWebPagePreview,
+	})
+	if f.sendErrByChat != nil {
+		if err := f.sendErrByChat[opts.ChatID]; err != nil {
+			return 100 + len(f.calls), err
+		}
+	}
+	return 100 + len(f.calls), f.sendErr
+}
+
+func (f *fakeTG) EditMessageWithOptions(opts telegram.EditOptions) error {
+	f.calls = append(f.calls, tgCall{
+		kind:      "edit",
+		chatID:    opts.ChatID,
+		messageID: opts.MessageID,
+		text:      opts.Text,
+		markup:    opts.ReplyMarkup,
+		parseMode: opts.ParseMode,
+		noPreview: opts.DisableWebPagePreview,
+	})
 	return f.editErr
 }
 
@@ -213,6 +252,7 @@ type fakeEconomy struct {
 	failOnAddCall    int
 	failOnDeductCall int
 	calls            []econCall
+	balances         map[int64]int64
 }
 
 func (f *fakeEconomy) AddBalance(ctx context.Context, userID int64, amount int64, txType, description string) error {
@@ -231,6 +271,10 @@ func (f *fakeEconomy) DeductBalance(ctx context.Context, userID int64, amount in
 		return errors.New("forced deduct error")
 	}
 	return f.deductErr
+}
+
+func (f *fakeEconomy) GetBalance(ctx context.Context, userID int64) (int64, error) {
+	return f.balances[userID], nil
 }
 
 type fakeMemberRepoHandlers struct {
@@ -575,10 +619,13 @@ func TestOpenAdminPanel_ShowsKeyboard(t *testing.T) {
 	if !strings.Contains(s.text, "Админ-панель") {
 		t.Fatalf("unexpected panel text: %q", s.text)
 	}
-	if !hasButton(s.markup, "👤 Назначить роль", cbAdminAssignRole) || !hasButton(s.markup, "🔄 Сменить роль", cbAdminChangeRole) || !hasButton(s.markup, "💸 Баланс", cbAdminBalanceAdjust) || !hasButton(s.markup, "💳 Управление кредитами", cbAdminCreditMenu) {
+	if !hasButton(s.markup, "👤 Назначить роль", cbAdminAssignRole) || !hasButton(s.markup, "🔄 Сменить роль", cbAdminChangeRole) || !hasButton(s.markup, "🎞️ Валюта", cbAdminBalanceAdjust) || !hasButton(s.markup, "👥 Участники", cbAdminParticipants) || !hasButton(s.markup, "❓ Загадки", cbAdminRiddlesMenu) || !hasButton(s.markup, "➕ Дельты", cbAdminDeltasMenu) {
 		t.Fatalf("expected reduced admin panel buttons")
 	}
-	if hasButton(s.markup, "💳 Выдать кредит", cbAdminCreditIssue) || hasButton(s.markup, "🚫 Отменить кредит", cbAdminCreditCancel) || hasButton(s.markup, "✂️ Создать сокращ.", "admin:stub") || hasButton(s.markup, "🗑 Удалить сокращ.", "admin:stub") {
+	if hasButton(s.markup, "💸 Баланс", cbAdminBalanceAdjust) {
+		t.Fatalf("old balance label must be removed")
+	}
+	if hasButton(s.markup, "💳 Управление кредитами", "admin:credit_menu") || hasButton(s.markup, "💳 Выдать кредит", "admin:credit_issue") || hasButton(s.markup, "🚫 Отменить кредит", "admin:credit_cancel") || hasButton(s.markup, "✂️ Создать сокращ.", "admin:stub") || hasButton(s.markup, "🗑 Удалить сокращ.", "admin:stub") {
 		t.Fatalf("did not expect old top-level shortcuts")
 	}
 }
@@ -599,7 +646,7 @@ func TestOpenAdminPanel_ModeratorSeesOnlyRiddleControls(t *testing.T) {
 	if !hasButton(s.markup, "Создать загадку", cbRiddleCreate) || !hasButton(s.markup, "Остановить загадку", cbRiddleStop) {
 		t.Fatalf("expected moderator riddle buttons, got %#v", s.markup)
 	}
-	if hasButton(s.markup, "", cbAdminAssignRole) || hasButton(s.markup, "", cbAdminBalanceAdjust) || hasButton(s.markup, "", cbAdminCreditMenu) {
+	if hasButton(s.markup, "", cbAdminAssignRole) || hasButton(s.markup, "", cbAdminBalanceAdjust) || hasButton(s.markup, "", cbAdminParticipants) || hasButton(s.markup, "", cbAdminDeltasMenu) {
 		t.Fatalf("moderator panel must hide admin-only controls")
 	}
 }
@@ -608,7 +655,7 @@ func TestModeratorCannotAccessBalanceOrCreditsOrRoleManagement(t *testing.T) {
 	tg := &fakeTG{}
 	h := newModeratorHandlerForFlow(t, &fakeMemberRepoHandlers{members: map[int64]*members.Member{}}, tg)
 
-	for _, data := range []string{cbAdminAssignRole, cbAdminBalanceAdjust, cbAdminCreditMenu} {
+	for _, data := range []string{cbAdminAssignRole, cbAdminBalanceAdjust, cbAdminParticipants, cbAdminDeltasMenu, cbAdminDeltaAdd, cbAdminDeltaDelete} {
 		if !h.HandleAdminCallback(context.Background(), callback(77, 42, 77, data)) {
 			t.Fatalf("expected callback %q handled", data)
 		}
@@ -682,6 +729,37 @@ func TestModeratorCanStopRiddle(t *testing.T) {
 	if riddleRepo.riddle == nil || riddleRepo.riddle.State != riddleStateStopped {
 		t.Fatalf("expected stopped riddle, got %+v", riddleRepo.riddle)
 	}
+	del := tg.last("delete")
+	if del == nil || del.chatID != -1001 || del.messageID != 10 {
+		t.Fatalf("expected published riddle message delete, got %#v", del)
+	}
+}
+
+func TestModeratorCanStopRiddleWhenDeleteFails(t *testing.T) {
+	tg := &fakeTG{deleteErr: errors.New("already deleted")}
+	riddleRepo := &fakeRiddleRepo{}
+	h := newModeratorHandlerWithRiddles(t, tg, riddleRepo)
+
+	pub, err := h.riddleService.CreatePublishing(context.Background(), 77, &RiddleDraftData{
+		PostText:     "riddle",
+		RewardAmount: 5,
+		Answers:      []RiddleDraftAnswer{{Raw: "Apple", Normalized: "apple"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.riddleService.ActivatePublished(context.Background(), pub.Riddle.ID, -1001, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbRiddleStop))
+
+	if riddleRepo.riddle == nil || riddleRepo.riddle.State != riddleStateStopped {
+		t.Fatalf("expected stopped riddle after delete failure, got %+v", riddleRepo.riddle)
+	}
+	if tg.count("delete") != 1 {
+		t.Fatalf("expected one delete attempt, got %d", tg.count("delete"))
+	}
 }
 
 func TestHandleAdminMessage_DeniedLogin_SendsSingleMessage(t *testing.T) {
@@ -736,14 +814,14 @@ func TestPickerFlow_OpenPicker_ShowsUserList(t *testing.T) {
 	if hasButton(e.markup, "Отменить действие", cbAdminCancelAction) {
 		t.Fatalf("did not expect cancel action button")
 	}
-	if b := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, repo.with[0].UserID)); b == nil || b.Style != "primary" {
-		t.Fatalf("expected first user button style primary, got %#v", b)
+	if b := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, repo.with[0].UserID)); b == nil || b.Style != "" {
+		t.Fatalf("expected first user button without style, got %#v", b)
 	}
-	if b := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, repo.with[1].UserID)); b == nil || b.Style != "success" {
-		t.Fatalf("expected second user button style success, got %#v", b)
+	if b := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, repo.with[1].UserID)); b == nil || b.Style != "" {
+		t.Fatalf("expected second user button without style, got %#v", b)
 	}
-	if b := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, repo.with[2].UserID)); b == nil || b.Style != "primary" {
-		t.Fatalf("expected third user button style primary, got %#v", b)
+	if b := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, repo.with[2].UserID)); b == nil || b.Style != "" {
+		t.Fatalf("expected third user button without style, got %#v", b)
 	}
 	if b := buttonByText(e.markup, userPickerBackButton); b == nil || b.Style != "danger" {
 		t.Fatalf("expected back button style danger, got %#v", b)
@@ -753,6 +831,36 @@ func TestPickerFlow_OpenPicker_ShowsUserList(t *testing.T) {
 	}
 	if b := buttonByText(e.markup, userPickerNextButton); b != nil && b.Style != "" {
 		t.Fatalf("expected next pagination button without style, got %q", b.Style)
+	}
+}
+
+func TestAssignRolePicker_UserButtonsUseDefaultStyle(t *testing.T) {
+	tg := &fakeTG{}
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		without: []*members.Member{
+			{UserID: 2001, Username: "u1"},
+			{UserID: 2002, Username: "u2"},
+			{UserID: 2003, Username: "u3"},
+		},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	if !h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminAssignRole)) {
+		t.Fatalf("expected callback handled")
+	}
+
+	e := tg.last("edit")
+	if e == nil {
+		t.Fatalf("expected EditMessage")
+	}
+	for _, user := range repo.without {
+		if b := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerAssignWithoutRole, cbPickerSelect, user.UserID)); b == nil || b.Style != "" {
+			t.Fatalf("expected assign-role user button without style, got %#v", b)
+		}
+	}
+	if b := buttonByText(e.markup, userPickerBackButton); b == nil || b.Style != "danger" {
+		t.Fatalf("expected back button style danger, got %#v", b)
 	}
 }
 
@@ -1075,11 +1183,11 @@ func TestPickerFlow_Pagination_StyleRestartsOnNewPage(t *testing.T) {
 		t.Fatalf("expected edit with picker markup")
 	}
 	firstPageSecondBtn := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, users[8].UserID))
-	if firstPageSecondBtn == nil || firstPageSecondBtn.Style != "primary" {
-		t.Fatalf("expected first button on second page to restart with primary, got %#v", firstPageSecondBtn)
+	if firstPageSecondBtn == nil || firstPageSecondBtn.Style != "" {
+		t.Fatalf("expected first button on second page without style, got %#v", firstPageSecondBtn)
 	}
-	if b := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, users[9].UserID)); b == nil || b.Style != "success" {
-		t.Fatalf("expected second button on second page style success, got %#v", b)
+	if b := buttonByCallbackData(e.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, users[9].UserID)); b == nil || b.Style != "" {
+		t.Fatalf("expected second button on second page without style, got %#v", b)
 	}
 }
 
@@ -1508,43 +1616,149 @@ func TestHandleAdminCallback_UnknownData_Acked(t *testing.T) {
 	}
 }
 
-func TestAdminPanel_HasBalanceAdjustButton(t *testing.T) {
+func TestAdminPanel_HasCurrencyParticipantsAndDeltasButtons(t *testing.T) {
+	tg := &fakeTG{}
+	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, 0, "/login")
+	s := tg.last("send")
+	if s == nil || !hasButton(s.markup, "🎞️ Валюта", cbAdminBalanceAdjust) || !hasButton(s.markup, "👥 Участники", cbAdminParticipants) || !hasButton(s.markup, "❓ Загадки", cbAdminRiddlesMenu) || !hasButton(s.markup, "➕ Дельты", cbAdminDeltasMenu) {
+		t.Fatalf("expected updated admin buttons")
+	}
+	if hasButton(s.markup, "💰 Баланс", cbAdminBalanceAdjust) {
+		t.Fatalf("did not expect old label")
+	}
+	if hasButton(s.markup, "💳 Управление кредитами", "admin:credit_menu") {
+		t.Fatalf("did not expect credit button")
+	}
+}
+
+func TestAdminParticipants_OpenShowsRowsPaginationAndBack(t *testing.T) {
+	tg := &fakeTG{}
+	role := "Капитан"
+	tag := "TEAM-A"
+	lastKnown := "Fallback Name"
+	htmlName := "Bob & Carol <QA>"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with: []*members.Member{
+			{UserID: 10, Username: "role_user", FirstName: "Role", LastName: "User", Role: &role},
+		},
+		without: []*members.Member{
+			{UserID: 20, Tag: &tag},
+			{UserID: 30, LastKnownName: &lastKnown},
+			{UserID: 31, FirstName: htmlName}, {UserID: 32}, {UserID: 33}, {UserID: 34}, {UserID: 35}, {UserID: 36}, {UserID: 37},
+		},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+	h.economyService = &fakeEconomy{balances: map[int64]int64{
+		10: 100, 20: 90, 30: 80, 31: 70, 32: 60, 33: 50, 34: 40, 35: 30, 36: 20, 37: 10,
+	}}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminParticipants))
+
+	edit := tg.last("edit")
+	if edit == nil {
+		t.Fatalf("expected participants screen edit")
+	}
+	rawText := edit.text
+	if !strings.Contains(rawText, "<a href=\"https://t.me/role_user\">") {
+		t.Fatalf("expected username-based profile link, got %q", rawText)
+	}
+	if !strings.Contains(rawText, "Bob &amp; Carol &lt;QA&gt;") {
+		t.Fatalf("expected escaped plain name, got %q", rawText)
+	}
+	if strings.Contains(rawText, "tg://") {
+		t.Fatalf("must not contain telegram mention links: %q", rawText)
+	}
+	if edit.parseMode == nil || *edit.parseMode != "HTML" {
+		t.Fatalf("expected HTML parse mode, got %#v", edit.parseMode)
+	}
+	if !edit.noPreview {
+		t.Fatal("expected web page preview disabled for participants screen")
+	}
+	edit.text = strings.ReplaceAll(edit.text, "<a href=\"https://t.me/role_user\">", "")
+	edit.text = strings.ReplaceAll(edit.text, "</a>", "")
+	edit.text = strings.ReplaceAll(edit.text, "Role User", role)
+	edit.text = strings.ReplaceAll(edit.text, "id:20", tag)
+	if !strings.Contains(edit.text, "Капитан – 100🎞️") || !strings.Contains(edit.text, "TEAM-A – 90🎞️") || !strings.Contains(edit.text, "Fallback Name – 80🎞️") {
+		t.Fatalf("unexpected participants text: %q", edit.text)
+	}
+	if !hasButton(edit.markup, userPickerPrevButton, cbAdminParticipantsPage+"0") || !hasButton(edit.markup, userPickerNextButton, cbAdminParticipantsPage+"1") {
+		t.Fatalf("expected pagination buttons")
+	}
+	if !hasButton(edit.markup, "Назад", cbAdminReturnPanel) {
+		t.Fatalf("expected back button")
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminParticipantsPage+"1"))
+	edit = tg.last("edit")
+	if edit == nil || !strings.Contains(edit.text, "id:37 – 10🎞️") {
+		t.Fatalf("expected second page, got %#v", edit)
+	}
+}
+
+func TestAdminDeltasMenu_OpenAddDeleteAndBack(t *testing.T) {
+	tg := &fakeTG{}
+	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminDeltasMenu))
+
+	edit := tg.last("edit")
+	if edit == nil || edit.text != "Дельты" {
+		t.Fatalf("expected delta menu, got %#v", edit)
+	}
+	if !hasButton(edit.markup, "Добавить дельту", cbAdminDeltaAdd) || !hasButton(edit.markup, "Удалить дельту", cbAdminDeltaDelete) || !hasButton(edit.markup, "Назад", cbAdminReturnPanel) {
+		t.Fatalf("expected delta menu buttons")
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminDeltaAdd))
+	state := h.service.GetState(77)
+	if state == nil || state.State != StateBalanceDeltaName {
+		t.Fatalf("expected delta create flow, got %+v", state)
+	}
+
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, 1, "Новая дельта")
+	_ = h.HandleAdminMessage(context.Background(), 77, 77, 2, "15")
+	edit = tg.last("edit")
+	if edit == nil || edit.text != "Дельты" {
+		t.Fatalf("expected return to delta menu after create")
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminDeltaDelete))
+	if state = h.service.GetState(77); state == nil || state.State != StateBalanceAdjustAmount {
+		t.Fatalf("expected delta delete flow, got %+v", state)
+	}
+	if len(h.service.repo.(*fakeAdminRepoHandlers).deltaStore[77]) < 2 {
+		t.Fatalf("expected created delta in store")
+	}
+	deltas := h.service.repo.(*fakeAdminRepoHandlers).deltaStore[77]
+	deltaID := deltas[len(deltas)-1].ID
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalAmtDeleteID+fmt.Sprint(deltaID)))
+	edit = tg.last("edit")
+	if edit == nil || edit.text != "Дельты" {
+		t.Fatalf("expected return to delta menu after delete")
+	}
+}
+
+func TestAdminPanel_DoesNotExposeCreditMenu(t *testing.T) {
 	tg := &fakeTG{}
 	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}}
 	h := newAdminHandlerForFlow(t, repo, tg)
 
 	_ = h.HandleAdminMessage(context.Background(), 77, 77, 0, "Панель")
-	s := tg.last("send")
-	if s == nil || !hasButton(s.markup, "💸 Баланс", cbAdminBalanceAdjust) {
-		t.Fatalf("expected balance adjust button")
+	e := tg.last("send")
+	if e == nil {
+		t.Fatalf("expected panel")
+	}
+	if hasButton(e.markup, "💳 Управление кредитами", "admin:credit_menu") || hasButton(e.markup, "💳 Выдать кредит", "admin:credit_issue") || hasButton(e.markup, "🚫 Отменить кредит", "admin:credit_cancel") {
+		t.Fatalf("credit controls must be absent from admin panel")
 	}
 }
 
-func TestAdminCreditMenu_OpenAndBack(t *testing.T) {
-	tg := &fakeTG{}
-	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}}
-	h := newAdminHandlerForFlow(t, repo, tg)
-
-	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminCreditMenu))
-	e := tg.last("edit")
-	if e == nil || !strings.Contains(e.text, "Управление кредитами") {
-		t.Fatalf("expected credit submenu")
-	}
-	if !hasButton(e.markup, "💳 Выдать кредит", cbAdminCreditIssue) || !hasButton(e.markup, "🚫 Отменить кредит", cbAdminCreditCancel) || !hasButton(e.markup, userPickerBackButton, cbAdminReturnPanel) {
-		t.Fatalf("expected credit submenu buttons")
-	}
-
-	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminReturnPanel))
-	back := tg.last("edit")
-	if back == nil || !strings.Contains(back.text, "Админ-панель") {
-		t.Fatalf("expected return to panel")
-	}
-	if !hasButton(back.markup, "💳 Управление кредитами", cbAdminCreditMenu) {
-		t.Fatalf("expected main panel after back")
-	}
-}
-
-func TestBalanceAdjust_HasDeleteDeltaButton(t *testing.T) {
+func TestBalanceAdjust_NoLongerHasDeltaManagementButtons(t *testing.T) {
 	tg := &fakeTG{}
 	role := "role"
 	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}, with: []*members.Member{{UserID: 1001, Username: "u", Role: &role}}}
@@ -1556,8 +1770,11 @@ func TestBalanceAdjust_HasDeleteDeltaButton(t *testing.T) {
 	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickDone))
 
 	e := tg.last("edit")
-	if e == nil || !hasButton(e.markup, "🗑 Удалить дельту", cbBalAmtDeleteDelta) {
-		t.Fatalf("expected delete delta button in balance flow")
+	if e == nil {
+		t.Fatalf("expected amount screen")
+	}
+	if hasButton(e.markup, "➕ Добавить дельту", cbBalAmtAddDelta) || hasButton(e.markup, "🗑 Удалить дельту", cbBalAmtDeleteDelta) {
+		t.Fatalf("did not expect delta management buttons in balance flow")
 	}
 }
 
@@ -1590,14 +1807,20 @@ func TestBalanceAdjust_MultiSelectPersistsAcrossPages(t *testing.T) {
 func TestBalanceAdjust_ManualAmountValidation(t *testing.T) {
 	tg := &fakeTG{}
 	role := "role"
-	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}, with: []*members.Member{{UserID: 1001, Username: "u", Role: &role}}}
-	h := newAdminHandlerForFlow(t, repo, tg)
+	memberRepo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}, with: []*members.Member{{UserID: 1001, Username: "u", Role: &role}}}
+	stateRepo := &fakeAdminRepoHandlers{hasSession: true, roundTripState: true}
+	h := newAdminHandlerForFlowWithRepo(t, stateRepo, memberRepo, tg)
 
 	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
 	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
 	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, fmt.Sprintf("%s:%d", cbBalPickToggle, int64(1001))))
 	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickDone))
 	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalAmtManual))
+	if state := h.service.GetState(77); state == nil || state.State != StateBalanceAdjustAmount {
+		t.Fatalf("expected amount state after manual prompt, got %#v", state)
+	} else if data, _ := state.Data.(*BalanceAdjustData); data == nil || !data.AwaitingManual || h.balanceWizardState(data).AwaitTextFor != "amount" {
+		t.Fatalf("manual prompt must persist awaiting state, got %#v", data)
+	}
 
 	if !h.HandleAdminMessage(context.Background(), 77, 77, 0, "abc") {
 		t.Fatalf("manual input should be handled")
@@ -1608,6 +1831,37 @@ func TestBalanceAdjust_ManualAmountValidation(t *testing.T) {
 	_ = h.HandleAdminMessage(context.Background(), 77, 77, 0, "150")
 	if e := tg.last("edit"); e == nil || !strings.Contains(e.text, "Подтверждение") {
 		t.Fatalf("expected confirmation screen")
+	}
+}
+
+func TestBalanceAdjust_ManualAmountRejectedForDifferentOwner(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	memberRepo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{
+			77: {UserID: 77, IsAdmin: true},
+			88: {UserID: 88, IsAdmin: true},
+		},
+		with: []*members.Member{{UserID: 1001, Username: "u", Role: &role}},
+	}
+	stateRepo := &fakeAdminRepoHandlers{hasSession: true, roundTripState: true}
+	svc := NewService(stateRepo, memberRepo, &config.Config{AdminIDs: []int64{77, 88}})
+	h := NewHandler(svc, nil, &fakeEconomy{}, telegram.NewOps(tg), 0)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, fmt.Sprintf("%s:%d", cbBalPickToggle, int64(1001))))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickDone))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalAmtManual))
+
+	if h.HandleAdminMessage(context.Background(), 88, 88, 0, "150") {
+		t.Fatalf("different admin must not consume another admin's manual amount step")
+	}
+	if state := h.service.GetState(77); state == nil || state.State != StateBalanceAdjustAmount {
+		t.Fatalf("owner state must remain intact, got %#v", state)
+	}
+	if state := h.service.GetState(88); state != nil {
+		t.Fatalf("different admin must not get flow state, got %#v", state)
 	}
 }
 
@@ -1660,16 +1914,42 @@ func TestBalanceAdjust_PickerUsesMinimalHeaderAndSingleLabelButtons(t *testing.T
 	}
 
 	first := buttonByCallbackData(e.markup, fmt.Sprintf("%s:%d", cbBalPickToggle, int64(1001)))
-	if first == nil || first.Text != "☐ Модератор" {
+	if first == nil || strings.HasPrefix(first.Text, "\u25a1") || strings.HasPrefix(first.Text, "\u25a2") || strings.HasPrefix(first.Text, "\u2610") || strings.HasPrefix(first.Text, "\u2611") {
 		t.Fatalf("expected role-only button label, got %#v", first)
 	}
 
 	second := buttonByCallbackData(e.markup, fmt.Sprintf("%s:%d", cbBalPickToggle, int64(1002)))
-	if second == nil || second.Text != "☐ TEAM-A" {
+	if second == nil || second.Text != "TEAM-A" {
 		t.Fatalf("expected tag-only button label, got %#v", second)
 	}
-	if second != nil && (strings.Contains(second.Text, "@") || strings.Contains(second.Text, "•") || strings.Contains(second.Text, "id:")) {
+	if second != nil && (strings.Contains(second.Text, "@") || strings.Contains(second.Text, "\u25a1") || strings.Contains(second.Text, "\u25a2") || strings.Contains(second.Text, "\u2610") || strings.Contains(second.Text, "\u2611") || strings.Contains(second.Text, "id:")) {
 		t.Fatalf("expected single primary label without mixed formatting, got %q", second.Text)
+	}
+}
+
+func TestBalanceAdjust_PickerSelectedLabelUsesCheckmarkOnly(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with:    []*members.Member{{UserID: 1001, Username: "picked", Role: &role}},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, fmt.Sprintf("%s:%d", cbBalPickToggle, int64(1001))))
+
+	e := tg.last("edit")
+	if e == nil {
+		t.Fatalf("expected picker rerender")
+	}
+	btn := buttonByCallbackData(e.markup, fmt.Sprintf("%s:%d", cbBalPickToggle, int64(1001)))
+	if btn == nil || !strings.HasPrefix(btn.Text, "\u2705 ") {
+		t.Fatalf("expected selected label with checkmark, got %#v", btn)
+	}
+	if strings.Contains(btn.Text, "\u25a1") || strings.Contains(btn.Text, "\u25a2") || strings.Contains(btn.Text, "\u2610") || strings.Contains(btn.Text, "\u2611") {
+		t.Fatalf("selected label must not use square markers: %q", btn.Text)
 	}
 }
 
@@ -2048,5 +2328,101 @@ func TestBalanceAdjust_TogglePersistsAcrossReloadAndRerender(t *testing.T) {
 	afterOffButton := buttonByCallbackData(afterOff.markup, cbBalPickToggle+":6899309136")
 	if afterOffButton == nil || afterOffButton.Text != initialButton.Text {
 		t.Fatalf("expected user button text to revert after toggle off")
+	}
+}
+
+func TestAdminAudit_LoginUsesAdminChatAndIsNonBlocking(t *testing.T) {
+	tg := &fakeTG{sendErrByChat: map[int64]error{999: errors.New("audit down")}}
+	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, Username: "admin_user", IsAdmin: true}}}
+	h := newAdminHandlerForFlow(t, repo, tg)
+	h.SetAuditLogger(audit.NewLogger(telegram.NewOps(tg), 999))
+
+	if !h.HandleAdminMessage(context.Background(), 77, 77, 0, "/login") {
+		t.Fatalf("expected handled=true")
+	}
+	foundPanel := false
+	for _, call := range tg.calls {
+		if call.kind == "send" && call.chatID == 77 {
+			foundPanel = true
+		}
+	}
+	if !foundPanel {
+		t.Fatalf("expected admin panel render to still succeed")
+	}
+	foundAudit := false
+	for _, call := range tg.calls {
+		if call.kind == "send" && call.chatID == 999 && strings.Contains(call.text, "Login:") {
+			foundAudit = true
+		}
+	}
+	if !foundAudit {
+		t.Fatalf("expected login audit log to admin chat")
+	}
+}
+
+func TestAdminAudit_RoleAssignAndChangeEmitLogs(t *testing.T) {
+	tg := &fakeTG{}
+	oldRole := "Старая роль"
+	target := &members.Member{UserID: 1001, Username: "target_user", Role: &oldRole}
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{
+			77:   {UserID: 77, Username: "admin_user", IsAdmin: true},
+			1001: target,
+		},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+	h.SetAuditLogger(audit.NewLogger(telegram.NewOps(tg), 999))
+
+	h.service.SetState(77, StateAssignRoleText, &RoleInputData{SelectedUser: &members.Member{UserID: 1001, Username: "target_user"}})
+	h.handleAssignRoleText(context.Background(), 77, 77, "Кокоми")
+
+	h.service.SetState(77, StateChangeRoleText, &RoleInputData{SelectedUser: target})
+	h.handleChangeRoleText(context.Background(), 77, 77, "Жуань Мэй")
+
+	if !hasCallText(tg.calls, "send", "set_role:") {
+		t.Fatalf("expected set_role audit log")
+	}
+	if !hasCallText(tg.calls, "send", "change_role:") {
+		t.Fatalf("expected change_role audit log")
+	}
+}
+
+func TestAdminAudit_BalanceGiveEmitsSingleMultilineLog(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{
+			77:   {UserID: 77, Username: "admin_user", IsAdmin: true},
+			1001: {UserID: 1001, Username: "u1", Role: &role},
+			1002: {UserID: 1002, Username: "u2", Role: &role},
+		},
+		with: []*members.Member{
+			{UserID: 1001, Username: "u1", Role: &role},
+			{UserID: 1002, Username: "u2", Role: &role},
+		},
+	}
+	econ := &fakeEconomy{balances: map[int64]int64{1001: 110, 1002: 210}}
+	h := newAdminHandlerWithEconomy(t, repo, tg, econ)
+	h.SetAuditLogger(audit.NewLogger(telegram.NewOps(tg), 999))
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickToggle+":1001"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickToggle+":1002"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickDone))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalAmtDeltaPrefix+"10"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalConfirmApply))
+
+	var auditMsgs []string
+	for _, call := range tg.calls {
+		if call.kind == "send" && call.chatID == 999 {
+			auditMsgs = append(auditMsgs, call.text)
+		}
+	}
+	if len(auditMsgs) != 1 {
+		t.Fatalf("expected one audit message, got %d: %#v", len(auditMsgs), auditMsgs)
+	}
+	if !strings.Contains(auditMsgs[0], "give (+10) by") || !strings.Contains(auditMsgs[0], "@u1 +10") || !strings.Contains(auditMsgs[0], "@u2 +10") {
+		t.Fatalf("unexpected audit text: %q", auditMsgs[0])
 	}
 }

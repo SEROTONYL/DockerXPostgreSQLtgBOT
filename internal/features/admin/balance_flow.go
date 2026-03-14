@@ -10,6 +10,7 @@ import (
 
 	models "github.com/mymmrac/telego"
 
+	"serotonyl.ru/telegram-bot/internal/audit"
 	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/telegram"
 	"serotonyl.ru/telegram-bot/internal/uiwizard"
@@ -164,11 +165,11 @@ func (h *Handler) renderBalancePicker(chatID, userID int64) {
 	}
 	rows := make([][]models.InlineKeyboardButton, 0)
 	for _, u := range data.UsersSnapshot[start:end] {
-		mark := "☐"
+		label := shortenForButton(formatBalancePickerLabel(u), 36)
 		if data.SelectedUserIDs[u.UserID] {
-			mark = "☑"
+			label = "\u2705 " + label
 		}
-		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData(fmt.Sprintf("%s %s", mark, shortenForButton(formatBalancePickerLabel(u), 36)), fmt.Sprintf("%s:%d", cbBalPickToggle, u.UserID))))
+		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData(label, fmt.Sprintf("%s:%d", cbBalPickToggle, u.UserID))))
 	}
 	rows = append(rows, newInlineKeyboardRow(
 		newInlineKeyboardButtonData(userPickerPrevButton, cbBalPickPrev),
@@ -187,38 +188,7 @@ func (h *Handler) renderBalancePicker(chatID, userID int64) {
 }
 
 func formatBalancePickerLabel(user *members.Member) string {
-	if user != nil && user.Role != nil {
-		if role := strings.TrimSpace(*user.Role); role != "" {
-			return role
-		}
-	}
-	if user != nil && user.Tag != nil {
-		if tag := strings.TrimSpace(*user.Tag); tag != "" {
-			return tag
-		}
-	}
-	if user != nil {
-		username := strings.TrimSpace(strings.TrimPrefix(user.Username, "@"))
-		if username != "" {
-			return "@" + username
-		}
-
-		displayName := strings.TrimSpace(strings.Join([]string{
-			strings.TrimSpace(user.FirstName),
-			strings.TrimSpace(user.LastName),
-		}, " "))
-		if displayName != "" {
-			return displayName
-		}
-		if user.LastKnownName != nil {
-			if lastKnownName := strings.TrimSpace(*user.LastKnownName); lastKnownName != "" {
-				return lastKnownName
-			}
-		}
-		return fmt.Sprintf("id:%d", user.UserID)
-	}
-
-	return "id:0"
+	return members.DisplayLabel(user)
 }
 
 func (h *Handler) handleBalancePicker(chatID, userID int64, cb string) {
@@ -304,7 +274,6 @@ func (h *Handler) renderBalanceAmount(chatID, userID int64) {
 	for _, d := range deltas {
 		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData(fmt.Sprintf("%s %s%d", strings.TrimSpace(d.Name), sign, d.Amount), cbBalAmtDeltaPrefix+strconv.FormatInt(d.Amount, 10))))
 	}
-	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData("➕ Добавить дельту", cbBalAmtAddDelta), newInlineKeyboardButtonData("🗑 Удалить дельту", cbBalAmtDeleteDelta)))
 	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData("⌨️ Ввести вручную", cbBalAmtManual)))
 	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger")))
 	h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_amount", "Выберите сумму изменения:", newInlineKeyboardMarkup(rows...))
@@ -333,6 +302,7 @@ func (h *Handler) handleBalanceAmount(chatID, userID int64, cb string) {
 	case state.State == StateBalanceAdjustAmount && cb == cbBalAmtManual:
 		data.AwaitingManual = true
 		h.balanceWizardState(data).AwaitTextFor = "amount"
+		h.service.SetState(userID, StateBalanceAdjustAmount, data)
 		h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_adjust_amount_manual", fmt.Sprintf("Отправьте сумму (целое число > 0 и <= %d)", maxBalanceAdjustAmount), newInlineKeyboardMarkup(
 			newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger")),
 		))
@@ -355,12 +325,24 @@ func (h *Handler) handleBalanceAmount(chatID, userID int64, cb string) {
 			h.renderWizard(h.currentWizardCtx(), chatID, userID, data, "balance_delta_delete", "❌ Не удалось удалить дельту", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
 			return
 		}
+		if data != nil && data.ReturnScreen == "delta_menu" {
+			h.showDeltaMenu(h.currentWizardCtx(), chatID, userID, h.balanceWizardState(data).MessageID)
+			return
+		}
 		h.renderBalanceAmount(chatID, userID)
 	case cb == cbBalAmtBack && state.State == StateBalanceAdjustAmount:
+		if data != nil && data.ReturnScreen == "delta_menu" {
+			h.showDeltaMenu(h.currentWizardCtx(), chatID, userID, h.balanceWizardState(data).MessageID)
+			return
+		}
 		uiwizard.Transition(h.balanceWizardState(data), StateBalanceAdjustPicker)
 		h.service.SetState(userID, StateBalanceAdjustPicker, data)
 		h.renderBalancePicker(chatID, userID)
 	case cb == cbBalAmtBack && (state.State == StateBalanceDeltaName || state.State == StateBalanceDeltaAmount):
+		if data != nil && data.ReturnScreen == "delta_menu" {
+			h.showDeltaMenu(h.currentWizardCtx(), chatID, userID, h.balanceWizardState(data).MessageID)
+			return
+		}
 		uiwizard.Transition(h.balanceWizardState(data), StateBalanceAdjustAmount)
 		w := h.balanceWizardState(data)
 		w.AwaitTextFor = ""
@@ -459,6 +441,10 @@ func (h *Handler) handleBalanceAdjustManualAmount(ctx context.Context, chatID, u
 			h.renderWizard(ctx, chatID, userID, data, "balance_delta_amount", "❌ Не удалось создать дельту", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbBalAmtBack, "danger"))))
 			return true
 		}
+		if data.ReturnScreen == "delta_menu" {
+			h.showDeltaMenu(ctx, chatID, userID, h.balanceWizardState(data).MessageID)
+			return true
+		}
 		data.PendingDeltaName = ""
 		uiwizard.Transition(h.balanceWizardState(data), StateBalanceAdjustAmount)
 		w := h.balanceWizardState(data)
@@ -469,6 +455,28 @@ func (h *Handler) handleBalanceAdjustManualAmount(ctx context.Context, chatID, u
 		return true
 	}
 	return false
+}
+
+func (h *Handler) startDeltaCreate(ctx context.Context, chatID, userID int64, panelMsgID int) {
+	data := &BalanceAdjustData{
+		PageSize:     userPickerPageSize,
+		ReturnScreen: "delta_menu",
+		Wizard:       &uiwizard.WizardState{ChatID: chatID, MessageID: panelMsgID, StartedAt: time.Now(), Step: StateBalanceDeltaName},
+	}
+	w := h.balanceWizardState(data)
+	w.AwaitTextFor = "delta_name"
+	h.service.SetState(userID, StateBalanceDeltaName, data)
+	h.renderWizard(ctx, chatID, userID, data, "balance_delta_name", "Введите название дельты (1..32)", newInlineKeyboardMarkup(newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("Назад", cbBalAmtBack, "danger"))))
+}
+
+func (h *Handler) startDeltaDelete(ctx context.Context, chatID, userID int64, panelMsgID int) {
+	data := &BalanceAdjustData{
+		PageSize:     userPickerPageSize,
+		ReturnScreen: "delta_menu",
+		Wizard:       &uiwizard.WizardState{ChatID: chatID, MessageID: panelMsgID, StartedAt: time.Now(), Step: StateBalanceAdjustAmount},
+	}
+	h.service.SetState(userID, StateBalanceAdjustAmount, data)
+	h.renderBalanceDeltaDelete(chatID, userID, data)
 }
 
 func (h *Handler) renderBalanceConfirm(chatID, userID int64) {
@@ -528,6 +536,7 @@ func (h *Handler) handleBalanceConfirm(ctx context.Context, chatID, userID int64
 
 		desc := fmt.Sprintf("admin %d: %s%d", userID, map[BalanceAdjustMode]string{BalanceAdjustModeAdd: "+", BalanceAdjustModeDeduct: "-"}[data.Mode], data.Amount)
 		applied := make([]BalanceAdjustOperation, 0, len(ids))
+		auditChanges := make([]audit.BalanceChange, 0, len(ids))
 		for _, id := range ids {
 			var err error
 			if data.Mode == BalanceAdjustModeAdd {
@@ -549,6 +558,22 @@ func (h *Handler) handleBalanceConfirm(ctx context.Context, chatID, userID int64
 				return
 			}
 			applied = append(applied, BalanceAdjustOperation{UserID: id, Mode: data.Mode, Amount: data.Amount})
+			if h.audit != nil {
+				if balance, balanceErr := h.economyService.GetBalance(ctx, id); balanceErr == nil {
+					label := fmt.Sprintf("id:%d", id)
+					for _, user := range data.UsersSnapshot {
+						if user != nil && user.UserID == id {
+							label = audit.MemberLabel(user)
+							break
+						}
+					}
+					delta := data.Amount
+					if data.Mode == BalanceAdjustModeDeduct {
+						delta = -delta
+					}
+					auditChanges = append(auditChanges, audit.BalanceChange{TargetLabel: label, Delta: delta, NewBalance: balance})
+				}
+			}
 		}
 		data.LastOperation = applied
 		data.LastOperationID = fmt.Sprintf("%d", time.Now().UnixNano())
@@ -556,6 +581,13 @@ func (h *Handler) handleBalanceConfirm(ctx context.Context, chatID, userID int64
 		data.Undone = false
 		uiwizard.Transition(h.balanceWizardState(data), StateBalanceAdjustConfirm)
 		h.service.SetState(userID, StateBalanceAdjustConfirm, data)
+		if h.audit != nil && len(auditChanges) > 0 {
+			delta := data.Amount
+			if data.Mode == BalanceAdjustModeDeduct {
+				delta = -delta
+			}
+			h.audit.LogBalanceAdjust(ctx, h.auditActorLabel(ctx, userID), delta, auditChanges)
+		}
 		h.renderBalanceSuccess(chatID, userID, data, false)
 	}
 }

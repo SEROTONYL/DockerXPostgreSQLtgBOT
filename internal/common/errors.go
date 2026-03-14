@@ -9,13 +9,15 @@ import "errors"
 // Ошибки экономики (пленки, переводы)
 var (
 	// ErrInsufficientBalance — недостаточно пленок на счёте
-	ErrInsufficientBalance = errors.New("недостаточно пленок на счёте")
+	ErrInsufficientBalance = errors.New("недостаточно 🎞️ на счёте")
 	// ErrSelfTransfer — попытка перевести пленки самому себе
-	ErrSelfTransfer = errors.New("нельзя переводить пленки самому себе")
+	ErrSelfTransfer = errors.New("нельзя переводить 🎞️ самому себе")
 	// ErrInvalidAmount — некорректная сумма (ноль или отрицательная)
 	ErrInvalidAmount = errors.New("сумма должна быть положительной")
 	// ErrUserNotFound — пользователь не найден в базе
 	ErrUserNotFound = errors.New("пользователь не найден")
+	// ErrTransferTargetIsBot — нельзя использовать бота как получателя перевода
+	ErrTransferTargetIsBot = errors.New("нельзя переводить 🎞️ ботам")
 )
 
 // Ошибки кармы

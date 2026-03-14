@@ -81,6 +81,7 @@ type BalanceAdjustOperation struct {
 type BalanceAdjustData struct {
 	Wizard           *uiwizard.WizardState
 	Mode             BalanceAdjustMode
+	ReturnScreen     string
 	FlowChatID       int64
 	FlowMessageID    int
 	FlowStartedAt    time.Time

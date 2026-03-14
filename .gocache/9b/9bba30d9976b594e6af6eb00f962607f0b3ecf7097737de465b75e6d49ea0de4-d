@@ -1,0 +1,15 @@
+./bot.go
+./command_handler.go
+./contracts.go
+./core_commands.go
+./membership_handler.go
+./update_context.go
+./update_handler.go
+./update_pool.go
+./chat_member_test.go
+./command_handler_test.go
+./command_parser_test.go
+./members_status_test.go
+./pin_client_test.go
+./update_context_test.go
+./update_pool_test.go

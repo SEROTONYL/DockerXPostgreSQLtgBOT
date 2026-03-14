@@ -84,7 +84,7 @@ type Config struct {
 
 	// --- Economy ---
 	EconomyStartingBalance int64  `envconfig:"ECONOMY_STARTING_BALANCE" default:"0"`
-	EconomyCurrencyName    string `envconfig:"ECONOMY_CURRENCY_NAME" default:"пленки"`
+	EconomyCurrencyName    string `envconfig:"ECONOMY_CURRENCY_NAME" default:"🎞️"`
 
 	// --- Rate Limiting ---
 	RateLimitRequests int           `envconfig:"RATE_LIMIT_REQUESTS" default:"10"`

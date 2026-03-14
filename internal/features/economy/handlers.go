@@ -13,6 +13,7 @@ import (
 	models "github.com/mymmrac/telego"
 	log "github.com/sirupsen/logrus"
 
+	"serotonyl.ru/telegram-bot/internal/audit"
 	"serotonyl.ru/telegram-bot/internal/commands"
 	"serotonyl.ru/telegram-bot/internal/common"
 	"serotonyl.ru/telegram-bot/internal/features/members"
@@ -89,6 +90,7 @@ type Handler struct {
 	service       handlerService
 	memberService memberLookup
 	tgOps         *telegram.Ops
+	audit         *audit.Logger
 	now           func() time.Time
 }
 
@@ -351,11 +353,17 @@ func (h *Handler) resolveTransferTarget(ctx context.Context, message *models.Mes
 		if err != nil || member == nil {
 			return transferTarget{}, common.ErrUserNotFound
 		}
+		if member.IsBot {
+			return transferTarget{}, common.ErrTransferTargetIsBot
+		}
 		return transferTarget{UserID: member.UserID, Display: "@" + strings.TrimPrefix(member.Username, "@")}, nil
 	}
 
 	if message.ReplyToMessage != nil && message.ReplyToMessage.From != nil {
 		user := message.ReplyToMessage.From
+		if user.IsBot {
+			return transferTarget{}, common.ErrTransferTargetIsBot
+		}
 		return transferTarget{UserID: user.ID, Display: visibleUserName(*user)}, nil
 	}
 	return transferTarget{}, errTransferRecipientMissing
@@ -522,6 +530,9 @@ func (h *Handler) handleTransferConfirmYes(ctx context.Context, entry *transferC
 			return true
 		}
 		h.finishTransferMessage(ctx, executed, successTransferText(executed.Amount, executed.RecipientDisplay), transferStateCompleted)
+		if h.audit != nil && executed != nil {
+			h.audit.LogTransfer(ctx, h.auditMemberLabel(ctx, executed.FromUserID), h.auditMemberLabel(ctx, executed.ToUserID), executed.Amount)
+		}
 		return true
 	default:
 		return true
@@ -624,6 +635,8 @@ func userFacingTransferError(err error) string {
 		return "❌ Не удалось найти пользователя по указанному username."
 	case errors.Is(err, common.ErrSelfTransfer):
 		return "❌ Нельзя переводить плёнки самому себе."
+	case errors.Is(err, common.ErrTransferTargetIsBot):
+		return "❌ Нельзя использовать !отсыпать на ботов."
 	case errors.Is(err, common.ErrInsufficientBalance):
 		return "❌ Недостаточно плёнок для перевода."
 	case errors.Is(err, common.ErrInvalidAmount):

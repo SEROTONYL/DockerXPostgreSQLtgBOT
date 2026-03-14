@@ -9,6 +9,7 @@ import (
 
 	models "github.com/mymmrac/telego"
 
+	"serotonyl.ru/telegram-bot/internal/audit"
 	"serotonyl.ru/telegram-bot/internal/commands"
 	"serotonyl.ru/telegram-bot/internal/common"
 	"serotonyl.ru/telegram-bot/internal/features/members"
@@ -159,15 +160,21 @@ func (f *fakeMemberLookup) FindByNickname(ctx context.Context, nickname string) 
 }
 
 type fakeEconomyTG struct {
-	sent         []telegram.SendOptions
-	editedText   []telegram.EditOptions
-	callbackID   string
-	callbackText string
-	nextMsgID    int
+	sent          []telegram.SendOptions
+	editedText    []telegram.EditOptions
+	callbackID    string
+	callbackText  string
+	nextMsgID     int
+	sendErrByChat map[int64]error
 }
 
 func (f *fakeEconomyTG) SendMessage(chatID int64, text string, markup *models.InlineKeyboardMarkup) (int, error) {
 	f.nextMsgID++
+	if f.sendErrByChat != nil {
+		if err := f.sendErrByChat[chatID]; err != nil {
+			return f.nextMsgID, err
+		}
+	}
 	return f.nextMsgID, nil
 }
 func (f *fakeEconomyTG) EditMessage(chatID int64, messageID int, text string, markup *models.InlineKeyboardMarkup) error {
@@ -184,6 +191,11 @@ func (f *fakeEconomyTG) GetChatMember(chatID int64, userID int64) (models.ChatMe
 func (f *fakeEconomyTG) SendMessageWithOptions(opts telegram.SendOptions) (int, error) {
 	f.sent = append(f.sent, opts)
 	f.nextMsgID++
+	if f.sendErrByChat != nil {
+		if err := f.sendErrByChat[opts.ChatID]; err != nil {
+			return f.nextMsgID, err
+		}
+	}
 	return f.nextMsgID, nil
 }
 func (f *fakeEconomyTG) EditMessageWithOptions(opts telegram.EditOptions) error {
@@ -402,6 +414,61 @@ func TestHandleTransferCommand_ShowsInsufficientBalance(t *testing.T) {
 		t.Fatalf("expected one error message, got %d", len(tg.sent))
 	}
 	if tg.sent[0].Text != "❌ Недостаточно плёнок для перевода." {
+		t.Fatalf("unexpected error text: %q", tg.sent[0].Text)
+	}
+}
+
+func TestHandleTransferCommand_RejectsReplyToBot(t *testing.T) {
+	tg := &fakeEconomyTG{}
+	h := &Handler{
+		service:       &fakeEconomyService{balance: 10},
+		memberService: &fakeMemberLookup{},
+		tgOps:         telegram.NewOps(tg),
+		now:           func() time.Time { return time.Unix(100, 0).UTC() },
+	}
+
+	msg := &models.Message{
+		MessageID: 10,
+		Chat:      models.Chat{ID: -100},
+		From:      &models.User{ID: 10, Username: "sender"},
+		Text:      "!отсыпать 5",
+		ReplyToMessage: &models.Message{
+			From: &models.User{ID: 20, Username: "helper_bot", IsBot: true},
+		},
+	}
+
+	h.HandleTransferCommand(context.Background(), commands.Context{ChatID: -100, UserID: 10, MessageID: 10, Message: msg}, []string{"5"})
+
+	if len(tg.sent) != 1 {
+		t.Fatalf("expected one error message, got %d", len(tg.sent))
+	}
+	if tg.sent[0].Text != "❌ Нельзя использовать !отсыпать на ботов." {
+		t.Fatalf("unexpected error text: %q", tg.sent[0].Text)
+	}
+}
+
+func TestHandleTransferCommand_RejectsUsernameBot(t *testing.T) {
+	tg := &fakeEconomyTG{}
+	h := &Handler{
+		service:       &fakeEconomyService{balance: 10},
+		memberService: &fakeMemberLookup{member: &members.Member{UserID: 20, Username: "helper_bot", IsBot: true}},
+		tgOps:         telegram.NewOps(tg),
+		now:           func() time.Time { return time.Unix(100, 0).UTC() },
+	}
+
+	msg := &models.Message{
+		MessageID: 10,
+		Chat:      models.Chat{ID: -100},
+		From:      &models.User{ID: 10, Username: "sender"},
+		Text:      "!отсыпать 5 @helper_bot",
+	}
+
+	h.HandleTransferCommand(context.Background(), commands.Context{ChatID: -100, UserID: 10, MessageID: 10, Message: msg}, []string{"5", "@helper_bot"})
+
+	if len(tg.sent) != 1 {
+		t.Fatalf("expected one error message, got %d", len(tg.sent))
+	}
+	if tg.sent[0].Text != "❌ Нельзя использовать !отсыпать на ботов." {
 		t.Fatalf("unexpected error text: %q", tg.sent[0].Text)
 	}
 }
@@ -661,5 +728,43 @@ func TestHandleTargetBalanceCommand_NicknameAmbiguous(t *testing.T) {
 	}
 	if tg.sent[0].Text != "\u274c \u041d\u0430\u0439\u0434\u0435\u043d\u043e \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439 \u0441 \u0442\u0430\u043a\u0438\u043c nickname." {
 		t.Fatalf("unexpected text: %q", tg.sent[0].Text)
+	}
+}
+
+func TestHandleEconomyCallback_SuccessEmitsAuditLog(t *testing.T) {
+	tg := &fakeEconomyTG{}
+	svc := &fakeEconomyService{balance: 50}
+	h := &Handler{
+		service:       svc,
+		memberService: &fakeMemberLookup{userByID: &members.Member{UserID: 1, Username: "sender"}},
+		tgOps:         telegram.NewOps(tg),
+		now:           func() time.Time { return time.Unix(100, 0).UTC() },
+	}
+	h.SetAuditLogger(audit.NewLogger(telegram.NewOps(tg), 999))
+	svc.confirmations = map[string]*transferConfirmation{
+		"abc": {
+			Token:            "abc",
+			ChatID:           -10,
+			MessageID:        42,
+			OwnerUserID:      1,
+			FromUserID:       1,
+			ToUserID:         2,
+			Amount:           7,
+			RecipientDisplay: "@Dora_2270",
+			State:            transferStateAwaitSecond,
+			ExpiresAt:        time.Unix(200, 0).UTC(),
+		},
+	}
+
+	h.HandleEconomyCallback(context.Background(), callback(-10, 42, 1, transferCallbackPrefix+"abc:"+transferConfirmYes))
+
+	found := false
+	for _, sent := range tg.sent {
+		if sent.ChatID == 999 && strings.Contains(sent.Text, "transfer: @sender -> id:2 (7)") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected transfer audit log, sent=%#v", tg.sent)
 	}
 }

@@ -1,4 +1,3 @@
-// Package members — handlers.go обрабатывает Telegram-события, связанные с участниками.
 package members
 
 import (
@@ -12,6 +11,7 @@ import (
 	models "github.com/mymmrac/telego"
 	log "github.com/sirupsen/logrus"
 
+	"serotonyl.ru/telegram-bot/internal/common"
 	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/telegram"
 )
@@ -25,7 +25,11 @@ type balanceProvider interface {
 	GetBalance(ctx context.Context, userID int64) (int64, error)
 }
 
-// Handler обрабатывает события участников.
+type RankedMember struct {
+	Member  *Member
+	Balance int64
+}
+
 type Handler struct {
 	service *Service
 	economy balanceProvider
@@ -33,17 +37,15 @@ type Handler struct {
 	cfg     *config.Config
 }
 
-// NewHandler создаёт новый обработчик событий участников.
 func NewHandler(service *Service, economy balanceProvider, tgOps *telegram.Ops, cfg *config.Config) *Handler {
 	return &Handler{service: service, economy: economy, tgOps: tgOps, cfg: cfg}
 }
 
-// HandleNewChatMembers обрабатывает событие вступления новых пользователей.
 func (h *Handler) HandleNewChatMembers(ctx context.Context, newMembers []models.User) {
 	for _, user := range newMembers {
 		err := h.service.HandleNewMember(ctx, user.ID, user.Username, user.FirstName, user.LastName, user.IsBot)
 		if err != nil {
-			log.WithError(err).WithField("user_id", user.ID).Error("Ошибка регистрации нового участника")
+			log.WithError(err).WithField("user_id", user.ID).Error("member registration failed")
 		}
 	}
 }
@@ -77,7 +79,7 @@ func (h *Handler) HandleMembersCallback(ctx context.Context, cb *models.Callback
 		return true
 	}
 	if cb.From.ID != ownerUserID {
-		h.answerCallback(ctx, cb.ID, "Листать список может только тот, кто его открыл")
+		h.answerCallback(ctx, cb.ID, "Этот список может листать только тот, кто его открыл")
 		return true
 	}
 	if err := h.renderMembersPage(ctx, msg.Chat.ID, msg.MessageID, ownerUserID, page, 0); err != nil {
@@ -103,30 +105,9 @@ func (h *Handler) renderMembersPage(ctx context.Context, chatID int64, messageID
 	if err != nil {
 		return err
 	}
-	all := make([]*Member, 0, len(withRole)+len(withoutRole))
-	all = append(all, withRole...)
-	all = append(all, withoutRole...)
-
-	type rankedMember struct {
-		member  *Member
-		balance int64
-	}
-	ranked := make([]rankedMember, 0, len(all))
-	for _, m := range all {
-		balance, balErr := h.economy.GetBalance(ctx, m.UserID)
-		if balErr != nil {
-			return balErr
-		}
-		ranked = append(ranked, rankedMember{member: m, balance: balance})
-	}
-	sort.SliceStable(ranked, func(i, j int) bool {
-		if ranked[i].balance == ranked[j].balance {
-			return ranked[i].member.UserID < ranked[j].member.UserID
-		}
-		return ranked[i].balance > ranked[j].balance
-	})
-	if limit > 0 && limit < len(ranked) {
-		ranked = ranked[:limit]
+	ranked, err := RankMembersByBalance(ctx, withRole, withoutRole, h.economy, limit)
+	if err != nil {
+		return err
 	}
 
 	totalPages := maxPageCount(len(ranked), membersListPageSize)
@@ -149,7 +130,7 @@ func (h *Handler) renderMembersPage(ctx context.Context, chatID int64, messageID
 
 	rows := make([]string, 0, len(pageMembers))
 	for _, rm := range pageMembers {
-		rows = append(rows, fmt.Sprintf("%s - %d 🎞️", roleAnchor(rm.member), rm.balance))
+		rows = append(rows, fmt.Sprintf("%s - %s", roleAnchor(rm.Member), common.FormatBalance(rm.Balance)))
 	}
 
 	text := "🏆 Топ участников пуст"
@@ -169,18 +150,101 @@ func (h *Handler) renderMembersPage(ctx context.Context, chatID int64, messageID
 	return err
 }
 
-func roleAnchor(m *Member) string {
-	label := "Без роли"
-	if m.Role != nil && strings.TrimSpace(*m.Role) != "" {
-		label = strings.TrimSpace(*m.Role)
-	}
-	label = html.EscapeString(label)
+func RankMembersByBalance(ctx context.Context, withRole, withoutRole []*Member, economy balanceProvider, limit int) ([]RankedMember, error) {
+	all := make([]*Member, 0, len(withRole)+len(withoutRole))
+	all = append(all, withRole...)
+	all = append(all, withoutRole...)
 
+	ranked := make([]RankedMember, 0, len(all))
+	for _, m := range all {
+		balance, err := economy.GetBalance(ctx, m.UserID)
+		if err != nil {
+			return nil, err
+		}
+		ranked = append(ranked, RankedMember{Member: m, Balance: balance})
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].Balance == ranked[j].Balance {
+			return ranked[i].Member.UserID < ranked[j].Member.UserID
+		}
+		return ranked[i].Balance > ranked[j].Balance
+	})
+	if limit > 0 && limit < len(ranked) {
+		ranked = ranked[:limit]
+	}
+	return ranked, nil
+}
+
+func DisplayLabel(m *Member) string {
+	if m != nil && m.Role != nil {
+		if role := strings.TrimSpace(*m.Role); role != "" {
+			return role
+		}
+	}
+	if m != nil && m.Tag != nil {
+		if tag := strings.TrimSpace(*m.Tag); tag != "" {
+			return tag
+		}
+	}
+	if m != nil {
+		username := strings.TrimSpace(strings.TrimPrefix(m.Username, "@"))
+		if username != "" {
+			return "@" + username
+		}
+		displayName := strings.TrimSpace(strings.Join([]string{
+			strings.TrimSpace(m.FirstName),
+			strings.TrimSpace(m.LastName),
+		}, " "))
+		if displayName != "" {
+			return displayName
+		}
+		if m.LastKnownName != nil {
+			if lastKnownName := strings.TrimSpace(*m.LastKnownName); lastKnownName != "" {
+				return lastKnownName
+			}
+		}
+		return fmt.Sprintf("id:%d", m.UserID)
+	}
+	return "id:0"
+}
+
+func roleAnchor(m *Member) string {
+	return FormatParticipantHTML(m)
+}
+
+func FormatParticipantHTML(m *Member) string {
+	label := html.EscapeString(participantLabel(m))
+	if m == nil {
+		return label
+	}
 	username := strings.TrimPrefix(strings.TrimSpace(m.Username), "@")
 	if username != "" {
 		return fmt.Sprintf("<a href=\"https://t.me/%s\">%s</a>", html.EscapeString(username), label)
 	}
-	return fmt.Sprintf("<a href=\"tg://openmessage?user_id=%d\">%s</a>", m.UserID, label)
+	return label
+}
+
+func participantLabel(m *Member) string {
+	if m == nil {
+		return "id:0"
+	}
+	displayName := strings.TrimSpace(strings.Join([]string{
+		strings.TrimSpace(m.FirstName),
+		strings.TrimSpace(m.LastName),
+	}, " "))
+	if displayName != "" {
+		return displayName
+	}
+	if m.LastKnownName != nil {
+		if lastKnownName := strings.TrimSpace(*m.LastKnownName); lastKnownName != "" {
+			return lastKnownName
+		}
+	}
+	username := strings.TrimSpace(strings.TrimPrefix(m.Username, "@"))
+	if username != "" {
+		return "@" + username
+	}
+	return fmt.Sprintf("id:%d", m.UserID)
 }
 
 func membersListKeyboard(ownerUserID int64, page int, totalPages int) models.InlineKeyboardMarkup {
@@ -193,9 +257,9 @@ func membersListKeyboard(ownerUserID int64, page int, totalPages int) models.Inl
 		nextPage = totalPages - 1
 	}
 	return models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: "◀", CallbackData: membersListCallbackData(ownerUserID, prevPage)},
+		{Text: "⬅", CallbackData: membersListCallbackData(ownerUserID, prevPage)},
 		{Text: fmt.Sprintf("Стр %d/%d", page+1, totalPages), CallbackData: membersListCallbackData(ownerUserID, page)},
-		{Text: "▶", CallbackData: membersListCallbackData(ownerUserID, nextPage)},
+		{Text: "➡", CallbackData: membersListCallbackData(ownerUserID, nextPage)},
 	}}}
 }
 
@@ -254,7 +318,7 @@ func (h *Handler) answerCallback(ctx context.Context, callbackID, text string) {
 		return
 	}
 	if err := h.tgOps.AnswerCallback(ctx, callbackID, text, false); err != nil {
-		log.WithError(err).Debug("ошибка ответа на callback")
+		log.WithError(err).Debug("callback answer failed")
 	}
 }
 

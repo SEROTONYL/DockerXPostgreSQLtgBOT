@@ -1,6 +1,7 @@
 package economy
 
 import (
+	"serotonyl.ru/telegram-bot/internal/audit"
 	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/feature"
 	"serotonyl.ru/telegram-bot/internal/features/members"
@@ -21,6 +22,9 @@ type Module struct {
 
 func NewModule(deps Deps) (*Module, error) {
 	h := NewHandler(deps.Service, deps.MemberService, deps.Ops)
+	if deps.Cfg != nil {
+		h.SetAuditLogger(audit.NewLogger(deps.Ops, deps.Cfg.AdminChatID))
+	}
 	f := NewFeature(h, deps.Cfg)
 	return &Module{Handler: h, Feature: f}, nil
 }

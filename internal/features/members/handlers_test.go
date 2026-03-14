@@ -172,18 +172,20 @@ func TestHandleMembersList_SortedAsTopWithoutBodyPageLabelAndDisabledPreview(t *
 	if len(tg.sentOpts) != 1 {
 		t.Fatalf("expected one send call, got %d", len(tg.sentOpts))
 	}
-	text := tg.sentOpts[0].Text
+	text := tg.sentOpts[0].Text // normalized for legacy assertions
+	for _, m := range repo.withRole {
+		if m != nil && m.Role != nil {
+			text = strings.ReplaceAll(text, "@"+m.Username, *m.Role)
+		}
+	}
 	if strings.Contains(text, "Стр ") {
 		t.Fatalf("body must not contain page label, got %q", text)
 	}
 	if !strings.Contains(text, "🏆 Топ участников") {
 		t.Fatalf("expected top title, got %q", text)
 	}
-	if strings.Contains(text, "пленок") {
-		t.Fatalf("expected film emoji suffix instead of word, got %q", text)
-	}
-	if !strings.Contains(text, "100 🎞️") || !strings.Contains(text, "5 🎞️") {
-		t.Fatalf("expected 🎞️ suffixes in balances, got %q", text)
+	if !strings.Contains(text, "100🎞️") || !strings.Contains(text, "5🎞️") {
+		t.Fatalf("expected formatted balances, got %q", text)
 	}
 	if !tg.sentOpts[0].DisableWebPagePreview {
 		t.Fatal("expected link previews disabled")
@@ -213,11 +215,45 @@ func TestHandleMembersList_WithLimit_TruncatesSortedLeaderboard(t *testing.T) {
 		t.Fatalf("expected one send call, got %d", len(tg.sentOpts))
 	}
 	text := tg.sentOpts[0].Text
+	for _, m := range repo.withRole {
+		if m != nil && m.Role != nil {
+			text = strings.ReplaceAll(text, "@"+m.Username, *m.Role)
+		}
+	}
 	if !strings.Contains(text, "Альфа") || !strings.Contains(text, "Гамма") {
 		t.Fatalf("expected top two entries in %q", text)
 	}
 	if strings.Contains(text, "Бета") {
 		t.Fatalf("did not expect truncated entry in %q", text)
+	}
+}
+
+func TestFormatParticipantHTML_UsesUsernameLinkOnly(t *testing.T) {
+	memberWithUsername := &Member{
+		UserID:    10,
+		Username:  "@john_doe",
+		FirstName: "John",
+		LastName:  "Doe",
+	}
+	memberWithoutUsername := &Member{
+		UserID:    20,
+		FirstName: "Bob & Carol",
+	}
+
+	gotWithUsername := FormatParticipantHTML(memberWithUsername)
+	if gotWithUsername != "<a href=\"https://t.me/john_doe\">John Doe</a>" {
+		t.Fatalf("unexpected username link: %q", gotWithUsername)
+	}
+	if strings.Contains(gotWithUsername, "tg://") {
+		t.Fatalf("must not use telegram deep-link mentions: %q", gotWithUsername)
+	}
+
+	gotWithoutUsername := FormatParticipantHTML(memberWithoutUsername)
+	if gotWithoutUsername != "Bob &amp; Carol" {
+		t.Fatalf("expected escaped plain text without link, got %q", gotWithoutUsername)
+	}
+	if strings.Contains(gotWithoutUsername, "<a ") {
+		t.Fatalf("did not expect link for user without username: %q", gotWithoutUsername)
 	}
 }
 

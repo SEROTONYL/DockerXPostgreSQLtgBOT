@@ -234,7 +234,7 @@ func (h *Handler) handleRiddleStop(ctx context.Context, chatID, userID int64) {
 		return
 	}
 	if result.Riddle.GroupChatID != nil && result.Riddle.MessageID != nil {
-		_ = h.ops.UnpinChatMessage(ctx, *result.Riddle.GroupChatID, int(*result.Riddle.MessageID))
+		h.cleanupPublishedRiddleMessage(ctx, *result.Riddle.GroupChatID, int(*result.Riddle.MessageID))
 		summary := "Загадка остановлена."
 		winners := summarizeRiddleWinners(result.Answers)
 		if len(winners) > 0 {
@@ -289,5 +289,12 @@ func pluralizeRiddleReward(amount int64) string {
 func (h *Handler) abortRiddlePublication(ctx context.Context, riddleID int64) {
 	if err := h.riddleService.AbortPublication(ctx, riddleID); err != nil {
 		log.WithError(err).WithField("riddle_id", riddleID).Warn("riddle publication abort failed")
+	}
+}
+
+func (h *Handler) cleanupPublishedRiddleMessage(ctx context.Context, chatID int64, messageID int) {
+	_ = h.ops.UnpinChatMessage(ctx, chatID, messageID)
+	if err := h.ops.DeleteMessage(ctx, chatID, messageID); err != nil {
+		log.WithError(err).WithFields(log.Fields{"chat_id": chatID, "message_id": messageID}).Warn("published riddle delete failed")
 	}
 }

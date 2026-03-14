@@ -1,0 +1,8 @@
+./bot.go
+./command_handler.go
+./contracts.go
+./core_commands.go
+./membership_handler.go
+./update_context.go
+./update_handler.go
+./update_pool.go

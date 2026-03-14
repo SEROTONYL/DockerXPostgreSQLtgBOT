@@ -206,7 +206,7 @@ func (h *Handler) sendThanksSuccessMessage(ctx context.Context, chatID int64, re
 		dailyLimit = h.service.dailyLimit()
 	}
 	text := fmt.Sprintf(
-		"❤️ %s сказал(а) спасибо - %s\n+%d %s. Сегодня осталось: %d/%d",
+		"❤️ %s сказал(а) спасибо - %s\n+%d%s. Сегодня осталось: %d/%d",
 		tgUserLink(senderUserID, senderLabel),
 		tgUserLink(targetUserID, targetLabel),
 		ThanksReward,

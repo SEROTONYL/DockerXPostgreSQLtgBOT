@@ -1,0 +1,8 @@
+./adapter.go
+./ops.go
+./runtime.go
+./screen.go
+./adapter_test.go
+./client_pin_test.go
+./ops_test.go
+./screen_test.go

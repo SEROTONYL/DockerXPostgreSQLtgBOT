@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	models "github.com/mymmrac/telego"
 
+	"serotonyl.ru/telegram-bot/internal/audit"
 	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/telegram"
 )
@@ -476,8 +477,45 @@ func TestRiddleCleanupUnpinsExpiredActiveBeforeDeleteBestEffort(t *testing.T) {
 	if tg.count("unpin") != 1 {
 		t.Fatalf("expected best-effort unpin before delete, got %d", tg.count("unpin"))
 	}
+	if tg.count("delete") != 1 {
+		t.Fatalf("expected best-effort delete before cleanup, got %d", tg.count("delete"))
+	}
 	if repo.listExpiredCalls != 1 || repo.cleanupCalls != 1 {
 		t.Fatalf("expected cleanup flow to list expired and delete once, list=%d cleanup=%d", repo.listExpiredCalls, repo.cleanupCalls)
+	}
+}
+
+func TestRiddleCleanupDeleteFailureDoesNotBlockCleanup(t *testing.T) {
+	repo := &fakeRiddleRepo{
+		riddle: &Riddle{
+			ID:          1,
+			State:       riddleStateActive,
+			GroupChatID: ptrInt64(-1001),
+			MessageID:   ptrInt64(55),
+			ExpiresAt:   time.Date(2026, 3, 9, 11, 0, 0, 0, time.UTC),
+		},
+		expiredActiveSnapshot: []*Riddle{{
+			ID:          1,
+			State:       riddleStateActive,
+			GroupChatID: ptrInt64(-1001),
+			MessageID:   ptrInt64(55),
+			ExpiresAt:   time.Date(2026, 3, 9, 11, 0, 0, 0, time.UTC),
+		}},
+	}
+	econ := &fakeRiddleEconomy{}
+	tg := &fakeTG{deleteErr: errors.New("missing")}
+	svc := NewRiddleService(repo, econ)
+	svc.SetOps(telegram.NewOps(tg))
+	now := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
+
+	if err := svc.CleanupExpired(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	if tg.count("delete") != 1 {
+		t.Fatalf("expected one delete attempt, got %d", tg.count("delete"))
+	}
+	if repo.cleanupCalls != 1 {
+		t.Fatalf("expected cleanup to proceed after delete failure, got %d", repo.cleanupCalls)
 	}
 }
 
@@ -562,4 +600,35 @@ func cloneRiddle(src *Riddle) *Riddle {
 
 func ptrInt64(v int64) *int64 {
 	return &v
+}
+
+func TestRiddleAuditLogsCreatedAndEnded(t *testing.T) {
+	repo := &fakeRiddleRepo{}
+	tg := &fakeTG{}
+	svc := NewRiddleService(repo, &fakeRiddleEconomy{})
+	svc.SetAuditLogger(audit.NewLogger(telegram.NewOps(tg), 999), &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, Username: "riddle_admin"}},
+	})
+
+	pub, err := svc.CreatePublishing(context.Background(), 77, &RiddleDraftData{
+		PostText:     "riddle",
+		RewardAmount: 60,
+		Answers:      []RiddleDraftAnswer{{Raw: "Apple", Normalized: "apple"}},
+	})
+	if err != nil {
+		t.Fatalf("create publishing failed: %v", err)
+	}
+	if err := svc.ActivatePublished(context.Background(), pub.Riddle.ID, -100, 10); err != nil {
+		t.Fatalf("activate published failed: %v", err)
+	}
+	if !hasCallText(tg.calls, "send", "riddle: создана (60, winners=1) by @riddle_admin") {
+		t.Fatalf("expected riddle created audit log, calls=%#v", tg.calls)
+	}
+
+	if _, err := svc.StopActive(context.Background()); err != nil {
+		t.Fatalf("stop active failed: %v", err)
+	}
+	if !hasCallText(tg.calls, "send", "riddle_end: stopped winners=0 reward=60") {
+		t.Fatalf("expected riddle stopped audit log, calls=%#v", tg.calls)
+	}
 }

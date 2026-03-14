@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,8 @@ import (
 	models "github.com/mymmrac/telego"
 	log "github.com/sirupsen/logrus"
 
+	"serotonyl.ru/telegram-bot/internal/audit"
+	"serotonyl.ru/telegram-bot/internal/common"
 	"serotonyl.ru/telegram-bot/internal/features/members"
 	"serotonyl.ru/telegram-bot/internal/telegram"
 )
@@ -27,10 +30,12 @@ const (
 
 	cbAdminAssignRole        = "admin:assign_role"
 	cbAdminChangeRole        = "admin:change_role"
-	cbAdminCreditMenu        = "admin:credit_menu"
-	cbAdminCreditIssue       = "admin:credit_issue"
-	cbAdminCreditCancel      = "admin:credit_cancel"
 	cbAdminBalanceAdjust     = "admin:balance_adjust"
+	cbAdminParticipants      = "admin:participants"
+	cbAdminParticipantsPage  = "admin:participants:page:"
+	cbAdminDeltasMenu        = "admin:deltas"
+	cbAdminDeltaAdd          = "admin:deltas:add"
+	cbAdminDeltaDelete       = "admin:deltas:delete"
 	cbPickerPrefix           = "admin:picker:"
 	cbPickerSelect           = "select"
 	cbPickerPrev             = "prev"
@@ -54,6 +59,7 @@ type economyService interface {
 	DeductBalance(ctx context.Context, userID int64, amount int64, txType, description string) error
 	WithTransaction(ctx context.Context, fn func(context.Context, pgx.Tx) error) error
 	AddBalanceTx(ctx context.Context, tx pgx.Tx, userID int64, amount int64, txType, description string) error
+	GetBalance(ctx context.Context, userID int64) (int64, error)
 }
 
 type Handler struct {
@@ -62,6 +68,7 @@ type Handler struct {
 	economyService     economyService
 	riddleService      *RiddleService
 	ops                *telegram.Ops
+	audit              *audit.Logger
 	memberSourceChatID int64
 	undoMu             sync.Mutex
 	lastRoleUndo       map[int64]*roleUndoData
@@ -216,22 +223,26 @@ func (h *Handler) HandleAdminMessage(ctx context.Context, chatID int64, userID i
 		}
 		h.startChangeRole(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return true
-	case "Изменить баланс", "Баланс":
+	case "Изменить баланс", "️ Валюта":
 		if !h.service.CanManageBalance(ctx, userID) {
 			h.denyInsufficientPermissions(ctx, chatID)
 			return true
 		}
 		h.startBalanceAdjustMode(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return true
-	case "Управление кредитами":
-		if !h.service.CanManageCredits(ctx, userID) {
+	case "Участники":
+		if !h.service.CanManageBalance(ctx, userID) {
 			h.denyInsufficientPermissions(ctx, chatID)
 			return true
 		}
-		h.showCreditMenu(ctx, chatID, userID, h.panelMessageIDFromState(userID))
+		h.showParticipantsPage(ctx, chatID, userID, h.panelMessageIDFromState(userID), 0)
 		return true
-	case "Выдать кредит", "Отменить кредит":
-		h.sendMessage(ctx, chatID, "🔧 Функция в разработке")
+	case "Дельты":
+		if !h.service.CanManageBalance(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
+		h.showDeltaMenu(ctx, chatID, userID, h.panelMessageIDFromState(userID))
 		return true
 	case "Админ", "Панель", "админ", "панель":
 		if err := h.showKeyboard(ctx, chatID, userID, h.panelMessageIDFromState(userID)); err != nil {
@@ -301,6 +312,34 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 		}
 		h.startBalanceAdjustMode(ctx, chatID, userID, panelMsgID)
 		return true
+	case cbAdminParticipants:
+		if !h.service.CanManageBalance(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
+		h.showParticipantsPage(ctx, chatID, userID, panelMsgID, 0)
+		return true
+	case cbAdminDeltasMenu:
+		if !h.service.CanManageBalance(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
+		h.showDeltaMenu(ctx, chatID, userID, panelMsgID)
+		return true
+	case cbAdminDeltaAdd:
+		if !h.service.CanManageBalance(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
+		h.startDeltaCreate(ctx, chatID, userID, panelMsgID)
+		return true
+	case cbAdminDeltaDelete:
+		if !h.service.CanManageBalance(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
+		h.startDeltaDelete(ctx, chatID, userID, panelMsgID)
+		return true
 	case cbAdminRiddlesMenu:
 		if !h.service.CanManageRiddles(ctx, userID) {
 			h.denyInsufficientPermissions(ctx, chatID)
@@ -336,22 +375,6 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 		}
 		h.handleRiddleCancel(ctx, chatID, userID)
 		return true
-	case cbAdminCreditMenu:
-		if !h.service.CanManageCredits(ctx, userID) {
-			h.denyInsufficientPermissions(ctx, chatID)
-			return true
-		}
-		h.showCreditMenu(ctx, chatID, userID, panelMsgID)
-		return true
-	case cbAdminCreditIssue, cbAdminCreditCancel:
-		if !h.service.CanManageCredits(ctx, userID) {
-			h.denyInsufficientPermissions(ctx, chatID)
-			return true
-		}
-		if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "credit_stub", "🔧 Функция в разработке", h.creditMenuMarkup()); err != nil {
-			h.sendUIErrorHint(ctx, chatID, err)
-		}
-		return true
 	case cbRoleInputBack:
 		h.handleRoleInputBack(ctx, chatID, userID, panelMsgID)
 		return true
@@ -385,6 +408,18 @@ func (h *Handler) HandleAdminCallback(ctx context.Context, q *models.CallbackQue
 			return true
 		}
 		h.handleBalanceAdjustCallback(ctx, chatID, userID, panelMsgID, data)
+		return true
+	}
+	if strings.HasPrefix(data, cbAdminParticipantsPage) {
+		if !h.service.CanManageBalance(ctx, userID) {
+			h.denyInsufficientPermissions(ctx, chatID)
+			return true
+		}
+		page, err := strconv.Atoi(strings.TrimPrefix(data, cbAdminParticipantsPage))
+		if err != nil {
+			page = 0
+		}
+		h.showParticipantsPage(ctx, chatID, userID, panelMsgID, page)
 		return true
 	}
 
@@ -433,29 +468,96 @@ func (h *Handler) showKeyboard(ctx context.Context, chatID int64, userID int64, 
 			newInlineKeyboardButtonData("🔄 Сменить роль", cbAdminChangeRole),
 		),
 		newInlineKeyboardRow(
-			newInlineKeyboardButtonData("💸 Баланс", cbAdminBalanceAdjust),
+			newInlineKeyboardButtonData("🎞️ Валюта", cbAdminBalanceAdjust),
 		),
 		newInlineKeyboardRow(
-			newInlineKeyboardButtonData("Загадки", cbAdminRiddlesMenu),
+			newInlineKeyboardButtonData("👥 Участники", cbAdminParticipants),
 		),
 		newInlineKeyboardRow(
-			newInlineKeyboardButtonData("💳 Управление кредитами", cbAdminCreditMenu),
+			newInlineKeyboardButtonData("❓ Загадки", cbAdminRiddlesMenu),
+		),
+		newInlineKeyboardRow(
+			newInlineKeyboardButtonData("➕ Дельты", cbAdminDeltasMenu),
 		),
 	)
 
 	return h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "panel", "✅ Админ-панель открыта", keyboard)
 }
 
-func (h *Handler) creditMenuMarkup() models.InlineKeyboardMarkup {
-	return newInlineKeyboardMarkup(
-		newInlineKeyboardRow(newInlineKeyboardButtonData("💳 Выдать кредит", cbAdminCreditIssue)),
-		newInlineKeyboardRow(newInlineKeyboardButtonData("🚫 Отменить кредит", cbAdminCreditCancel)),
-		newInlineKeyboardRow(newInlineKeyboardButtonDataStyled(userPickerBackButton, cbAdminReturnPanel, "danger")),
+func (h *Handler) showDeltaMenu(ctx context.Context, chatID int64, userID int64, panelMsgID int) {
+	h.service.ClearState(userID)
+	keyboard := newInlineKeyboardMarkup(
+		newInlineKeyboardRow(newInlineKeyboardButtonData("Добавить дельту", cbAdminDeltaAdd)),
+		newInlineKeyboardRow(newInlineKeyboardButtonData("Удалить дельту", cbAdminDeltaDelete)),
+		newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("Назад", cbAdminReturnPanel, "danger")),
 	)
+	if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "delta_menu", "Дельты", keyboard); err != nil {
+		h.sendUIErrorHint(ctx, chatID, err)
+	}
 }
 
-func (h *Handler) showCreditMenu(ctx context.Context, chatID int64, userID int64, panelMsgID int) {
-	if err := h.renderAdminScreen(ctx, chatID, userID, panelMsgID, "credit_menu", "💳 Управление кредитами", h.creditMenuMarkup()); err != nil {
+func (h *Handler) showParticipantsPage(ctx context.Context, chatID, userID int64, panelMsgID int, page int) {
+	withRole, err := h.service.GetUsersWithRole(ctx)
+	if err != nil {
+		h.sendUIErrorHint(ctx, chatID, err)
+		return
+	}
+	withoutRole, err := h.service.GetUsersWithoutRole(ctx)
+	if err != nil {
+		h.sendUIErrorHint(ctx, chatID, err)
+		return
+	}
+	ranked, err := members.RankMembersByBalance(ctx, withRole, withoutRole, h.economyService, 0)
+	if err != nil {
+		h.sendUIErrorHint(ctx, chatID, err)
+		return
+	}
+
+	totalPages := 1
+	if len(ranked) > 0 {
+		totalPages = (len(ranked) + userPickerPageSize - 1) / userPickerPageSize
+	}
+	if page < 0 {
+		page = 0
+	}
+	if page >= totalPages {
+		page = totalPages - 1
+	}
+
+	start := page * userPickerPageSize
+	end := start + userPickerPageSize
+	if end > len(ranked) {
+		end = len(ranked)
+	}
+
+	lines := []string{"Участники"}
+	if len(ranked) == 0 {
+		lines = append(lines, "", "Список пуст.")
+	} else {
+		lines = append(lines, "")
+		for _, rm := range ranked[start:end] {
+			lines = append(lines, fmt.Sprintf("%s – %s", members.FormatParticipantHTML(rm.Member), common.FormatBalance(rm.Balance)))
+		}
+	}
+
+	rows := make([][]models.InlineKeyboardButton, 0, 2)
+	if totalPages > 1 {
+		prevPage := page - 1
+		if prevPage < 0 {
+			prevPage = 0
+		}
+		nextPage := page + 1
+		if nextPage >= totalPages {
+			nextPage = totalPages - 1
+		}
+		rows = append(rows, newInlineKeyboardRow(
+			newInlineKeyboardButtonData(userPickerPrevButton, fmt.Sprintf("%s%d", cbAdminParticipantsPage, prevPage)),
+			newInlineKeyboardButtonData(fmt.Sprintf("Стр %d/%d", page+1, totalPages), fmt.Sprintf("%s%d", cbAdminParticipantsPage, page)),
+			newInlineKeyboardButtonData(userPickerNextButton, fmt.Sprintf("%s%d", cbAdminParticipantsPage, nextPage)),
+		))
+	}
+	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("Назад", cbAdminReturnPanel, "danger")))
+	if err := h.renderAdminScreenWithOptions(ctx, chatID, userID, panelMsgID, "participants", strings.Join(lines, "\n"), newInlineKeyboardMarkup(rows...), telegram.ParseModeHTML, true); err != nil {
 		h.sendUIErrorHint(ctx, chatID, err)
 	}
 }
@@ -554,6 +656,9 @@ func (h *Handler) handleAssignRoleText(ctx context.Context, chatID int64, userID
 	}
 
 	h.setUndoRoleChange(userID, selected.UserID, "", role)
+	if h.audit != nil {
+		h.audit.LogRoleAssign(ctx, h.auditActorLabel(ctx, userID), formatMemberIdentityCompact(selected), role)
+	}
 	h.sendRoleChangeSuccess(ctx, chatID, userID, h.panelMessageIDFromState(userID), fmt.Sprintf("✅ Роль назначена: %s → %s", normalizeRoleLabel(""), role))
 	h.service.ClearState(userID)
 }
@@ -635,6 +740,9 @@ func (h *Handler) handleChangeRoleText(ctx context.Context, chatID int64, userID
 	}
 
 	h.setUndoRoleChange(userID, selected.UserID, oldRole, role)
+	if h.audit != nil {
+		h.audit.LogRoleChange(ctx, h.auditActorLabel(ctx, userID), formatMemberIdentityCompact(selected), oldRole, role)
+	}
 	h.sendRoleChangeSuccess(ctx, chatID, userID, h.panelMessageIDFromState(userID), fmt.Sprintf("✅ Роль изменена: %s → %s", normalizeRoleLabel(oldRole), role))
 	h.service.ClearState(userID)
 }
@@ -691,13 +799,9 @@ func (h *Handler) renderUserPickerPage(ctx context.Context, chatID, userID int64
 
 	usersOnPage := data.UsersSnapshot[start:end]
 	rows := make([][]models.InlineKeyboardButton, 0, len(usersOnPage)+3)
-	for i, user := range usersOnPage {
-		style := "primary"
-		if i%2 != 0 {
-			style = "success"
-		}
+	for _, user := range usersOnPage {
 		rows = append(rows, newInlineKeyboardRow(
-			newInlineKeyboardButtonDataStyled(formatUserPickerButton(user, data.Mode), pickerCallbackData(data.Mode, cbPickerSelect, user.UserID), style),
+			newInlineKeyboardButtonData(formatUserPickerButton(user, data.Mode), pickerCallbackData(data.Mode, cbPickerSelect, user.UserID)),
 		))
 	}
 
@@ -1141,7 +1245,18 @@ func normalizeRoleLabel(role string) string {
 }
 
 func (h *Handler) renderAdminScreen(ctx context.Context, chatID, userID int64, panelMsgID int, screenName, text string, keyboard models.InlineKeyboardMarkup) error {
-	msgID, usedEdit, err := telegram.RenderScreen(ctx, h.ops, telegram.Screen{ChatID: chatID, MessageID: panelMsgID, Text: text, ReplyMarkup: &keyboard})
+	return h.renderAdminScreenWithOptions(ctx, chatID, userID, panelMsgID, screenName, text, keyboard, nil, false)
+}
+
+func (h *Handler) renderAdminScreenWithOptions(ctx context.Context, chatID, userID int64, panelMsgID int, screenName, text string, keyboard models.InlineKeyboardMarkup, parseMode *string, disableWebPagePreview bool) error {
+	msgID, usedEdit, err := telegram.RenderScreen(ctx, h.ops, telegram.Screen{
+		ChatID:                chatID,
+		MessageID:             panelMsgID,
+		Text:                  text,
+		ReplyMarkup:           &keyboard,
+		ParseMode:             parseMode,
+		DisableWebPagePreview: disableWebPagePreview,
+	})
 	if err != nil {
 		if telegram.IsEditNotModified(err) {
 			log.WithError(err).WithFields(log.Fields{"chat_id": chatID, "panel_message_id": panelMsgID, "screen": screenName}).Debug("admin ui edit skipped: message is not modified")
@@ -1163,7 +1278,13 @@ func (h *Handler) reopenAdminPanel(ctx context.Context, chatID, userID int64) er
 	panel := h.service.GetPanelMessage(userID)
 	h.service.ClearState(userID)
 	h.deletePanelMessage(ctx, userID, panel)
-	return h.showKeyboard(ctx, chatID, userID, 0)
+	if err := h.showKeyboard(ctx, chatID, userID, 0); err != nil {
+		return err
+	}
+	if h.audit != nil {
+		h.audit.LogLogin(ctx, h.auditActorLabel(ctx, userID))
+	}
+	return nil
 }
 
 func (h *Handler) deletePanelMessage(ctx context.Context, userID int64, panel AdminPanelMessage) {

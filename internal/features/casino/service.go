@@ -7,6 +7,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
+	"serotonyl.ru/telegram-bot/internal/common"
 	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/features/economy"
 )
@@ -39,7 +40,7 @@ func (s *Service) PlaySlots(ctx context.Context, userID int64) (*SlotResult, err
 		return nil, fmt.Errorf("ошибка получения баланса: %w", err)
 	}
 	if balance < bet {
-		return nil, fmt.Errorf("недостаточно пленок: нужно %d, у тебя %d", bet, balance)
+		return nil, fmt.Errorf("недостаточно %s: нужно %s, у тебя %s", common.FilmFramesEmoji, common.FormatBalance(bet), common.FormatBalance(balance))
 	}
 
 	// Списываем ставку

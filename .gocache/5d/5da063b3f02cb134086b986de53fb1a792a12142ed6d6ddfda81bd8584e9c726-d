@@ -1,0 +1,10 @@
+# test log
+open C:\Users\Владислав\Desktop\gorty\telegram-bot\telegram-bot\.tmp\TestCollectMigrationFilesSortsByVersion2211848033\001\0003_c.sql
+open C:\Users\Владислав\Desktop\gorty\telegram-bot\telegram-bot\.tmp\TestCollectMigrationFilesSortsByVersion2211848033\001\0001_a.sql
+open C:\Users\Владислав\Desktop\gorty\telegram-bot\telegram-bot\.tmp\TestCollectMigrationFilesSortsByVersion2211848033\001\0002_b.sql
+open C:\Users\Владислав\Desktop\gorty\telegram-bot\telegram-bot\.tmp\TestCollectMigrationFilesSortsByVersion2211848033\001\0002_b.down.sql
+open C:\Users\Владислав\Desktop\gorty\telegram-bot\telegram-bot\.tmp\TestCollectMigrationFilesSortsByVersion2211848033\001\000001_legacy.down.sql
+open C:\Users\Владислав\Desktop\gorty\telegram-bot\telegram-bot\.tmp\TestCollectMigrationFilesSortsByVersion2211848033\001\README.sql
+stat C:\Users\Владислав\Desktop\gorty\telegram-bot\telegram-bot\.tmp\TestCollectMigrationFilesSortsByVersion2211848033\001
+open C:\Users\Владислав\Desktop\gorty\telegram-bot\telegram-bot\.tmp\TestCollectMigrationFilesSortsByVersion2211848033\001
+open C:\Users\Владислав\Desktop\gorty\telegram-bot\telegram-bot\.tmp

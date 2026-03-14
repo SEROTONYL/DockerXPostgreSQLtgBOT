@@ -144,7 +144,7 @@ func (s *Service) GetTransactionHistory(ctx context.Context, userID int64) (stri
 			sign = "-"
 		}
 
-		line := fmt.Sprintf("%d. %s | %s%d %s | %s",
+		line := fmt.Sprintf("%d. %s | %s%d%s | %s",
 			i+1,
 			common.FormatDateTime(tx.CreatedAt),
 			sign,

@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	models "github.com/mymmrac/telego"
+	"serotonyl.ru/telegram-bot/internal/audit"
 	"serotonyl.ru/telegram-bot/internal/telegram"
 )
 
@@ -40,7 +42,16 @@ type RiddleService struct {
 	repo    riddleRepo
 	economy riddleEconomy
 	ops     *telegram.Ops
+	audit   *audit.Logger
+	members audit.MemberLookup
+	pending sync.Map
 	now     func() time.Time
+}
+
+type pendingRiddleAudit struct {
+	adminID int64
+	reward  int64
+	winners int
 }
 
 func NewRiddleService(repo riddleRepo, economy riddleEconomy) *RiddleService {
@@ -68,19 +79,37 @@ func (s *RiddleService) CreatePublishing(ctx context.Context, adminID int64, dra
 	if err != nil {
 		return nil, err
 	}
+	if rdl != nil {
+		s.pending.Store(rdl.ID, pendingRiddleAudit{adminID: adminID, reward: rdl.RewardAmount, winners: len(answers)})
+	}
 	return &RiddlePublishResult{Riddle: rdl, Answers: answers}, nil
 }
 
 func (s *RiddleService) ActivatePublished(ctx context.Context, riddleID, groupChatID, messageID int64) error {
-	return s.repo.ActivatePublishedRiddle(ctx, riddleID, groupChatID, messageID, s.now())
+	if err := s.repo.ActivatePublishedRiddle(ctx, riddleID, groupChatID, messageID, s.now()); err != nil {
+		return err
+	}
+	if s.audit != nil {
+		if pending, ok := s.pending.LoadAndDelete(riddleID); ok {
+			meta := pending.(pendingRiddleAudit)
+			s.audit.LogRiddleCreated(ctx, s.audit.ResolveMemberLabel(ctx, s.members, meta.adminID), meta.reward, meta.winners)
+		}
+	}
+	return nil
 }
 
 func (s *RiddleService) AbortPublication(ctx context.Context, riddleID int64) error {
+	s.pending.Delete(riddleID)
 	return s.repo.AbortPublishingRiddle(ctx, riddleID)
 }
 
 func (s *RiddleService) SetOps(ops *telegram.Ops) {
 	s.ops = ops
+}
+
+func (s *RiddleService) SetAuditLogger(logger *audit.Logger, members audit.MemberLookup) {
+	s.audit = logger
+	s.members = members
 }
 
 func (s *RiddleService) GetActive(ctx context.Context) (*Riddle, error) {
@@ -109,6 +138,9 @@ func (s *RiddleService) StopActive(ctx context.Context) (*RiddleStopResult, erro
 	}
 	if rdl == nil {
 		return nil, nil
+	}
+	if s.audit != nil {
+		s.audit.LogRiddleEnded(ctx, countRiddleWinners(answers), rdl.RewardAmount, true)
 	}
 	return &RiddleStopResult{Riddle: rdl, Answers: answers}, nil
 }
@@ -159,6 +191,9 @@ func (s *RiddleService) ProcessGuess(ctx context.Context, message *models.Messag
 	if !completed {
 		return nil, true, nil
 	}
+	if s.audit != nil {
+		s.audit.LogRiddleEnded(ctx, countRiddleWinners(answers), rdl.RewardAmount, false)
+	}
 	return &RiddleCompletionResult{Riddle: rdl, Answers: answers}, true, nil
 }
 
@@ -173,6 +208,7 @@ func (s *RiddleService) CleanupExpired(ctx context.Context, now time.Time) error
 				continue
 			}
 			_ = s.ops.UnpinChatMessage(ctx, *rdl.GroupChatID, int(*rdl.MessageID))
+			_ = s.ops.DeleteMessage(ctx, *rdl.GroupChatID, int(*rdl.MessageID))
 		}
 	}
 	_, err = s.repo.CleanupExpired(ctx, now)
@@ -218,4 +254,14 @@ func summarizeRiddleWinners(answers []*RiddleAnswer) []string {
 		out = append(out, key)
 	}
 	return out
+}
+
+func countRiddleWinners(answers []*RiddleAnswer) int {
+	count := 0
+	for _, ans := range answers {
+		if ans != nil && ans.WinnerUserID != nil {
+			count++
+		}
+	}
+	return count
 }

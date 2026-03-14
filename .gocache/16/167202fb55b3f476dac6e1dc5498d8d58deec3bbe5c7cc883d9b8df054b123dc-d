@@ -1,0 +1,6 @@
+# test log
+open handlers.go
+open service.go
+open ..\casino\handlers.go
+open ..\streak\handlers.go
+open ..\streak\service.go

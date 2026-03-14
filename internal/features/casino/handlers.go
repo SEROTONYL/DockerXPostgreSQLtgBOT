@@ -120,10 +120,10 @@ func (h *Handler) HandleSlotStats(ctx context.Context, chatID int64, userID int6
 	text := fmt.Sprintf(
 		"📊 СТАТИСТИКА СЛОТОВ\n\n"+
 			"Всего спинов: %d\n"+
-			"Поставлено: %s %s\n"+
-			"Выиграно: %s %s\n"+
-			"Чистая прибыль: %s%s %s\n\n"+
-			"💎 Лучший выигрыш: %s %s\n"+
+			"Поставлено: %s%s\n"+
+			"Выиграно: %s%s\n"+
+			"Чистая прибыль: %s%s%s\n\n"+
+			"💎 Лучший выигрыш: %s%s\n"+
 			"📈 Твой RTP: %.2f%%",
 		stats.TotalSpins,
 		common.FormatNumber(stats.TotalWagered), common.PluralizeFilms(stats.TotalWagered),

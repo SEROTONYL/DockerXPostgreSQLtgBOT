@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"serotonyl.ru/telegram-bot/internal/audit"
 	"serotonyl.ru/telegram-bot/internal/config"
 	"serotonyl.ru/telegram-bot/internal/feature"
 	"serotonyl.ru/telegram-bot/internal/features/economy"
@@ -37,8 +38,14 @@ func NewModule(deps Deps) (*Module, error) {
 	}
 	if deps.RiddleService != nil {
 		deps.RiddleService.SetOps(deps.Ops)
+		if deps.Cfg != nil && deps.Service != nil {
+			deps.RiddleService.SetAuditLogger(audit.NewLogger(deps.Ops, deps.Cfg.AdminChatID), deps.Service.memberRepo)
+		}
 	}
 	h := NewHandler(deps.Service, deps.MemberService, deps.EconomyService, deps.Ops, memberSourceChatID)
+	if deps.Cfg != nil {
+		h.SetAuditLogger(audit.NewLogger(deps.Ops, deps.Cfg.AdminChatID))
+	}
 	f := NewFeature(deps.Cfg, deps.Ops, h, deps.MemberService, deps.PurgeMetrics)
 	return &Module{Handler: h, Feature: f}, nil
 }
