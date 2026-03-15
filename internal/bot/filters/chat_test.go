@@ -81,6 +81,10 @@ func (f *fakeMemberService) MarkMemberLeft(ctx context.Context, userID int64, le
 	return nil
 }
 
+func (f *fakeMemberService) GetRoleAndTag(ctx context.Context, userID int64) (role *string, tag *string, err error) {
+	return nil, nil, nil
+}
+
 func (f *fakeMemberService) HandleNewMember(ctx context.Context, userID int64, username, firstName, lastName string, isBot bool) error {
 	return nil
 }

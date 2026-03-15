@@ -41,3 +41,39 @@ func TestParseIDList_EdgeCases(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigValidate_LeaveDebug(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   int64
+		wantErr bool
+	}{
+		{name: "disabled", value: 0, wantErr: false},
+		{name: "positive", value: 123456789, wantErr: false},
+		{name: "negative", value: -1, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				MemberSourceChatID:      -1001,
+				AdminChatID:             -2002,
+				LeaveDebug:              tt.value,
+				BotMaxInflight:          1,
+				BotUpdateTimeoutSeconds: 1,
+				BotWorkers:              minBotWorkers,
+				BotUpdateQueue:          minBotUpdateQueue,
+				DBMaxConns:              1,
+				DBMinConns:              0,
+			}
+
+			err := cfg.Validate()
+			if tt.wantErr && err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
+	}
+}

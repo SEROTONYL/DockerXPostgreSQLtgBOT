@@ -1,5 +1,3 @@
-// Package config загружает конфигурацию бота из переменных окружения.
-// Используется envconfig для маппинга переменных окружения на поля структуры.
 package config
 
 import (
@@ -20,9 +18,8 @@ const (
 	maxBotUpdateQueue = 5000
 )
 
-// Config содержит ВСЕ настройки приложения.
 type Config struct {
-	// --- Telegram ---
+	// Telegram
 	AdminIDsRaw     string             `envconfig:"ADMIN_IDS" required:"true"`
 	AdminIDs        []int64            `envconfig:"-"`
 	AdminIDSet      map[int64]struct{} `envconfig:"-"`
@@ -30,15 +27,12 @@ type Config struct {
 	ModeratorIDs    []int64            `envconfig:"-"`
 	ModeratorIDSet  map[int64]struct{} `envconfig:"-"`
 
-	TelegramBotToken string `envconfig:"TELEGRAM_BOT_TOKEN" required:"true"`
-	// ID чата-источника участников (single source of truth для membership/message-driven логики).
-	MemberSourceChatID int64 `envconfig:"MEMBER_SOURCE_CHAT_ID" default:"0"`
-	// ID админ-чата для служебных команд (например /members_status).
-	AdminChatID int64 `envconfig:"ADMIN_CHAT_ID" required:"true"`
+	TelegramBotToken   string `envconfig:"TELEGRAM_BOT_TOKEN" required:"true"`
+	MemberSourceChatID int64  `envconfig:"MEMBER_SOURCE_CHAT_ID" default:"0"`
+	AdminChatID        int64  `envconfig:"ADMIN_CHAT_ID" required:"true"`
+	LeaveDebug         int64  `envconfig:"LeaveDebug" default:"0"`
 
-	// --- Database ---
-	// В Docker внутри контейнера "localhost" почти всегда неправильно.
-	// Дефолт ставим "postgres" (имя сервиса в docker-compose), а для локалки переопределяй DB_HOST=localhost.
+	// Database
 	DBHost     string `envconfig:"DB_HOST" default:"postgres"`
 	DBPort     int    `envconfig:"DB_PORT" default:"5432"`
 	DBUser     string `envconfig:"DB_USER" default:"botuser"`
@@ -48,55 +42,50 @@ type Config struct {
 	DBMaxConns int32  `envconfig:"DB_MAX_CONNS" default:"25"`
 	DBMinConns int32  `envconfig:"DB_MIN_CONNS" default:"5"`
 
-	// --- Application ---
+	// Application
 	AppEnv      string `envconfig:"APP_ENV" default:"development"`
 	AppLogLevel string `envconfig:"APP_LOG_LEVEL" default:"debug"`
 	AppTimezone string `envconfig:"APP_TIMEZONE" default:"Europe/Moscow"`
 
-	// --- Bot runtime ---
-	// Legacy setting: оставлен для обратной совместимости и логирования.
-	BotMaxInflight int `envconfig:"BOT_MAX_INFLIGHT" default:"64"`
-	// Таймаут long polling (секунды)
+	// Bot runtime
+	BotMaxInflight          int `envconfig:"BOT_MAX_INFLIGHT" default:"64"`
 	BotUpdateTimeoutSeconds int `envconfig:"BOT_UPDATE_TIMEOUT_SECONDS" default:"60"`
-	// Размер пула воркеров для обработки апдейтов.
-	BotWorkers int `envconfig:"BOT_WORKERS" default:"4"`
-	// Размер очереди апдейтов между Telegram callback и воркерами.
-	BotUpdateQueue int `envconfig:"BOT_UPDATE_QUEUE" default:"100"`
+	BotWorkers              int `envconfig:"BOT_WORKERS" default:"4"`
+	BotUpdateQueue          int `envconfig:"BOT_UPDATE_QUEUE" default:"100"`
 
-	// --- Admin ---
+	// Admin
 	AdminPasswordHash string `envconfig:"ADMIN_PASSWORD_HASH" required:"true"`
 
-	// --- Streak ---
+	// Streak
 	StreakMessagesNeed      int `envconfig:"STREAK_MESSAGES_NEED" default:"50"`
 	StreakReminderThreshold int `envconfig:"STREAK_REMINDER_THRESHOLD" default:"7"`
 	StreakInactiveHours     int `envconfig:"STREAK_INACTIVE_HOURS" default:"10"`
 
-	// --- Karma / Thanks ---
+	// Karma / Thanks
 	KarmaDailyLimit            int `envconfig:"KARMA_DAILY_LIMIT" default:"2"`
 	KarmaCooldownSameUserHours int `envconfig:"KARMA_COOLDOWN_SAME_USER_HOURS" default:"24"`
 	ThanksDailyLimit           int `envconfig:"THANKS_DAILY_LIMIT" default:"3"`
 
-	// --- Casino ---
+	// Casino
 	CasinoSlotsBet int64   `envconfig:"CASINO_SLOTS_BET" default:"50"`
 	CasinoInitRTP  float64 `envconfig:"CASINO_INITIAL_RTP" default:"96.00"`
 	CasinoMinRTP   float64 `envconfig:"CASINO_MIN_RTP" default:"94.00"`
 	CasinoMaxRTP   float64 `envconfig:"CASINO_MAX_RTP" default:"98.00"`
 
-	// --- Economy ---
+	// Economy
 	EconomyStartingBalance int64  `envconfig:"ECONOMY_STARTING_BALANCE" default:"0"`
-	EconomyCurrencyName    string `envconfig:"ECONOMY_CURRENCY_NAME" default:"🎞️"`
+	EconomyCurrencyName    string `envconfig:"ECONOMY_CURRENCY_NAME" default:"плюшки"`
 
-	// --- Rate Limiting ---
+	// Rate limiting
 	RateLimitRequests int           `envconfig:"RATE_LIMIT_REQUESTS" default:"10"`
 	RateLimitWindow   time.Duration `envconfig:"RATE_LIMIT_WINDOW" default:"1m"`
 
-	// --- Feature Flags ---
+	// Feature flags
 	FeatureCasinoEnabled  bool `envconfig:"FEATURE_CASINO_ENABLED" default:"true"`
 	FeatureKarmaEnabled   bool `envconfig:"FEATURE_KARMA_ENABLED" default:"true"`
 	FeatureStreaksEnabled bool `envconfig:"FEATURE_STREAKS_ENABLED" default:"true"`
 }
 
-// DatabaseDSN возвращает строку подключения к PostgreSQL в формате DSN.
 func (c *Config) DatabaseDSN() string {
 	return fmt.Sprintf(
 		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
@@ -106,37 +95,39 @@ func (c *Config) DatabaseDSN() string {
 
 func (c *Config) Validate() error {
 	if c.MemberSourceChatID == 0 {
-		return fmt.Errorf("MEMBER_SOURCE_CHAT_ID не задан или равен 0")
+		return fmt.Errorf("MEMBER_SOURCE_CHAT_ID is required and cannot be 0")
 	}
 	if c.AdminChatID == 0 {
-		return fmt.Errorf("ADMIN_CHAT_ID не задан или равен 0")
+		return fmt.Errorf("ADMIN_CHAT_ID is required and cannot be 0")
 	}
 	if c.MemberSourceChatID == c.AdminChatID {
-		return fmt.Errorf("MEMBER_SOURCE_CHAT_ID и ADMIN_CHAT_ID не должны совпадать")
+		return fmt.Errorf("MEMBER_SOURCE_CHAT_ID and ADMIN_CHAT_ID must be different")
+	}
+	if c.LeaveDebug < 0 {
+		return fmt.Errorf("LeaveDebug must be >= 0")
 	}
 	if c.BotMaxInflight <= 0 {
-		return fmt.Errorf("BOT_MAX_INFLIGHT должен быть > 0")
+		return fmt.Errorf("BOT_MAX_INFLIGHT must be > 0")
 	}
 	if c.BotUpdateTimeoutSeconds <= 0 {
-		return fmt.Errorf("BOT_UPDATE_TIMEOUT_SECONDS должен быть > 0")
+		return fmt.Errorf("BOT_UPDATE_TIMEOUT_SECONDS must be > 0")
 	}
 	if c.BotWorkers < minBotWorkers || c.BotWorkers > maxBotWorkers {
-		return fmt.Errorf("BOT_WORKERS должен быть в диапазоне [%d..%d]", minBotWorkers, maxBotWorkers)
+		return fmt.Errorf("BOT_WORKERS must be in range [%d..%d]", minBotWorkers, maxBotWorkers)
 	}
 	if c.BotUpdateQueue < minBotUpdateQueue || c.BotUpdateQueue > maxBotUpdateQueue {
-		return fmt.Errorf("BOT_UPDATE_QUEUE должен быть в диапазоне [%d..%d]", minBotUpdateQueue, maxBotUpdateQueue)
+		return fmt.Errorf("BOT_UPDATE_QUEUE must be in range [%d..%d]", minBotUpdateQueue, maxBotUpdateQueue)
 	}
 	if c.DBMaxConns <= 0 || c.DBMinConns < 0 || c.DBMinConns > c.DBMaxConns {
-		return fmt.Errorf("некорректные DB_MIN_CONNS/DB_MAX_CONNS")
+		return fmt.Errorf("invalid DB_MIN_CONNS/DB_MAX_CONNS values")
 	}
 	return nil
 }
 
-// Load читает переменные окружения и заполняет структуру Config.
 func Load() (*Config, error) {
 	var cfg Config
 	if err := envconfig.Process("", &cfg); err != nil {
-		return nil, fmt.Errorf("не удалось загрузить конфигурацию: %w", err)
+		return nil, fmt.Errorf("failed to process environment config: %w", err)
 	}
 
 	cfg.AdminIDSet = parseIDList(cfg.AdminIDsRaw)

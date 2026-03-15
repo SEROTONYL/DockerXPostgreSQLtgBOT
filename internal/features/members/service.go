@@ -1,6 +1,3 @@
-// Package members — service.go содержит бизнес-логику управления участниками.
-// Сервис координирует регистрацию новых участников, проверку членства
-// и обновление информации.
 package members
 
 import (
@@ -17,8 +14,6 @@ import (
 
 const leftGracePeriod = 5 * 24 * time.Hour
 
-// Service управляет участниками чата.
-// Связывает обработчики Telegram-событий с репозиторием БД.
 type memberRepository interface {
 	UpsertActiveMember(ctx context.Context, userID int64, username, name string, isBot bool, joinedAt time.Time) error
 	MarkMemberLeft(ctx context.Context, userID int64, leftAt, deleteAfter time.Time) error
@@ -39,65 +34,54 @@ type memberRepository interface {
 	GetUsersWithoutRole(ctx context.Context) ([]*Member, error)
 }
 
-// Service управляет участниками чата.
-// Связывает обработчики Telegram-событий с репозиторием БД.
 type Service struct {
-	repo memberRepository // Репозиторий для работы с таблицей members
+	repo memberRepository
 }
 
-// NewService создаёт новый сервис участников.
 func NewService(repo memberRepository) *Service {
 	return &Service{repo: repo}
 }
 
-// HandleNewMember обрабатывает вступление нового пользователя в чат.
 func (s *Service) HandleNewMember(ctx context.Context, userID int64, username, firstName, lastName string, isBot bool) error {
 	return s.UpsertActiveMember(ctx, userID, username, userDisplayName(models.User{FirstName: firstName, LastName: lastName}), isBot, time.Now().UTC())
 }
 
-// UpsertActiveMember вставляет/обновляет участника и помечает его как active.
 func (s *Service) UpsertActiveMember(ctx context.Context, userID int64, username, name string, isBot bool, joinedAt time.Time) error {
 	if err := s.repo.UpsertActiveMember(ctx, userID, username, name, isBot, joinedAt); err != nil {
-		return fmt.Errorf("ошибка upsert участника: %w", err)
+		return fmt.Errorf("failed to upsert active member: %w", err)
 	}
 	return nil
 }
 
-// MarkMemberLeft помечает участника как left и выставляет окно grace period.
 func (s *Service) MarkMemberLeft(ctx context.Context, userID int64, leftAt, deleteAfter time.Time) error {
 	if err := s.repo.MarkMemberLeft(ctx, userID, leftAt, deleteAfter); err != nil {
-		return fmt.Errorf("ошибка пометки участника left: %w", err)
+		return fmt.Errorf("failed to mark member left: %w", err)
 	}
 	return nil
 }
 
-// MarkMemberLeftNow помечает участника как left с grace period 5 дней.
 func (s *Service) MarkMemberLeftNow(ctx context.Context, userID int64) error {
 	leftAt := time.Now().UTC()
 	return s.MarkMemberLeft(ctx, userID, leftAt, leftAt.Add(leftGracePeriod))
 }
 
-// EnsureMemberSeen обновляет известные данные/last_seen только для уже существующего участника.
-// Строгий режим: если записи нет (например, DM "из воздуха"), создаём ничего и возвращаем nil.
 func (s *Service) EnsureMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	if err := s.repo.EnsureMemberSeen(ctx, userID, username, name, isBot, seenAt.UTC()); err != nil {
-		return fmt.Errorf("ошибка ensure member seen: %w", err)
+		return fmt.Errorf("failed to ensure member seen: %w", err)
 	}
 	return nil
 }
 
-// EnsureActiveMemberSeen обновляет/создаёт участника как active (для апдейтов из основной группы).
 func (s *Service) EnsureActiveMemberSeen(ctx context.Context, userID int64, username, name string, isBot bool, seenAt time.Time) error {
 	if err := s.repo.EnsureActiveMemberSeen(ctx, userID, username, name, isBot, seenAt.UTC()); err != nil {
-		return fmt.Errorf("ошибка ensure active member seen: %w", err)
+		return fmt.Errorf("failed to ensure active member seen: %w", err)
 	}
 	return nil
 }
 
-// TouchLastSeen обновляет только last_seen_at с SQL-троттлингом и безопасен при 0 affected rows.
 func (s *Service) TouchLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
 	if err := s.repo.TouchLastSeen(ctx, userID, seenAt.UTC()); err != nil {
-		return fmt.Errorf("ошибка touch last seen: %w", err)
+		return fmt.Errorf("failed to touch last seen: %w", err)
 	}
 	return nil
 }
@@ -124,16 +108,11 @@ func (s *Service) ListActiveUserIDs(ctx context.Context) ([]int64, error) {
 
 func (s *Service) UpdateMemberTag(ctx context.Context, userID int64, tag *string, updatedAt time.Time) error {
 	if err := s.repo.UpdateMemberTag(ctx, userID, tag, updatedAt.UTC()); err != nil {
-		return fmt.Errorf("ошибка обновления tag участника: %w", err)
+		return fmt.Errorf("failed to update member tag: %w", err)
 	}
 	return nil
 }
 
-// ScanAndUpdateMemberTags обновляет metadata/tag только для ограниченного набора persisted user_id:
-// active + recent non-left кандидаты. Важно: Telegram Bot API не даёт перечислить всех
-// участников группы с нуля, поэтому refresh может лишь пере-проверять уже известные ID через
-// GetChatMember и чинить их persisted identity (включая is_bot). Неизвестные "тихие"
-// участники, которых мы никогда не сохраняли, не могут появиться в результате этого refresh.
 func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.Ops, memberSourceChatID int64, now time.Time) (int, error) {
 	if tgOps == nil || memberSourceChatID == 0 {
 		return 0, nil
@@ -148,7 +127,7 @@ func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.O
 		return 0, err
 	}
 
-	_ = activeUserIDs // Список active остаётся частью bounded-источника кандидатов.
+	_ = activeUserIDs
 
 	updated := 0
 	for _, userID := range refreshCandidateUserIDs {
@@ -198,51 +177,54 @@ func (s *Service) ScanAndUpdateMemberTags(ctx context.Context, tgOps *telegram.O
 	return updated, nil
 }
 
-// IsActiveMember проверяет активность участника.
 func (s *Service) IsActiveMember(ctx context.Context, userID int64) (bool, error) {
 	return s.repo.IsActiveMember(ctx, userID)
 }
 
-// PurgeExpiredLeftMembers жёстко удаляет вышедших участников с истекшим delete_after.
 func (s *Service) PurgeExpiredLeftMembers(ctx context.Context, now time.Time, limit int) (int, error) {
 	deleted, err := s.repo.PurgeExpiredLeftMembers(ctx, now, limit)
 	if err != nil {
-		return 0, fmt.Errorf("ошибка purge участников: %w", err)
+		return 0, fmt.Errorf("failed to purge members: %w", err)
 	}
 	return deleted, nil
 }
 
-// IsMember проверяет, является ли пользователь участником чата.
-// Используется для валидации доступа к DM.
 func (s *Service) IsMember(ctx context.Context, userID int64) (bool, error) {
 	return s.IsActiveMember(ctx, userID)
 }
 
-// GetByUserID возвращает участника по его Telegram user ID.
 func (s *Service) GetByUserID(ctx context.Context, userID int64) (*Member, error) {
 	return s.repo.GetByUserID(ctx, userID)
 }
 
-// GetByUsername возвращает участника по @username (без @).
+func (s *Service) GetRoleAndTag(ctx context.Context, userID int64) (role *string, tag *string, err error) {
+	member, err := s.repo.GetByUserID(ctx, userID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get member role/tag: %w", err)
+	}
+	if member == nil {
+		return nil, nil, nil
+	}
+	return member.Role, member.Tag, nil
+}
+
 func (s *Service) GetByUsername(ctx context.Context, username string) (*Member, error) {
 	return s.repo.GetByUsername(ctx, username)
 }
 
-// FindByNickname возвращает участника по точному nickname/display name.
 func (s *Service) FindByNickname(ctx context.Context, nickname string) (*Member, error) {
 	return s.repo.FindByNickname(ctx, nickname)
 }
 
-// EnsureMember гарантирует, что пользователь есть в базе и активен.
 func (s *Service) EnsureMember(ctx context.Context, userID int64, username, firstName, lastName string) error {
 	if err := s.UpsertActiveMember(ctx, userID, username, userDisplayName(models.User{FirstName: firstName, LastName: lastName}), false, time.Now().UTC()); err != nil {
-		return fmt.Errorf("ошибка ensure участника (user_id=%d): %w", userID, err)
+		return fmt.Errorf("failed to ensure member (user_id=%d): %w", userID, err)
 	}
 
 	log.WithFields(log.Fields{
 		"user_id":  userID,
 		"username": username,
-	}).Debug("Участник upsert как active (EnsureMember)")
+	}).Debug("member upserted as active (EnsureMember)")
 
 	return nil
 }

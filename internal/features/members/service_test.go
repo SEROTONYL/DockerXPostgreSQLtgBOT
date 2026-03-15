@@ -43,6 +43,8 @@ type fakeRepo struct {
 	updateTagErrorByUser map[int64]error
 	updateTagCalls       []int64
 	upsertCalls          []int64
+	memberByUserID       map[int64]*Member
+	getByUserIDErr       error
 }
 
 func (f *fakeRepo) UpsertActiveMember(ctx context.Context, userID int64, username, name string, isBot bool, joinedAt time.Time) error {
@@ -73,7 +75,15 @@ func (f *fakeRepo) PurgeExpiredLeftMembers(ctx context.Context, now time.Time, l
 	return f.purgeDeleted, nil
 }
 
-func (f *fakeRepo) GetByUserID(ctx context.Context, userID int64) (*Member, error) { return nil, nil }
+func (f *fakeRepo) GetByUserID(ctx context.Context, userID int64) (*Member, error) {
+	if f.getByUserIDErr != nil {
+		return nil, f.getByUserIDErr
+	}
+	if f.memberByUserID == nil {
+		return nil, nil
+	}
+	return f.memberByUserID[userID], nil
+}
 func (f *fakeRepo) GetByUsername(ctx context.Context, username string) (*Member, error) {
 	return nil, nil
 }
@@ -468,3 +478,34 @@ func (f *fakeTelegramClient) GetChatMember(chatID int64, userID int64) (models.C
 
 func (f *fakeRepo) GetUsersWithRole(ctx context.Context) ([]*Member, error)    { return nil, nil }
 func (f *fakeRepo) GetUsersWithoutRole(ctx context.Context) ([]*Member, error) { return nil, nil }
+
+func TestGetRoleAndTag(t *testing.T) {
+	role := "Беннет"
+	tag := ""
+	repo := &fakeRepo{
+		memberByUserID: map[int64]*Member{
+			42: {UserID: 42, Role: &role, Tag: &tag},
+		},
+	}
+	svc := NewService(repo)
+
+	gotRole, gotTag, err := svc.GetRoleAndTag(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("GetRoleAndTag returned error: %v", err)
+	}
+	if gotRole == nil || *gotRole != role {
+		t.Fatalf("unexpected role: %#v", gotRole)
+	}
+	if gotTag == nil || *gotTag != tag {
+		t.Fatalf("unexpected tag: %#v", gotTag)
+	}
+}
+
+func TestGetRoleAndTag_Error(t *testing.T) {
+	svc := NewService(&fakeRepo{getByUserIDErr: errors.New("boom")})
+
+	_, _, err := svc.GetRoleAndTag(context.Background(), 42)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}

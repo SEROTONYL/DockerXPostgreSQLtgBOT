@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -28,14 +29,16 @@ func (b *Bot) handleMembershipUpdate(ctx context.Context, uc UpdateContext) bool
 
 	name := buildDisplayName(user.FirstName, user.LastName)
 	now := uc.Now
+	oldAction := classifyMemberStatus(oldStatus)
+	newAction := classifyMemberStatus(newStatus)
 
-	switch classifyMemberStatus(newStatus) {
+	switch newAction {
 	case membershipActionActive:
 		if err := b.memberService.UpsertActiveMember(ctx, user.ID, user.Username, name, user.IsBot, now); err != nil {
 			log.WithError(err).WithField("user_id", user.ID).Warn("UpsertActiveMember failed")
 			return true
 		}
-		if classifyMemberStatus(oldStatus) != membershipActionActive {
+		if oldAction != membershipActionActive {
 			b.handleNewMembers(ctx, []models.User{*user})
 		}
 		log.WithFields(log.Fields{"user_id": user.ID, "old_status": oldStatus, "new_status": newStatus, "action": "active"}).Info("membership transition handled")
@@ -43,6 +46,9 @@ func (b *Bot) handleMembershipUpdate(ctx context.Context, uc UpdateContext) bool
 		if err := b.memberService.MarkMemberLeft(ctx, user.ID, now, now.Add(5*24*time.Hour)); err != nil {
 			log.WithError(err).WithField("user_id", user.ID).Warn("MarkMemberLeft failed")
 			return true
+		}
+		if oldAction != membershipActionLeft {
+			b.notifyLeaveDebug(ctx, user)
 		}
 		log.WithFields(log.Fields{"user_id": user.ID, "old_status": oldStatus, "new_status": newStatus, "action": "left"}).Info("membership transition handled")
 	default:
@@ -52,7 +58,50 @@ func (b *Bot) handleMembershipUpdate(ctx context.Context, uc UpdateContext) bool
 	return true
 }
 
-// handleNewMembers обрабатывает вступление новых участников.
+func (b *Bot) notifyLeaveDebug(ctx context.Context, user *models.User) {
+	if b == nil || b.cfg == nil || b.ops == nil || b.memberService == nil || user == nil {
+		return
+	}
+	if b.cfg.LeaveDebug <= 0 {
+		return
+	}
+
+	role, tag, err := b.memberService.GetRoleAndTag(ctx, user.ID)
+	if err != nil {
+		log.WithError(err).WithField("leaving_user_id", user.ID).Warn("leave debug member lookup failed")
+	}
+
+	text := fmt.Sprintf("#Выход — %s (%s)", leaveDebugLabel(role, tag), leaveDebugIdentity(user))
+	if _, err := b.ops.Send(ctx, b.cfg.LeaveDebug, text, nil); err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"leaving_user_id":     user.ID,
+			"leave_debug_user_id": b.cfg.LeaveDebug,
+		}).Warn("leave debug notification failed")
+	}
+}
+
+func leaveDebugLabel(role *string, tag *string) string {
+	if role != nil {
+		if trimmed := strings.TrimSpace(*role); trimmed != "" {
+			return trimmed
+		}
+	}
+	if tag != nil {
+		return *tag
+	}
+	return "Без роли"
+}
+
+func leaveDebugIdentity(user *models.User) string {
+	if user == nil {
+		return ""
+	}
+	if username := strings.TrimSpace(user.Username); username != "" {
+		return "@" + username
+	}
+	return fmt.Sprintf("%d", user.ID)
+}
+
 func (b *Bot) handleNewMembers(ctx context.Context, newMembers []models.User) {
 	for _, user := range newMembers {
 		if err := b.memberService.HandleNewMember(ctx, user.ID, user.Username, user.FirstName, user.LastName, user.IsBot); err != nil {
@@ -68,7 +117,7 @@ func (b *Bot) handleNewMembers(ctx context.Context, newMembers []models.User) {
 			log.WithError(err).WithField("user_id", user.ID).Warn("CreateKarma failed")
 		}
 
-		log.WithField("user", user.Username).Info("Новый участник обработан")
+		log.WithField("user", user.Username).Info("new member handled")
 	}
 }
 
