@@ -776,19 +776,25 @@ func (h *Handler) renderUserPickerPage(ctx context.Context, chatID, userID int64
 		return
 	}
 
+	normalized := false
 	if data.PageSize <= 0 {
 		data.PageSize = userPickerPageSize
+		normalized = true
 	}
-
 	totalPages := (len(data.UsersSnapshot) + data.PageSize - 1) / data.PageSize
 	if totalPages == 0 {
 		totalPages = 1
 	}
 	if data.PageIndex < 0 {
 		data.PageIndex = 0
+		normalized = true
 	}
 	if data.PageIndex >= totalPages {
 		data.PageIndex = totalPages - 1
+		normalized = true
+	}
+	if normalized {
+		h.service.SetState(userID, stateName, data)
 	}
 
 	start := data.PageIndex * data.PageSize
@@ -806,11 +812,13 @@ func (h *Handler) renderUserPickerPage(ctx context.Context, chatID, userID int64
 	}
 
 	pageLabel := fmt.Sprintf("Стр %d/%d", data.PageIndex+1, totalPages)
-	rows = append(rows, newInlineKeyboardRow(
-		newInlineKeyboardButtonData(userPickerPrevButton, pickerCallbackData(data.Mode, cbPickerPrev, 0)),
-		newInlineKeyboardButtonData(pageLabel, pickerCallbackData(data.Mode, "page", 0)),
-		newInlineKeyboardButtonData(userPickerNextButton, pickerCallbackData(data.Mode, cbPickerNext, 0)),
-	))
+	if totalPages > 1 {
+		rows = append(rows, newInlineKeyboardRow(
+			newInlineKeyboardButtonData(userPickerPrevButton, pickerCallbackData(data.Mode, cbPickerPrev, 0)),
+			newInlineKeyboardButtonData(pageLabel, pickerCallbackData(data.Mode, "page", 0)),
+			newInlineKeyboardButtonData(userPickerNextButton, pickerCallbackData(data.Mode, cbPickerNext, 0)),
+		))
+	}
 	if data.Mode == UserPickerAssignWithoutRole {
 		rows = append(rows, newInlineKeyboardRow(
 			newInlineKeyboardButtonData("🔄 Обновить список", cbAssignRefresh),
@@ -938,6 +946,7 @@ func (h *Handler) handleUserPickerInput(ctx context.Context, chatID, userID int6
 		if data.PageIndex > 0 {
 			data.PageIndex--
 		}
+		h.service.SetState(userID, stateName, data)
 		h.renderUserPickerPage(ctx, chatID, userID, panelMsgID, stateName)
 		return nil, false
 	case userPickerNextButton:
@@ -951,6 +960,7 @@ func (h *Handler) handleUserPickerInput(ctx context.Context, chatID, userID int6
 		if data.PageIndex < totalPages-1 {
 			data.PageIndex++
 		}
+		h.service.SetState(userID, stateName, data)
 		h.renderUserPickerPage(ctx, chatID, userID, panelMsgID, stateName)
 		return nil, false
 	}

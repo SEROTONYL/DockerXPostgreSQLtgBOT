@@ -1191,6 +1191,114 @@ func TestPickerFlow_Pagination_StyleRestartsOnNewPage(t *testing.T) {
 	}
 }
 
+func TestPickerFlow_Pagination_PersistsPageIndex_WithRoundTripState(t *testing.T) {
+	tg := &fakeTG{}
+	role := "old"
+	users := make([]*members.Member, 0, 10)
+	for i := 0; i < 10; i++ {
+		id := int64(2000 + i)
+		users = append(users, &members.Member{UserID: id, Username: "user" + string(rune('0'+i)), Role: &role})
+	}
+	stateRepo := &fakeAdminRepoHandlers{hasSession: true, roundTripState: true}
+	memberRepo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with:    users,
+	}
+	h := newAdminHandlerForFlowWithRepo(t, stateRepo, memberRepo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminChangeRole))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, pickerCallbackData(UserPickerChangeWithRole, cbPickerNext, 0)))
+
+	if state := h.service.GetState(77); state == nil || state.State != StateChangeRoleSelect {
+		t.Fatalf("expected change-role picker state, got %#v", state)
+	} else if data, _ := state.Data.(*UserPickerData); data == nil || data.PageIndex != 1 {
+		t.Fatalf("expected page index 1 after next, got %#v", data)
+	}
+
+	edit := tg.last("edit")
+	if edit == nil || buttonByCallbackData(edit.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, users[8].UserID)) == nil {
+		t.Fatalf("expected second page render, got %#v", edit)
+	}
+
+	editsBeforePage := tg.count("edit")
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, pickerCallbackData(UserPickerChangeWithRole, "page", 0)))
+	if tg.count("edit") != editsBeforePage {
+		t.Fatalf("page label callback must be inert")
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, pickerCallbackData(UserPickerChangeWithRole, cbPickerPrev, 0)))
+	if state := h.service.GetState(77); state == nil || state.State != StateChangeRoleSelect {
+		t.Fatalf("expected picker state after prev, got %#v", state)
+	} else if data, _ := state.Data.(*UserPickerData); data == nil || data.PageIndex != 0 {
+		t.Fatalf("expected page index 0 after prev, got %#v", data)
+	}
+	edit = tg.last("edit")
+	if edit == nil || buttonByCallbackData(edit.markup, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, users[0].UserID)) == nil {
+		t.Fatalf("expected first page render after prev, got %#v", edit)
+	}
+}
+
+func TestPickerFlow_CallbackRouting_SelectBackAndInvalidPayload(t *testing.T) {
+	tg := &fakeTG{}
+	role := "old"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with: []*members.Member{
+			{UserID: 1001, Username: "user1", Role: &role},
+			{UserID: 1002, Username: "user2", Role: &role},
+		},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminChangeRole))
+	editsBeforeInvalid := tg.count("edit")
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbPickerPrefix+"broken"))
+	if tg.count("edit") != editsBeforeInvalid {
+		t.Fatalf("invalid picker payload must be ignored")
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, pickerCallbackData(UserPickerChangeWithRole, cbPickerSelect, 1001)))
+	if state := h.service.GetState(77); state == nil || state.State != StateChangeRoleText {
+		t.Fatalf("expected role input state after select, got %#v", state)
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbRoleInputBack))
+	if state := h.service.GetState(77); state == nil || state.State != StateChangeRoleSelect {
+		t.Fatalf("expected picker state after role input back, got %#v", state)
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, pickerCallbackData(UserPickerChangeWithRole, cbPickerBack, 0)))
+	if state := h.service.GetState(77); state != nil {
+		t.Fatalf("expected picker state cleared after back, got %#v", state)
+	}
+	if edit := tg.last("edit"); edit == nil || !hasButton(edit.markup, "", cbAdminParticipants) && !hasButton(edit.markup, "", cbAdminBalanceAdjust) {
+		t.Fatalf("expected admin panel render after back, got %#v", edit)
+	}
+}
+
+func TestPickerFlow_SinglePage_DoesNotRenderPaginationButtons(t *testing.T) {
+	tg := &fakeTG{}
+	role := "old"
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with: []*members.Member{
+			{UserID: 1001, Username: "user1", Role: &role},
+			{UserID: 1002, Username: "user2", Role: &role},
+		},
+	}
+	h := newAdminHandlerForFlow(t, repo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminChangeRole))
+
+	edit := tg.last("edit")
+	if edit == nil {
+		t.Fatalf("expected picker render")
+	}
+	if hasButton(edit.markup, userPickerPrevButton, "") || hasButton(edit.markup, userPickerNextButton, "") {
+		t.Fatalf("did not expect pagination buttons on one-page picker")
+	}
+}
+
 func TestChangeRole_PickerRenders_WithIDFallback_WhenIdentityFieldsEmpty(t *testing.T) {
 	tg := &fakeTG{}
 	role := "operator"
@@ -1699,6 +1807,36 @@ func TestAdminParticipants_OpenShowsRowsPaginationAndBack(t *testing.T) {
 	}
 }
 
+func TestParticipantsPageNumberButton_IsSafeNoOp(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	users := make([]*members.Member, 0, 9)
+	for i := 0; i < 9; i++ {
+		users = append(users, &members.Member{UserID: int64(3000 + i), Username: fmt.Sprintf("u%d", i), Role: &role})
+	}
+	repo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with:    users,
+	}
+	econ := &fakeEconomy{balances: map[int64]int64{}}
+	for i := 0; i < 9; i++ {
+		econ.balances[int64(3000+i)] = int64(100 - i)
+	}
+	h := newAdminHandlerWithEconomy(t, repo, tg, econ)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminParticipants))
+	beforeSends := tg.count("send")
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminParticipantsPage+"0"))
+
+	if tg.count("send") != beforeSends {
+		t.Fatalf("page number callback must not create new messages")
+	}
+	if edit := tg.last("edit"); edit == nil || !hasButton(edit.markup, userPickerNextButton, cbAdminParticipantsPage+"1") {
+		t.Fatalf("page number callback must keep participants flow intact, got %#v", edit)
+	}
+}
+
 func TestAdminDeltasMenu_OpenAddDeleteAndBack(t *testing.T) {
 	tg := &fakeTG{}
 	repo := &fakeMemberRepoHandlers{members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}}}
@@ -1801,6 +1939,73 @@ func TestBalanceAdjust_MultiSelectPersistsAcrossPages(t *testing.T) {
 	}
 	if !strings.Contains(e.text, "Выбрано: 2") {
 		t.Fatalf("selection should persist, text=%q", e.text)
+	}
+}
+
+func TestBalanceAdjust_Pagination_PersistsPageIndex_WithRoundTripState(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	users := make([]*members.Member, 0, 10)
+	for i := 0; i < 10; i++ {
+		users = append(users, &members.Member{UserID: int64(6000 + i), Username: fmt.Sprintf("u%d", i), Role: &role})
+	}
+	memberRepo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with:    users,
+	}
+	stateRepo := &fakeAdminRepoHandlers{hasSession: true, roundTripState: true}
+	h := newAdminHandlerForFlowWithRepo(t, stateRepo, memberRepo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickNext))
+
+	if state := h.service.GetState(77); state == nil || state.State != StateBalanceAdjustPicker {
+		t.Fatalf("expected balance picker state, got %#v", state)
+	} else if data, _ := state.Data.(*BalanceAdjustData); data == nil || data.PageIndex != 1 {
+		t.Fatalf("expected page index 1 after next, got %#v", data)
+	}
+
+	edit := tg.last("edit")
+	if edit == nil || buttonByCallbackData(edit.markup, fmt.Sprintf("%s:%d", cbBalPickToggle, users[8].UserID)) == nil {
+		t.Fatalf("expected second balance picker page, got %#v", edit)
+	}
+
+	editsBeforePage := tg.count("edit")
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balpick:page"))
+	if tg.count("edit") != editsBeforePage {
+		t.Fatalf("balance page label callback must be inert")
+	}
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbBalPickPrev))
+	if state := h.service.GetState(77); state == nil || state.State != StateBalanceAdjustPicker {
+		t.Fatalf("expected balance picker state after prev, got %#v", state)
+	} else if data, _ := state.Data.(*BalanceAdjustData); data == nil || data.PageIndex != 0 {
+		t.Fatalf("expected page index 0 after prev, got %#v", data)
+	}
+}
+
+func TestBalanceAdjust_SinglePage_DoesNotRenderPaginationButtons(t *testing.T) {
+	tg := &fakeTG{}
+	role := "role"
+	memberRepo := &fakeMemberRepoHandlers{
+		members: map[int64]*members.Member{77: {UserID: 77, IsAdmin: true}},
+		with: []*members.Member{
+			{UserID: 1001, Username: "u1", Role: &role},
+			{UserID: 1002, Username: "u2", Role: &role},
+		},
+	}
+	h := newAdminHandlerForFlow(t, memberRepo, tg)
+
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, cbAdminBalanceAdjust))
+	_ = h.HandleAdminCallback(context.Background(), callback(77, 42, 77, "admin:balmode:add"))
+
+	edit := tg.last("edit")
+	if edit == nil {
+		t.Fatalf("expected balance picker render")
+	}
+	if hasButton(edit.markup, userPickerPrevButton, "") || hasButton(edit.markup, userPickerNextButton, "") {
+		t.Fatalf("did not expect pagination buttons on one-page balance picker")
 	}
 }
 

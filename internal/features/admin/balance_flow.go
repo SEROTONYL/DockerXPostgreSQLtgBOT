@@ -171,11 +171,13 @@ func (h *Handler) renderBalancePicker(chatID, userID int64) {
 		}
 		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData(label, fmt.Sprintf("%s:%d", cbBalPickToggle, u.UserID))))
 	}
-	rows = append(rows, newInlineKeyboardRow(
-		newInlineKeyboardButtonData(userPickerPrevButton, cbBalPickPrev),
-		newInlineKeyboardButtonData(fmt.Sprintf("Стр %d/%d", data.PageIndex+1, totalPages), "admin:balpick:page"),
-		newInlineKeyboardButtonData(userPickerNextButton, cbBalPickNext),
-	))
+	if totalPages > 1 {
+		rows = append(rows, newInlineKeyboardRow(
+			newInlineKeyboardButtonData(userPickerPrevButton, cbBalPickPrev),
+			newInlineKeyboardButtonData(fmt.Sprintf("Стр %d/%d", data.PageIndex+1, totalPages), "admin:balpick:page"),
+			newInlineKeyboardButtonData(userPickerNextButton, cbBalPickNext),
+		))
+	}
 	rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonData("♻️ Сбросить", cbBalPickClear)))
 	if len(data.SelectedUserIDs) > 0 {
 		rows = append(rows, newInlineKeyboardRow(newInlineKeyboardButtonDataStyled("➡️ Далее", cbBalPickDone, "success")))
